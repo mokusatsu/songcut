@@ -22,7 +22,7 @@ English follows the Japanese.
 1. Releases からダウンロードして適当なフォルダに展開してください。
 1. ffmpeg/ffprobe をダウンロードし、`third_party\ffmpeg` 以下に配置してください。
 1. `songcut.exe` を起動してください。
-1. 使い方は `docs/USAGE.ja.md` を参照してください。
+1. 使い方は [docs/USAGE.ja.md](docs/USAGE.ja.md) を参照してください。
 
 ### 外部仕様
 
@@ -36,12 +36,12 @@ English follows the Japanese.
 
 ### 文書
 
-- 使い方: `docs/USAGE.ja.md` / `docs/USAGE.md`
-- CLI: `docs/CLI.ja.md` / `docs/CLI.md`
-- ビルド: `docs/BUILD.ja.md` / `docs/BUILD.md`
-- 設計: `docs/DESIGN.ja.md` / `docs/DESIGN.md`
-- GUI 詳細仕様: `docs/gui-spec.md`
-- 検出アルゴリズム: `docs/algorithm.md`
+- 使い方: [docs/USAGE.ja.md](docs/USAGE.ja.md) / [docs/USAGE.md](docs/USAGE.md)
+- CLI: [docs/CLI.ja.md](docs/CLI.ja.md) / [docs/CLI.md](docs/CLI.md)
+- ビルド: [docs/BUILD.ja.md](docs/BUILD.ja.md) / [docs/BUILD.md](docs/BUILD.md)
+- 設計: [docs/DESIGN.ja.md](docs/DESIGN.ja.md) / [docs/DESIGN.md](docs/DESIGN.md)
+- GUI 詳細仕様: [docs/gui-spec.md](docs/gui-spec.md)
+- 検出アルゴリズム: [docs/algorithm.md](docs/algorithm.md)
 
 ---
 
@@ -65,7 +65,7 @@ and helps prepare timestamp comments.
 1. Download a release and extract it to a folder.
 1. Download ffmpeg/ffprobe and place them under `third_party\ffmpeg`.
 1. Start `songcut.exe`.
-1. See `docs/USAGE.md` for detailed instructions.
+1. See [docs/USAGE.md](docs/USAGE.md) for detailed instructions.
 
 ### External Specification
 
@@ -80,9 +80,9 @@ and helps prepare timestamp comments.
 
 ### Documentation
 
-- Usage: `docs/USAGE.md` / `docs/USAGE.ja.md`
-- CLI: `docs/CLI.md` / `docs/CLI.ja.md`
-- Build: `docs/BUILD.md` / `docs/BUILD.ja.md`
-- Design: `docs/DESIGN.md` / `docs/DESIGN.ja.md`
-- Detailed GUI specification: `docs/gui-spec.md`
-- Detection algorithm: `docs/algorithm.md`
+- Usage: [docs/USAGE.md](docs/USAGE.md) / [docs/USAGE.ja.md](docs/USAGE.ja.md)
+- CLI: [docs/CLI.md](docs/CLI.md) / [docs/CLI.ja.md](docs/CLI.ja.md)
+- Build: [docs/BUILD.md](docs/BUILD.md) / [docs/BUILD.ja.md](docs/BUILD.ja.md)
+- Design: [docs/DESIGN.md](docs/DESIGN.md) / [docs/DESIGN.ja.md](docs/DESIGN.ja.md)
+- Detailed GUI specification: [docs/gui-spec.md](docs/gui-spec.md)
+- Detection algorithm: [docs/algorithm.md](docs/algorithm.md)
