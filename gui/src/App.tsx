@@ -27,6 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
 import { checkFfmpeg, probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
+import type { AnalysisDevice, WhisperDevice } from "@/lib/api";
 import type {
   AnalysisResult,
   ExportCandidate,
@@ -94,6 +95,8 @@ export default function App() {
   const [ffmpegCheckOpen, setFfmpegCheckOpen] = useState(false);
   const [ffmpegCheckPending, setFfmpegCheckPending] = useState(false);
   const [ffmpegCheckResult, setFfmpegCheckResult] = useState<FfmpegCheckResult | null>(null);
+  const [analysisDevice, setAnalysisDevice] = useState<AnalysisDevice>("auto");
+  const [whisperDevice, setWhisperDevice] = useState<WhisperDevice>("auto");
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
@@ -281,7 +284,7 @@ export default function App() {
   async function analyze() {
     if (!apiBaseUrl || !videoPath) return;
     setTranscriptionJob(null);
-    const started = await startAnalysis(apiBaseUrl, videoPath, guideText);
+    const started = await startAnalysis(apiBaseUrl, videoPath, guideText, analysisDevice, whisperDevice);
     setJob(started);
     const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, setJob);
     const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
@@ -463,9 +466,21 @@ export default function App() {
       hasSelectedSegment: Boolean(videoUrl && selectedSegment),
       hasCheckedSegments: checkedCount > 0,
       playing,
-      zoomIndex
+      zoomIndex,
+      analysisDevice,
+      whisperDevice
     });
-  }, [apiBaseUrl, videoUrl, segments.length, selectedSegment?.id, checkedCount, playing, zoomIndex]);
+  }, [
+    apiBaseUrl,
+    videoUrl,
+    segments.length,
+    selectedSegment?.id,
+    checkedCount,
+    playing,
+    zoomIndex,
+    analysisDevice,
+    whisperDevice
+  ]);
 
   useEffect(() => {
     return window.songcut.onMenuCommand((command) => {
@@ -517,6 +532,14 @@ export default function App() {
           break;
         case "prepare-whisper-model":
           void ensureWhisper().catch((error) => setMessage(String(error)));
+          break;
+        case "set-analysis-device":
+          setAnalysisDevice(command.device);
+          setMessage(`Singing analysis device set to ${deviceLabel(command.device)}.`);
+          break;
+        case "set-whisper-device":
+          setWhisperDevice(command.device);
+          setMessage(`Whisper device set to ${deviceLabel(command.device)}.`);
           break;
         case "ffmpeg-check":
           void runFfmpegCheck(true);
@@ -1555,4 +1578,17 @@ function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
 function extensionOf(name: string) {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function deviceLabel(device: AnalysisDevice | WhisperDevice) {
+  switch (device) {
+    case "auto":
+      return "Auto";
+    case "npu":
+      return "NPU";
+    case "gpu":
+      return "GPU";
+    case "cpu":
+      return "CPU";
+  }
 }

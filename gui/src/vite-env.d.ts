@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
+type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
+
 type SongcutMenuCommand =
   | { type: "load-movie" }
   | { type: "nudge-boundary-left" }
@@ -17,6 +20,8 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "prepare-whisper-model" }
+  | { type: "set-analysis-device"; device: AnalysisDevice }
+  | { type: "set-whisper-device"; device: WhisperDevice }
   | { type: "ffmpeg-check" };
 
 type SongcutMenuState = {
@@ -27,6 +32,8 @@ type SongcutMenuState = {
   hasCheckedSegments: boolean;
   playing: boolean;
   zoomIndex: number;
+  analysisDevice: AnalysisDevice;
+  whisperDevice: WhisperDevice;
 };
 
 interface Window {

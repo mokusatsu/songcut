@@ -17,6 +17,11 @@ let allowClose = false;
 let closeRequestPending = false;
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
+const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
+
+type InferenceDevice = (typeof inferenceDevices)[number];
+type AnalysisDevice = InferenceDevice;
+type WhisperDevice = InferenceDevice;
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -35,6 +40,8 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "prepare-whisper-model" }
+  | { type: "set-analysis-device"; device: AnalysisDevice }
+  | { type: "set-whisper-device"; device: WhisperDevice }
   | { type: "ffmpeg-check" };
 
 type SongcutMenuState = {
@@ -45,6 +52,8 @@ type SongcutMenuState = {
   hasCheckedSegments: boolean;
   playing: boolean;
   zoomIndex: number;
+  analysisDevice: AnalysisDevice;
+  whisperDevice: WhisperDevice;
 };
 
 let menuState: SongcutMenuState = {
@@ -54,7 +63,9 @@ let menuState: SongcutMenuState = {
   hasSelectedSegment: false,
   hasCheckedSegments: false,
   playing: false,
-  zoomIndex: 0
+  zoomIndex: 0,
+  analysisDevice: "auto",
+  whisperDevice: "auto"
 };
 
 async function createWindow() {
@@ -150,7 +161,9 @@ ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuS
   menuState = {
     ...menuState,
     ...nextState,
-    zoomIndex: clampMenuZoom(nextState.zoomIndex ?? menuState.zoomIndex)
+    zoomIndex: clampMenuZoom(nextState.zoomIndex ?? menuState.zoomIndex),
+    analysisDevice: normalizeInferenceDevice(nextState.analysisDevice ?? menuState.analysisDevice),
+    whisperDevice: normalizeInferenceDevice(nextState.whisperDevice ?? menuState.whisperDevice)
   };
   setApplicationMenu();
 });
@@ -242,6 +255,24 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: "Settings",
       submenu: [
         { label: "Prepare Whisper Model", enabled: menuState.apiReady, click: send({ type: "prepare-whisper-model" }) },
+        {
+          label: "Singing Analysis Device",
+          submenu: inferenceDevices.map((device) => ({
+            label: inferenceDeviceLabel(device),
+            type: "radio",
+            checked: menuState.analysisDevice === device,
+            click: send({ type: "set-analysis-device", device })
+          }))
+        },
+        {
+          label: "Whisper Device",
+          submenu: inferenceDevices.map((device) => ({
+            label: inferenceDeviceLabel(device),
+            type: "radio",
+            checked: menuState.whisperDevice === device,
+            click: send({ type: "set-whisper-device", device })
+          }))
+        },
         { label: "ffmpeg Check", enabled: menuState.apiReady, click: send({ type: "ffmpeg-check" }) }
       ]
     },
@@ -267,6 +298,25 @@ function sendMenuCommand(command: SongcutMenuCommand) {
 
 function clampMenuZoom(value: number) {
   return Math.max(0, Math.min(zoomLevels.length - 1, Math.round(value)));
+}
+
+function normalizeInferenceDevice(value: unknown): InferenceDevice {
+  return typeof value === "string" && inferenceDevices.includes(value as InferenceDevice)
+    ? (value as InferenceDevice)
+    : "auto";
+}
+
+function inferenceDeviceLabel(device: InferenceDevice) {
+  switch (device) {
+    case "auto":
+      return "Auto";
+    case "npu":
+      return "NPU";
+    case "gpu":
+      return "GPU";
+    case "cpu":
+      return "CPU";
+  }
 }
 
 function showAboutSongcut() {

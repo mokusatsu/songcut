@@ -1,5 +1,8 @@
 import type { AnalysisResult, FfmpegCheckResult, JobRecord, VideoInfo } from "@/types";
 
+export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
+export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
+
 export async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -23,14 +26,20 @@ export function probeVideo(baseUrl: string, filePath: string) {
   return postJson<VideoInfo>(baseUrl, "/videos/probe", { path: filePath });
 }
 
-export function startAnalysis(baseUrl: string, filePath: string, guideText: string) {
+export function startAnalysis(
+  baseUrl: string,
+  filePath: string,
+  guideText: string,
+  analysisDevice: AnalysisDevice,
+  whisperDevice: WhisperDevice
+) {
   return postJson<JobRecord>(baseUrl, "/analysis/jobs", {
     path: filePath,
     guide_text: guideText,
     timestamp_source: "auto",
-    device: "auto",
+    device: analysisDevice,
     transcribe: true,
-    whisper_device: "auto",
+    whisper_device: whisperDevice,
     whisper_language: "<|ja|>"
   });
 }
