@@ -1,11 +1,15 @@
 # songcut
 
+![songcut logo](assets/icons/songcut-1024.png)
+
 English follows the Japanese.
 
 ## 日本語
 
 `songcut` は、VSinger などの歌枠アーカイブから歌唱区間らしい部分を抽出し、
 セグメント動画として書き出したり、TSコメント作成を支援する Windows デスクトップアプリです。
+
+![screenshot](docs/image/screenshot.png)
 
 ### 特徴
 - 歌枠の切り抜き作成およびタイムスタンプ作成に特化した機能
