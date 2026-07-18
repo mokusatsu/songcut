@@ -1,100 +1,67 @@
 # songcut
 
-`songcut` extracts likely singing segments from VSinger singing-stream archives.
+English follows the Japanese.
 
-The default profile targets an Intel Core Ultra 7 258V style local machine:
+## 日本語
 
-- Prefer authored set-list timestamps in the video metadata when they exist.
-- Fall back to a local NumPy DSP detector when timestamps are unavailable.
-- Detect OpenVINO devices when OpenVINO is installed, with intended priority `NPU -> GPU -> CPU`.
-- Use `ffmpeg.exe` and `ffprobe.exe` discovered under the app/repository root,
-  falling back to executables on `PATH`.
+`songcut` は、VSinger などの歌枠アーカイブから歌唱区間らしい部分を抽出し、
+ローカルクリップとして書き出したり、TSコメント作成を支援する Windows デスクトップアプリです。
 
-## Usage
+### 使用方法
 
-Install the package from source first; setup and build details are in
-`docs/BUILD.md` and `docs/BUILD.ja.md`.
+1. Releases からダウンロードして適当なフォルダに展開してください。
+1. ffmpeg/ffprobe をダウンロードし、`third_party\ffmpeg` 以下に配置してください。
+1. `songcut.exe` を起動してください。
 
-Analyze a local video:
+### 外部仕様
 
-```powershell
-python -m songcut.cli analyze path\to\input.mp4 --out out --review
-```
+- 配布形態は Windows 向けのポータブル GUI アプリです。
+- 利用者向けの入口は、配布物ルートにある `songcut.exe` です。
+- 入力動画はローカルファイルとして扱い、検出結果、レビュー用データ、切り出しクリップを
+  ローカルに出力します。
+- `ffmpeg.exe` と `ffprobe.exe` が必要です。配布物またはリポジトリ配下に配置するか、
+  `PATH` から見つかる状態にしてください。
+- バッチ処理や外部アプリ連携向けに Python CLI も提供します。
 
-Evaluate or review an existing `segments.json` file:
+### 文書
 
-```powershell
-python -m songcut.cli evaluate out\segments.json --truth path\to\timestamps.txt
-python -m songcut.cli review out\segments.json --video path\to\input.mp4 --out out\review.html
-```
+- 使い方: `USAGE.md`
+- CLI: `docs/CLI.ja.md` / `docs/CLI.md`
+- ビルド: `docs/BUILD.ja.md` / `docs/BUILD.md`
+- 設計: `docs/DESIGN.ja.md` / `docs/DESIGN.md`
+- GUI 詳細仕様: `docs/gui-spec.md`
+- 検出アルゴリズム: `docs/algorithm.md`
 
-`--review` writes `review.html` next to `segments.json`. Use `--review-out path\review.html` to choose a different location.
+---
 
-Guide-aware analysis writes both raw detections and guide-adjusted segments:
+## English
 
-```powershell
-python -m songcut.cli analyze path\to\input.mp4 --out out --guide path\to\input.guide.txt --review
-```
+`songcut` is a Windows desktop app that extracts likely singing segments from
+VSinger-style singing-stream archives, exports them as local clips, and helps
+prepare timestamp comments.
 
-This writes `out\segments.json`, `out\guided_segments.json`, and a guide-adjusted `out\review.html`.
+### Usage
 
-Force the acoustic detector instead of metadata timestamps:
+1. Download a release and extract it to a folder.
+1. Download ffmpeg/ffprobe and place them under `third_party\ffmpeg`.
+1. Start `songcut.exe`.
 
-```powershell
-python -m songcut.cli analyze path\to\input.mp4 --timestamp-source acoustic --out out-acoustic
-```
+### External Specification
 
-Export clips:
+- The primary distribution target is a portable Windows GUI app.
+- The user-facing entry point is `songcut.exe` at the distribution root.
+- Input videos are treated as local files. Detection results, review data, and
+  exported clips are written locally.
+- `ffmpeg.exe` and `ffprobe.exe` are required. Place them under the distribution
+  or repository tree, or make them discoverable on `PATH`.
+- A Python CLI is also available for batch processing and external app
+  integration.
 
-```powershell
-python -m songcut.cli export out\segments.json --source path\to\input.mp4 --out clips
-```
+### Documentation
 
-Export uses smart rendering by default. It probes keyframes, copies GOPs that are fully inside the requested range, and re-encodes the boundary GOPs at an estimated source video bitrate multiplied by 1.5. H.264 and AV1 MP4/MOV sources are written as `.mp4`; VP8/VP9/AV1 WebM sources are written as `.webm`; H.264/VP8/VP9/AV1 MKV sources are written as `.mkv`; unsupported codecs fall back to full re-encode.
-
-Smoke-test only the first clip with stream copy:
-
-```powershell
-python -m songcut.cli export out\segments.json --source path\to\input.mp4 --out clips --mode copy --limit 1
-```
-
-Use the legacy full accurate encode explicitly:
-
-```powershell
-python -m songcut.cli export out\segments.json --source path\to\input.mp4 --out clips --mode accurate
-```
-
-Export with a guide text:
-
-```powershell
-python -m songcut.cli export out\segments.json --source path\to\input.mp4 --out clips --guide path\to\input.guide.txt
-```
-
-Guide lines may use either `80:45 Title` or `1:20:45 Title`. A line with one timestamp starts exactly at the guide timestamp and uses the end of the nearby detected segment. A line with multiple timestamps, such as `0:10:00 Title 0:13:30`, is treated as the explicit export range. Output filenames are derived from the guide title text after removing timestamp tags.
-
-## Desktop GUI
-
-The GUI lives in `gui/` and uses Electron + React + Vite. In development,
-Electron can launch the Python REST API and talk to it over localhost. In the
-portable distribution, the top-level Python launcher starts the API first, then
-starts Electron as a managed child process. The renderer supports both a native
-file-open dialog and drag-and-drop video loading.
-
-The portable package entry point is `songcut.exe` at the package root. Packaged
-ffmpeg is optional: the app searches the package root recursively for a matching
-`ffmpeg.exe`/`ffprobe.exe` pair, then falls back to `PATH`.
-
-GUI-specific Python dependencies are grouped under `songcut[gui]`. Whisper uses
-the pre-converted OpenVINO `OpenVINO/whisper-small-fp16-ov` download by default,
-with runtime priority `NPU -> GPU -> CPU` for the GUI transcription path.
-
-Build instructions are in `docs/BUILD.md` and `docs/BUILD.ja.md`. The detailed
-working GUI specification is in `docs/gui-spec.md`.
-
-## Device behavior
-
-`--device auto` records available OpenVINO devices when OpenVINO is installed, then uses the current DSP baseline unless an OpenVINO singing model is configured. `--device npu` and `--device gpu` are strict checks: they fail fast when the requested device is unavailable.
-
-## Notes
-
-The NumPy detector is a dependency-light baseline, not a replacement for an AudioSet/OpenVINO singing classifier. It provides a working path on machines that do not yet have OpenVINO or ONNX models installed. The code keeps backend and model metadata in `segments.json` so an OpenVINO NPU model can replace the DSP scoring stage without changing the CLI contract.
+- Usage: `USAGE.md`
+- CLI: `docs/CLI.md` / `docs/CLI.ja.md`
+- Build: `docs/BUILD.md` / `docs/BUILD.ja.md`
+- Design: `docs/DESIGN.md` / `docs/DESIGN.ja.md`
+- Detailed GUI specification: `docs/gui-spec.md`
+- Detection algorithm: `docs/algorithm.md`
