@@ -1381,6 +1381,12 @@ function cleanup(processHandle, cdp) {
     assertPass(beforeRows[1][1] === "Encore Song", "Second guide title was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][2] === "guide-002", "Second guide entry was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][3] === "0:02" && beforeRows[1][4] === "0:04", "Second guided segment range was not reflected in the analysis segment list.", beforeRows);
+    const waveformLineCount = await evaluate(
+      cdp,
+      `document.querySelectorAll(".waveform-timeline svg line").length`
+    );
+    assertPass(waveformLineCount > 0, "Analysis did not render waveform samples.", { waveformLineCount });
+    log("WAVEFORM_RENDER_OK", { waveformLineCount });
 
     await editFirstSegmentTitle(cdp, "Smoke Song Edited");
     beforeRows = await tableRows(cdp);

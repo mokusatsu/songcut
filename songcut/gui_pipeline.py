@@ -18,6 +18,9 @@ from .metadata import metadata_segments
 from .segmenter import SegmenterProfile, segments_from_features
 
 
+WAVEFORM_SAMPLE_RATE = 4000
+
+
 def probe_video(ffprobe: Path, source: Path) -> dict[str, Any]:
     data = ffprobe_json(
         ffprobe,
@@ -76,7 +79,16 @@ def analyze_for_gui(
         elif timestamp_source == "metadata":
             raise RuntimeError("No timestamp ranges were found in video metadata.")
 
-    if not segments:
+    if segments:
+        waveform_raw = read_pcm_s16le(
+            ffmpeg_paths.ffmpeg,
+            source,
+            sample_rate=WAVEFORM_SAMPLE_RATE,
+            channels=1,
+        )
+        waveform_samples = pcm_bytes_to_float_stereo(waveform_raw, channels=1)
+        waveform = waveform_peaks(waveform_samples, duration, buckets=2400)
+    else:
         raw = read_pcm_s16le(ffmpeg_paths.ffmpeg, source, sample_rate=16000, channels=2)
         samples = pcm_bytes_to_float_stereo(raw, channels=2)
         waveform = waveform_peaks(samples, duration, buckets=2400)
