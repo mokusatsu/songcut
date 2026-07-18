@@ -765,7 +765,7 @@ export default function App() {
           />
         </header>
         <div className="guide-row">
-          <Textarea value={guideText} onChange={(event) => setGuideText(event.target.value)} placeholder="Paste guide text" />
+          <Textarea value={guideText} onChange={(event) => setGuideText(event.target.value)} placeholder="Paste timestamp comment here" />
           <StatusPanel job={activeJob} message={message} videoInfo={videoInfo} />
         </div>
         <TimelineStack
