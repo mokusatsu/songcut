@@ -1,9 +1,9 @@
-# ユーザー向け
+# ユーザー向け / Documents for User
 
 - 使い方 / Usage: [日本語 / Japanese](USAGE.ja.md) / [英語 / English](USAGE.md)
 - キーボードショートカット / Keyboard Shortcuts: [日本語・英語 / Japanese and English](KEYBOARD_SHORTCUTS.md)
 
-# その他ドキュメント
+# その他ドキュメント / Other Documents
 
 - CLI / CLI: [日本語 / Japanese](CLI.ja.md) / [英語 / English](CLI.md)
 - ビルド / Build: [日本語 / Japanese](BUILD.ja.md) / [英語 / English](BUILD.md)
