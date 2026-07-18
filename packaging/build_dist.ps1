@@ -45,6 +45,7 @@ $PackageRoot = Join-Path $DistRoot $PackageName
 $PyinstallerDist = Join-Path $DistRoot "pyinstaller"
 $PyinstallerWork = Join-Path $RepoRoot "build\pyinstaller"
 $VersionFile = Join-Path $RepoRoot "VERSION"
+$AppIcon = Join-Path $RepoRoot "assets\icons\songcut.ico"
 $PythonExe = Resolve-ToolPath -Name "Python" -Candidate $Python -CommandName "python" -EnvName "SONGCUT_PYTHON" -ParameterName "Python"
 $NodeExe = Resolve-ToolPath -Name "Node.js" -Candidate $Node -CommandName "node" -EnvName "SONGCUT_NODE" -ParameterName "Node"
 $env:PATH = "$(Split-Path -Parent $NodeExe);$env:PATH"
@@ -53,6 +54,10 @@ $GitExe = Resolve-ToolPath -Name "git" -Candidate $Git -CommandName "git" -EnvNa
 
 if (-not (Test-Path $VersionFile)) {
   throw "VERSION file was not found: $VersionFile"
+}
+
+if (-not (Test-Path -LiteralPath $AppIcon -PathType Leaf)) {
+  throw "Application icon was not found: $AppIcon"
 }
 
 $BaseVersion = (Get-Content -Raw -Path $VersionFile).Trim()
@@ -91,6 +96,7 @@ finally {
   --windowed `
   --contents-directory runtime `
   --name songcut `
+  --icon $AppIcon `
   --distpath $PyinstallerDist `
   --workpath $PyinstallerWork `
   --specpath $PyinstallerWork `
@@ -143,6 +149,14 @@ if (-not (Test-Path $ElectronRuntime)) {
 $ElectronTarget = Join-Path $PackageRoot "electron"
 Copy-Item -Path $ElectronRuntime -Destination $ElectronTarget -Recurse
 Rename-Item -LiteralPath (Join-Path $ElectronTarget "electron.exe") -NewName "songcut-electron.exe"
+$ElectronExe = Join-Path $ElectronTarget "songcut-electron.exe"
+$SetWindowsExeIcon = Join-Path $RepoRoot "packaging\set_windows_exe_icon.py"
+# Reuse PyInstaller's Windows resource support so the copied Electron runtime
+# has the same embedded icon as the launcher without another build dependency.
+& $PythonExe $SetWindowsExeIcon --exe $ElectronExe --icon $AppIcon
+if ($LASTEXITCODE -ne 0) {
+  throw "Setting the Electron executable icon failed with exit code $LASTEXITCODE"
+}
 
 $AppTarget = Join-Path $PackageRoot "app"
 New-Item -ItemType Directory -Force -Path $AppTarget | Out-Null
