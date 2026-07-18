@@ -18,7 +18,6 @@ yt-dlp \[youtube-url\]
 winget install Gyan.FFmpeg
 ```
 
-
 # 動画の読み込みと解析
 ![load and analyze](image/load-analyze.png)
 
