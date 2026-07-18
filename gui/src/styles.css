@@ -416,10 +416,6 @@ progress {
   overflow: hidden;
 }
 
-.segment-list-header {
-  flex: 0 0 auto;
-}
-
 .segment-list-body {
   flex: 1;
   min-height: 0;
@@ -441,7 +437,13 @@ table {
 }
 
 .segment-list table {
-  table-layout: fixed;
+  table-layout: auto;
+}
+
+.segment-list-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 th,
@@ -462,28 +464,28 @@ th {
 }
 
 .segment-col-export {
-  width: 70px;
+  width: 1%;
 }
 
 .segment-col-title {
-  width: 28%;
+  width: auto;
 }
 
 .segment-col-id {
-  width: 120px;
+  width: 1%;
 }
 
 .segment-col-time,
 .segment-col-duration {
-  width: 82px;
+  width: 1%;
 }
 
 .segment-col-confidence {
-  width: 108px;
+  width: 1%;
 }
 
 .segment-col-text {
-  width: 88px;
+  width: 1%;
 }
 
 tr {
@@ -571,6 +573,30 @@ tbody tr:hover {
 .dialog-message {
   margin: 0;
   color: #dbe6ea;
+}
+
+.scratch-duration-setting {
+  display: grid;
+  gap: 12px;
+}
+
+.scratch-duration-setting > label {
+  color: #dbe6ea;
+  font-size: 13px;
+}
+
+.scratch-duration-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.scratch-duration-input-row .input {
+  width: 140px;
+}
+
+.scratch-duration-input-row span {
+  color: #aebbc2;
 }
 
 .transcript-text {

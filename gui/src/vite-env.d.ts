@@ -19,6 +19,7 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-ts-text" }
+  | { type: "configure-scratch-preview" }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
   | { type: "set-whisper-device"; device: WhisperDevice }

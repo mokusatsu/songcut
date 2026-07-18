@@ -41,6 +41,10 @@ import type {
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const MIN_SEGMENT_SECONDS = 0.1;
+const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
+const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
+const MAX_SCRATCH_PREVIEW_MILLISECONDS = 5000;
+const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
@@ -63,6 +67,9 @@ type OutputItem = {
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playbackStopAtRef = useRef<number | null>(null);
+  const scratchPreviewTimeRef = useRef<number | null>(null);
+  const scratchPreviewTimerRef = useRef<number | null>(null);
+  const scratchPreviewGenerationRef = useRef(0);
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -78,7 +85,13 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [boundarySecondsInput, setBoundarySecondsInput] = useState("5");
   const [boundaryNudgeSecondsInput, setBoundaryNudgeSecondsInput] = useState("0.1");
+  const [scratchPreviewMilliseconds, setScratchPreviewMilliseconds] = useState(readScratchPreviewMilliseconds);
+  const [scratchPreviewMillisecondsInput, setScratchPreviewMillisecondsInput] = useState(
+    String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
+  );
+  const [scratchSettingsOpen, setScratchSettingsOpen] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
   const [split, setSplit] = useState(52);
@@ -120,6 +133,18 @@ export default function App() {
   useEffect(() => {
     selectedSegmentRef.current = selectedSegment;
   }, [selectedSegment]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SCRATCH_PREVIEW_STORAGE_KEY, String(scratchPreviewMilliseconds));
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [scratchPreviewMilliseconds]);
+
+  useEffect(() => {
+    if (scratchSettingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
+  }, [scratchSettingsOpen, scratchPreviewMilliseconds]);
 
   useEffect(() => {
     runningJobRef.current = runningJob;
@@ -170,6 +195,11 @@ export default function App() {
     const video = videoRef.current;
     if (!video) return;
     const onTime = () => {
+      const scratchTime = scratchPreviewTimeRef.current;
+      if (scratchTime !== null) {
+        setCurrentTime(scratchTime);
+        return;
+      }
       const stopAt = playbackStopAtRef.current;
       if (stopAt !== null && video.currentTime >= stopAt - 0.02) {
         playbackStopAtRef.current = null;
@@ -181,6 +211,10 @@ export default function App() {
       setCurrentTime(video.currentTime);
     };
     const onPlay = () => {
+      if (scratchPreviewTimeRef.current !== null) {
+        playbackStopAtRef.current = null;
+        return;
+      }
       if (playbackStopAtRef.current === null) {
         playbackStopAtRef.current = segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
       }
@@ -205,6 +239,12 @@ export default function App() {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);
+      if (scratchPreviewTimerRef.current !== null) {
+        window.clearTimeout(scratchPreviewTimerRef.current);
+        scratchPreviewTimerRef.current = null;
+      }
+      scratchPreviewGenerationRef.current += 1;
+      scratchPreviewTimeRef.current = null;
     };
   }, [videoUrl]);
 
@@ -381,9 +421,32 @@ export default function App() {
     );
   }
 
+  function cancelScratchPreview(restorePosition: boolean) {
+    scratchPreviewGenerationRef.current += 1;
+    if (scratchPreviewTimerRef.current !== null) {
+      window.clearTimeout(scratchPreviewTimerRef.current);
+      scratchPreviewTimerRef.current = null;
+    }
+    const target = scratchPreviewTimeRef.current;
+    scratchPreviewTimeRef.current = null;
+    if (target === null) return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    if (restorePosition) {
+      video.currentTime = target;
+      setCurrentTime(target);
+    }
+  }
+
+  function finishScratchPreview() {
+    cancelScratchPreview(true);
+  }
+
   function seek(time: number) {
     const video = videoRef.current;
     if (!video) return;
+    finishScratchPreview();
     video.currentTime = clamp(time, 0, duration || 0);
     setCurrentTime(video.currentTime);
     playbackStopAtRef.current = video.paused ? null : segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
@@ -392,11 +455,69 @@ export default function App() {
   function playFrom(time: number, stopAt?: number) {
     const video = videoRef.current;
     if (!video) return;
+    finishScratchPreview();
     const target = clamp(time, 0, duration || 0);
     video.currentTime = target;
     setCurrentTime(target);
     playbackStopAtRef.current = stopAt ?? segmentStopAtForTime(selectedSegmentRef.current, target);
     void video.play();
+  }
+
+  function playVideo() {
+    finishScratchPreview();
+    void videoRef.current?.play();
+  }
+
+  function pauseVideo() {
+    if (scratchPreviewTimeRef.current !== null) {
+      finishScratchPreview();
+      return;
+    }
+    videoRef.current?.pause();
+  }
+
+  function scratchPreview(time: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    const target = clamp(time, 0, duration || 0);
+
+    if (scratchPreviewTimeRef.current !== null) {
+      cancelScratchPreview(false);
+    } else if (!video.paused) {
+      video.currentTime = target;
+      setCurrentTime(target);
+      playbackStopAtRef.current = segmentStopAtForTime(selectedSegmentRef.current, target);
+      return;
+    }
+
+    const generation = scratchPreviewGenerationRef.current + 1;
+    scratchPreviewGenerationRef.current = generation;
+    playbackStopAtRef.current = null;
+    scratchPreviewTimeRef.current = target;
+    video.currentTime = target;
+    setCurrentTime(target);
+    void video
+      .play()
+      .then(() => {
+        if (scratchPreviewGenerationRef.current !== generation || scratchPreviewTimeRef.current === null) return;
+        scratchPreviewTimerRef.current = window.setTimeout(() => {
+          if (scratchPreviewGenerationRef.current === generation) finishScratchPreview();
+        }, scratchPreviewMilliseconds);
+      })
+      .catch(() => {
+        if (scratchPreviewGenerationRef.current === generation) finishScratchPreview();
+      });
+  }
+
+  function saveScratchPreviewMilliseconds() {
+    const milliseconds = normalizeScratchPreviewMilliseconds(
+      scratchPreviewMillisecondsInput,
+      scratchPreviewMilliseconds
+    );
+    setScratchPreviewMilliseconds(milliseconds);
+    setScratchPreviewMillisecondsInput(String(milliseconds));
+    setScratchSettingsOpen(false);
+    setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
   }
 
   function playStartBoundary() {
@@ -510,10 +631,10 @@ export default function App() {
           jumpBoundary(-1);
           break;
         case "play":
-          void videoRef.current?.play();
+          playVideo();
           break;
         case "pause":
-          videoRef.current?.pause();
+          pauseVideo();
           break;
         case "next-boundary":
           jumpBoundary(1);
@@ -529,6 +650,9 @@ export default function App() {
           break;
         case "export-ts-text":
           void exportTimestampComments();
+          break;
+        case "configure-scratch-preview":
+          setScratchSettingsOpen(true);
           break;
         case "prepare-whisper-model":
           void ensureWhisper().catch((error) => setMessage(String(error)));
@@ -627,8 +751,8 @@ export default function App() {
             onRight={() => nudgeNearestBoundary(1)}
           />
           <PlaybackControls
-            onPlay={() => videoRef.current?.play()}
-            onPause={() => videoRef.current?.pause()}
+            onPlay={playVideo}
+            onPause={pauseVideo}
             onStart={() => seek(0)}
             onPrev={() => jumpBoundary(-1)}
             onNext={() => jumpBoundary(1)}
@@ -652,8 +776,10 @@ export default function App() {
           currentTime={currentTime}
           playing={playing}
           zoom={zoom}
+          focusRequest={segmentFocusRequest}
           editing={waveformSeeking || handleEditing}
           onSeek={seek}
+          onScrub={scratchPreview}
           onSeekingChange={setWaveformSeeking}
           onHandleEditingChange={setHandleEditing}
           onChange={(patch) => selectedSegment && updateSegment(selectedSegment.id, patch)}
@@ -663,6 +789,7 @@ export default function App() {
           selectedId={selectedSegment?.id ?? null}
           onSelect={(segment) => {
             setSelectedSegmentId(segment.id);
+            setSegmentFocusRequest((request) => request + 1);
             seek(segment.start);
           }}
           onToggle={(segment, checked) => updateSegment(segment.id, { checked })}
@@ -705,6 +832,41 @@ export default function App() {
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
       />
+      <Dialog open={scratchSettingsOpen} title="Scratch Preview Duration" onClose={() => setScratchSettingsOpen(false)}>
+        <form
+          className="scratch-duration-setting"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveScratchPreviewMilliseconds();
+          }}
+        >
+          <label htmlFor="scratch-preview-milliseconds">Playback duration in milliseconds</label>
+          <div className="scratch-duration-input-row">
+            <Input
+              id="scratch-preview-milliseconds"
+              type="number"
+              min={MIN_SCRATCH_PREVIEW_MILLISECONDS}
+              max={MAX_SCRATCH_PREVIEW_MILLISECONDS}
+              step="1"
+              inputMode="numeric"
+              value={scratchPreviewMillisecondsInput}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setScratchPreviewMillisecondsInput(event.currentTarget.value)}
+            />
+            <span>ms</span>
+          </div>
+          <p className="dialog-message">
+            Enter a value from {MIN_SCRATCH_PREVIEW_MILLISECONDS} to {MAX_SCRATCH_PREVIEW_MILLISECONDS} milliseconds.
+          </p>
+          <div className="dialog-actions">
+            <Button type="button" variant="secondary" onClick={() => setScratchSettingsOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Save</Button>
+          </div>
+        </form>
+      </Dialog>
       <ExportProgressDialog open={exportProgressOpen} job={exportJob} onClose={() => setExportProgressOpen(false)} />
       <Dialog open={quitConfirmOpen} title="Quit songcut?" onClose={cancelQuit}>
         <p className="dialog-message">
@@ -863,13 +1025,16 @@ function TimelineStack(props: {
   currentTime: number;
   playing: boolean;
   zoom: number;
+  focusRequest: number;
   editing: boolean;
   onSeek: (time: number) => void;
+  onScrub: (time: number) => void;
   onSeekingChange: (seeking: boolean) => void;
   onHandleEditingChange: (editing: boolean) => void;
   onChange: (patch: Partial<Segment>) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
+  const handledFocusRequestRef = useRef(0);
   const [baseWidth, setBaseWidth] = useState(900);
   const width = Math.max(baseWidth, baseWidth * props.zoom);
   const safeDuration = Math.max(0.001, props.duration);
@@ -911,18 +1076,54 @@ function TimelineStack(props: {
     }
   }, [props.currentTime, props.duration, props.zoom, props.playing, props.editing, width]);
 
+  useEffect(() => {
+    if (handledFocusRequestRef.current === props.focusRequest) return;
+    const viewport = viewportRef.current;
+    const segment = props.selectedSegment;
+    if (!viewport || !segment || props.duration <= 0) return;
+
+    const contentWidth = viewport.scrollWidth;
+    const viewportWidth = viewport.clientWidth;
+    const startX = clamp(segment.start / props.duration, 0, 1) * contentWidth;
+    const endX = clamp(segment.end / props.duration, 0, 1) * contentWidth;
+    const segmentWidth = Math.max(0, endX - startX);
+    const target =
+      segmentWidth <= viewportWidth
+        ? startX + segmentWidth / 2 - viewportWidth / 2
+        : startX - viewportWidth * 0.1;
+
+    viewport.scrollLeft = clamp(target, 0, Math.max(0, contentWidth - viewportWidth));
+    handledFocusRequestRef.current = props.focusRequest;
+  }, [props.focusRequest, props.selectedSegment, props.duration]);
+
+  const scrollByWheel = (event: React.WheelEvent) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    if (maxScrollLeft <= 0) return;
+
+    const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    const multiplier = event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? viewport.clientWidth : 1;
+    const nextScrollLeft = clamp(viewport.scrollLeft + rawDelta * multiplier, 0, maxScrollLeft);
+    if (nextScrollLeft === viewport.scrollLeft) return;
+    event.preventDefault();
+    viewport.scrollLeft = nextScrollLeft;
+  };
+
   return (
-    <ScrollArea className="timeline-scroll-area" viewportRef={viewportRef} scrollbars={["horizontal"]}>
+    <ScrollArea className="timeline-scroll-area" viewportRef={viewportRef} scrollbars={["horizontal"]} onWheel={scrollByWheel}>
       <div className="timeline-content" style={{ width }}>
         <div className="timeline-playhead" style={{ left: (props.currentTime / safeDuration) * width }} />
         <WaveformTimeline
           duration={props.duration}
           waveform={props.waveform}
           segments={props.segments}
+          selectedSegmentId={props.selectedSegment?.id ?? null}
           currentTime={props.currentTime}
           width={width}
           viewportRef={viewportRef}
           onSeek={props.onSeek}
+          onScrub={props.onScrub}
           onSeekingChange={props.onSeekingChange}
         />
         <SegmentTimeline
@@ -943,10 +1144,12 @@ function WaveformTimeline(props: {
   duration: number;
   waveform: WaveformPoint[];
   segments: Segment[];
+  selectedSegmentId: string | null;
   currentTime: number;
   width: number;
   viewportRef: React.RefObject<HTMLDivElement>;
   onSeek: (time: number) => void;
+  onScrub: (time: number) => void;
   onSeekingChange: (seeking: boolean) => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
@@ -955,12 +1158,20 @@ function WaveformTimeline(props: {
   const mouseSeekingRef = useRef(false);
   const autoScrollTimerRef = useRef<number | null>(null);
   const lastAutoScrollTimeRef = useRef<number | null>(null);
-  const seekFromClientX = (clientX: number) => {
+  const timeFromClientX = (clientX: number) => {
     const viewport = props.viewportRef.current;
-    if (!viewport || props.duration <= 0) return;
+    if (!viewport || props.duration <= 0) return null;
     const rect = viewport.getBoundingClientRect();
     const x = clientX - rect.left + viewport.scrollLeft;
-    props.onSeek(clamp((x / props.width) * props.duration, 0, props.duration));
+    return clamp((x / props.width) * props.duration, 0, props.duration);
+  };
+  const seekFromClientX = (clientX: number) => {
+    const time = timeFromClientX(clientX);
+    if (time !== null) props.onSeek(time);
+  };
+  const scrubFromClientX = (clientX: number) => {
+    const time = timeFromClientX(clientX);
+    if (time !== null) props.onScrub(time);
   };
   const stopAutoScroll = () => {
     if (autoScrollTimerRef.current !== null) {
@@ -1003,7 +1214,7 @@ function WaveformTimeline(props: {
     lastAutoScrollTimeRef.current = now;
     const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
     viewport.scrollLeft = clamp(viewport.scrollLeft + speed * deltaSeconds, 0, maxScrollLeft);
-    seekFromClientX(clientX);
+    scrubFromClientX(clientX);
   };
   const updateAutoScroll = (clientX: number) => {
     dragClientXRef.current = clientX;
@@ -1023,12 +1234,12 @@ function WaveformTimeline(props: {
         props.onSeekingChange(true);
         event.currentTarget.setPointerCapture(event.pointerId);
         updateAutoScroll(event.clientX);
-        seekFromClientX(event.clientX);
+        scrubFromClientX(event.clientX);
       }}
       onPointerMove={(event) => {
         if ((event.buttons & 1) !== 1 || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
         updateAutoScroll(event.clientX);
-        seekFromClientX(event.clientX);
+        scrubFromClientX(event.clientX);
       }}
       onPointerUp={(event) => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -1064,11 +1275,11 @@ function WaveformTimeline(props: {
         mouseSeekingRef.current = true;
         props.onSeekingChange(true);
         updateAutoScroll(event.clientX);
-        seekFromClientX(event.clientX);
+        scrubFromClientX(event.clientX);
         const move = (moveEvent: MouseEvent) => {
           if (!mouseSeekingRef.current) return;
           updateAutoScroll(moveEvent.clientX);
-          seekFromClientX(moveEvent.clientX);
+          scrubFromClientX(moveEvent.clientX);
         };
         const up = () => {
           mouseSeekingRef.current = false;
@@ -1093,7 +1304,7 @@ function WaveformTimeline(props: {
             y="10"
             width={Math.max(1, ((segment.end - segment.start) / safeDuration) * props.width)}
             height="66"
-            fill="rgba(69, 179, 157, 0.26)"
+            fill={segment.id === props.selectedSegmentId ? "rgba(242, 109, 91, 0.3)" : "rgba(69, 179, 157, 0.26)"}
           />
         ))}
         {props.waveform.map((point, index) => {
@@ -1235,58 +1446,55 @@ function SegmentList(props: {
 }) {
   return (
     <div className="segment-list">
-      <table className="segment-list-header">
-        <SegmentColumnGroup />
-        <thead>
-          <tr>
-            <th>Export</th>
-            <th>Title</th>
-            <th>ID</th>
-            <th>Start</th>
-            <th>End</th>
-            <th>Duration</th>
-            <th>Confidence</th>
-            <th>Text</th>
-          </tr>
-        </thead>
-      </table>
       <ScrollArea className="segment-list-body" scrollbars={["vertical"]}>
         <table className="segment-list-table">
           <SegmentColumnGroup />
-        <tbody>
-          {props.segments.map((segment) => (
-            <tr key={segment.id} className={segment.id === props.selectedId ? "selected" : ""} onClick={() => props.onSelect(segment)}>
-              <td>
-                <Checkbox
-                  checked={segment.checked !== false}
-                  onChange={(event) => props.onToggle(segment, event.currentTarget.checked)}
-                  onClick={(event) => event.stopPropagation()}
-                />
-              </td>
-              <td>
-                <EditableTitleCell segment={segment} onChange={(title) => props.onTitleChange(segment, title)} />
-              </td>
-              <td>{segment.id}</td>
-              <td>{formatTime(segment.start)}</td>
-              <td>{formatTime(segment.end)}</td>
-              <td>{formatTime(segment.end - segment.start)}</td>
-              <td>{Math.round(segment.confidence * 100)}%</td>
-              <td>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onTranscript(segment);
-                  }}
-                >
-                  View
-                </Button>
-              </td>
+          <thead>
+            <tr>
+              <th>Export</th>
+              <th>Title</th>
+              <th>ID</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Duration</th>
+              <th>Confidence</th>
+              <th>Text</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {props.segments.map((segment) => (
+              <tr key={segment.id} className={segment.id === props.selectedId ? "selected" : ""} onClick={() => props.onSelect(segment)}>
+                <td>
+                  <Checkbox
+                    checked={segment.checked !== false}
+                    onChange={(event) => props.onToggle(segment, event.currentTarget.checked)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </td>
+                <td>
+                  <EditableTitleCell segment={segment} onChange={(title) => props.onTitleChange(segment, title)} />
+                </td>
+                <td>{segment.id}</td>
+                <td>{formatTime(segment.start)}</td>
+                <td>{formatTime(segment.end)}</td>
+                <td>{formatTime(segment.end - segment.start)}</td>
+                <td>{Math.round(segment.confidence * 100)}%</td>
+                <td>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onTranscript(segment);
+                    }}
+                  >
+                    View
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </ScrollArea>
     </div>
   );
@@ -1497,6 +1705,22 @@ function buildTimestampCommentText(items: OutputItem[]) {
 function segmentStopAtForTime(segment: Segment | null, time: number) {
   if (!segment || segment.end <= segment.start) return null;
   return time >= segment.start - 0.03 && time < segment.end - 0.03 ? segment.end : null;
+}
+
+function normalizeScratchPreviewMilliseconds(value: unknown, fallback = DEFAULT_SCRATCH_PREVIEW_MILLISECONDS) {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? clamp(Math.round(parsed), MIN_SCRATCH_PREVIEW_MILLISECONDS, MAX_SCRATCH_PREVIEW_MILLISECONDS)
+    : fallback;
+}
+
+function readScratchPreviewMilliseconds() {
+  try {
+    return normalizeScratchPreviewMilliseconds(window.localStorage.getItem(SCRATCH_PREVIEW_STORAGE_KEY));
+  } catch {
+    return DEFAULT_SCRATCH_PREVIEW_MILLISECONDS;
+  }
 }
 
 function parseBoundarySeconds(value: string) {

@@ -39,6 +39,7 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-ts-text" }
+  | { type: "configure-scratch-preview" }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
   | { type: "set-whisper-device"; device: WhisperDevice }
@@ -231,20 +232,6 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       ]
     },
     {
-      label: "View",
-      submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" }
-      ]
-    },
-    {
       label: "Export",
       submenu: [
         { label: "Export Movie", enabled: canExport, click: send({ type: "export-movie" }) },
@@ -254,6 +241,8 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
     {
       label: "Settings",
       submenu: [
+        { label: "Scratch Preview Duration...", click: send({ type: "configure-scratch-preview" }) },
+        { type: "separator" },
         { label: "Prepare Whisper Model", enabled: menuState.apiReady, click: send({ type: "prepare-whisper-model" }) },
         {
           label: "Singing Analysis Device",
@@ -274,6 +263,20 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
           }))
         },
         { label: "ffmpeg Check", enabled: menuState.apiReady, click: send({ type: "ffmpeg-check" }) }
+      ]
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
       ]
     },
     {
