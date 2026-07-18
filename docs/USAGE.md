@@ -48,13 +48,15 @@ exporting video clips or a timestamp comment.
 
 Use the boundary preview controls to play the beginning or end of the selected
 segment. Enter a different number of seconds to change the preview duration.
+The value is restored the next time the application starts.
 
 ## Fine-Tuning Segment Boundaries
 
 Use the boundary nudge controls to make small adjustments to segment boundaries.
 Enter a different number of seconds to change the adjustment amount. The app
 automatically chooses which boundary to adjust based on the current playback
-position.
+position. The default is 0.5 seconds, and the value is restored the next time
+the application starts.
 
 ## Timeline Zoom
 
@@ -64,6 +66,25 @@ Use the zoom controls to zoom the timeline in or out.
 
 Use the standard video playback controls to play, pause, or return to the start.
 You can also jump between segment boundaries.
+
+## Keyboard Shortcuts
+![keyboard shortcut](image/keyboard-shortcuts.en.png)
+
+| Key | Action |
+| --- | --- |
+| `A` / `D` | Play the start / end boundary of the selected segment |
+| `W` / `S` | Select the previous / next segment |
+| `Q` / `E` | Nudge the nearest boundary left / right |
+| `Space` | Toggle play / pause |
+| `Ctrl+A` / `Ctrl+D` | Jump to the previous / next boundary |
+| `Z` / `X` / `C` | Zoom out / reset to 100% / zoom in |
+
+Shortcuts do not repeat when a key is held down. They are disabled while a
+form control has focus, while an IME is composing text, and while a dialog is
+open. Segment selection stops at the first and last rows instead of wrapping.
+
+The vertical pane split position is also restored the next time the application
+starts.
 
 # Exporting
 
