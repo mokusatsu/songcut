@@ -49,6 +49,18 @@ Force the acoustic detector instead of metadata timestamps:
 python -m songcut.cli analyze path\to\input.mp4 --timestamp-source acoustic --out out-acoustic
 ```
 
+The default analysis profile is `intel-258v`. To make the hardware-oriented
+defaults explicit:
+
+```powershell
+python -m songcut.cli analyze path\to\input.mp4 --profile intel-258v --device auto --out out
+```
+
+`--device auto` is the normal path. It records OpenVINO device availability and
+uses the current DSP baseline unless a compatible singing model is configured.
+`--device npu` and `--device gpu` are strict checks and fail when the requested
+device is unavailable.
+
 ## Evaluate And Review
 
 Evaluate an existing `segments.json` file against timestamp truth:
@@ -114,6 +126,11 @@ python -m songcut.cli devices
 then uses the current DSP baseline unless an OpenVINO singing model is
 configured. `--device npu` and `--device gpu` are strict checks: they fail fast
 when the requested device is unavailable.
+
+Every analysis output records diagnostic fields in `segments.json`, including
+`profile`, `timestamp_source`, `model_versions`, `backend`,
+`device_requested`, `device_used`, `available_devices`, `fallbacks`,
+`ffmpeg_path`, and `ffprobe_path`.
 
 ## Notes
 

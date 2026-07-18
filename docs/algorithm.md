@@ -10,6 +10,11 @@
 
 Authored timestamps are treated as high-confidence because many singing streams publish set lists in the YouTube description or embedded metadata. They are still written to the same editable segment format as acoustic detections.
 
+Evaluation should keep the original v1 song-stream cases in view: talk-only,
+talk with BGM, singing with accompaniment, original-vocal BGM, and long
+multi-hour streams. The working target for curated truth sets is at least 95%
+recall for singing candidates with a median boundary error within 3 seconds.
+
 ## Acoustic DSP baseline
 
 The baseline uses only `ffmpeg` and NumPy so it works before OpenVINO or ONNX models are installed.
@@ -36,14 +41,40 @@ This intentionally favors recall for full songs. Short humming and incidental si
 
 ## Intel/OpenVINO path
 
-The code detects OpenVINO devices when OpenVINO is installed. Strict `--device npu` and `--device gpu` fail if the requested device is unavailable; `--device auto` records available devices and falls back to the DSP baseline unless a singing model is configured.
+The code detects OpenVINO devices when OpenVINO is installed. The target local
+inference environment is Core Ultra 7 258V/Lunar Lake-class Windows hardware.
+OpenVINO is the primary runtime direction for learned inference; Vulkan is not a
+primary v1 backend. Strict `--device npu` and `--device gpu` fail if the
+requested device is unavailable; `--device auto` records available devices and
+falls back to the DSP baseline unless a singing model is configured.
 
 The intended model replacement point is the frame scoring stage:
 
-- Input: fixed-shape audio window or fixed-shape feature tensor.
-- Output: per-frame probabilities for at least `singing`, `speech`, and `music`.
+- Input: fixed-shape audio window or fixed-shape feature tensor, typically using
+  a 0.5 second hop and 2 to 4 seconds of context.
+- Output: per-frame probabilities for at least `singing`, `speech`, and
+  `music`.
 - Device priority: `NPU -> GPU -> CPU`, using explicit `NPU` or `AUTO:NPU,GPU,CPU`.
-- Model format: OpenVINO IR or ONNX converted to OpenVINO-compatible fixed shapes.
+- Model format: OpenVINO IR or ONNX converted to OpenVINO-compatible fixed
+  shapes, with INT8 or FP16 preferred when quality holds.
+- Feature fusion: learned `singing`/`speech`/`music` probabilities should be
+  combined with VAD, pitch continuity, volume, and spectral features.
+- Classification intent: talk with BGM should score as high speech with weak
+  pitch continuity; singing with accompaniment should score as high singing
+  with stable pitch continuity.
+- Device split: NPU is best for fixed-shape classification, VAD, and lightweight
+  singing decisions. GPU or CPU remain appropriate for unsupported operations,
+  dynamic shapes, long chunks, and optional source separation.
 
 When such a model is added, the segment post-processing and JSON/export/review contracts should stay unchanged.
 
+Heavy source separation, such as Demucs-style processing, is not required for
+v1. If it becomes useful, it should run only on candidate ranges as an optional
+high-accuracy mode.
+
+## Analysis JSON contract
+
+`segments.json` records the runtime context needed to compare DSP and future
+OpenVINO outputs: `profile`, `timestamp_source`, `model_versions`, `backend`,
+`device_requested`, `device_used`, `available_devices`, `fallbacks`,
+`backend_note`, `ffmpeg_path`, and `ffprobe_path`.

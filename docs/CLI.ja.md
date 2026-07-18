@@ -49,6 +49,18 @@ python -m songcut.cli analyze path\to\input.mp4 --out out --guide path\to\input.
 python -m songcut.cli analyze path\to\input.mp4 --timestamp-source acoustic --out out-acoustic
 ```
 
+既定の解析 profile は `intel-258v` です。ハードウェア向けの既定値を明示する場合は
+次のように指定できます。
+
+```powershell
+python -m songcut.cli analyze path\to\input.mp4 --profile intel-258v --device auto --out out
+```
+
+`--device auto` が通常の経路です。OpenVINO デバイスの利用可否を記録し、互換性のある
+歌唱検出モデルが設定されていない場合は現在の DSP baseline を使います。
+`--device npu` と `--device gpu` は厳密なチェックで、要求したデバイスが使えない場合に
+失敗します。
+
 ## 評価とレビュー
 
 既存の `segments.json` を正解タイムスタンプと比較します。
@@ -113,6 +125,10 @@ python -m songcut.cli devices
 singing model が設定されていない限り現在の DSP baseline を使います。`--device npu`
 と `--device gpu` は厳密なチェックで、要求したデバイスが利用できない場合は即座に
 失敗します。
+
+各解析結果の `segments.json` には、`profile`、`timestamp_source`、`model_versions`、
+`backend`、`device_requested`、`device_used`、`available_devices`、`fallbacks`、
+`ffmpeg_path`、`ffprobe_path` などの診断フィールドを記録します。
 
 ## メモ
 

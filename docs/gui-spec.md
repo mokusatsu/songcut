@@ -117,6 +117,11 @@ ffmpeg discovery:
 ## Analysis
 
 - `Analyze` starts a backend job.
+- The default analysis settings are profile `intel-258v` and device `auto`
+  unless future settings expose them.
+- Device `auto` follows the shared backend policy: prefer OpenVINO
+  `NPU -> GPU -> CPU` when a compatible fixed-shape singing model exists, and
+  otherwise use the current DSP baseline while recording fallback diagnostics.
 - The job first runs the existing singing segment pipeline.
 - Timestamp source behavior:
   - `auto`: use authored metadata ranges when available.
@@ -214,10 +219,13 @@ Intended final behavior:
 
 Current implementation state:
 
-- The backend already probes keyframes and returns a GOP plan.
-- The current exporter performs a single high-quality re-encode at 1.5x source
-  bitrate.
-- The lossless-middle GOP concat implementation is still a follow-up item.
+- The backend probes source media and keyframes, then builds a GOP plan.
+- Supported H.264/AV1 MP4/MOV, VP8/VP9/AV1 WebM, and
+  H.264/VP8/VP9/AV1 MKV sources use the smart copy/encode/concat pipeline.
+- Unsupported codec/container combinations fall back to a full high-quality
+  re-encode at 1.5x source bitrate.
+- If the smart pipeline fails during export, the backend retries with the same
+  full re-encode fallback and records the fallback reason in the returned plan.
 
 ## REST API
 
