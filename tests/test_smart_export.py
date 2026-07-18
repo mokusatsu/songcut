@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 from songcut.smart_export import (
+    CREATE_NO_WINDOW,
     SmartRenderPlan,
     SmartRenderSpan,
     SourceMediaInfo,
@@ -208,6 +209,7 @@ class SmartExportTests(unittest.TestCase):
                 result = export_smart_clip(Path("ffmpeg"), Path("ffprobe"), Path("source.mp4"), target, start=10.0, end=20.0)
 
         commands = [call.args[0] for call in run.call_args_list]
+        self.assertTrue(all(call.kwargs.get("creationflags") == CREATE_NO_WINDOW for call in run.call_args_list))
         self.assertEqual(result["target"], str(target))
         self.assertEqual(len(commands), 6)
         self.assertTrue(any(["-c:v", "libx264"] == command[index : index + 2] for command in commands for index in range(len(command) - 1)))

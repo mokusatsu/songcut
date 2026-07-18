@@ -8,28 +8,43 @@ existing songcut CLI pipeline.
 - Target platform for v1: Windows desktop.
 - App shell: Electron + React + Vite.
 - UI component style: local shadcn/ui-inspired primitives.
-- Backend: Python FastAPI REST server launched by the Electron main process.
-- Packaged backend: PyInstaller executable named `songcut-api.exe` is the target
-  packaging shape, while development runs `python -m songcut.api`.
+- Backend: Python FastAPI REST server.
+- Packaged backend: a top-level PyInstaller `songcut.exe` Python launcher starts
+  the API in-process, then starts Electron as its child process. Development can
+  still run `python -m songcut.api` or let Electron launch the API.
 - Deno Desktop was evaluated first, but Electron is the v1 choice because native
   file path access and drag-and-drop are core requirements.
 
 ## Process model
 
-1. Electron starts.
-2. Electron finds a free localhost port.
-3. Electron launches the Python API process with that port.
-4. The renderer asks the preload bridge for the REST base URL.
-5. The renderer calls REST endpoints for probing, analysis, model download, and
+Packaged process model:
+
+1. Top-level `songcut.exe` starts.
+2. The Python launcher finds a free localhost port and starts the API on it.
+3. The Python launcher starts `electron/songcut-electron.exe` with
+   `SONGCUT_API_BASE_URL`.
+4. Electron uses the provided API URL instead of launching another backend.
+5. The renderer asks the preload bridge for the REST base URL.
+6. The renderer calls REST endpoints for probing, analysis, model download, and
    export.
-6. Long-running work is represented as jobs. The renderer polls `/jobs/{id}`.
+7. Long-running work is represented as jobs. The renderer polls `/jobs/{id}`.
+8. If the user closes the window while a job is queued or running, the renderer
+   shows a quit confirmation dialog. Confirming quits the whole app.
 
 Development environment variables:
 
 - `SONGCUT_PYTHON`: Python executable to use instead of `python`.
 - `SONGCUT_REPO_ROOT`: repository root to use as the API working directory.
 - `SONGCUT_API_EXE`: packaged backend executable to use instead of Python.
+- `SONGCUT_API_BASE_URL`: existing API URL supplied by the packaged Python
+  launcher.
 - `SONGCUT_MODEL_DIR`: root directory for downloaded OpenVINO Whisper models.
+
+ffmpeg discovery:
+
+- Search recursively under the packaged executable root or repository root for a
+  directory containing both `ffmpeg.exe` and `ffprobe.exe`.
+- If no pair is found under that root, fall back to `PATH`.
 
 ## Main screen layout
 

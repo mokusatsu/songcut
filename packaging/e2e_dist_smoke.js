@@ -557,7 +557,7 @@ if ($env:SONGCUT_WINDOW_PID) {
   }
 }
 if ($handle -eq [IntPtr]::Zero) {
-  $process = Get-Process -Name "songcut" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+  $process = Get-Process -Name "songcut-electron","songcut" -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
   if ($process) {
     $handle = $process.MainWindowHandle
   }
@@ -618,7 +618,7 @@ function cleanup(processHandle, cdp) {
   try {
     processHandle.kill();
   } catch {}
-  for (const imageName of ["songcut-api.exe", "songcut.exe"]) {
+  for (const imageName of ["songcut.exe", "songcut-electron.exe"]) {
     try {
       execFileSync("taskkill", ["/IM", imageName, "/F"], { stdio: "ignore" });
     } catch {}
@@ -629,21 +629,12 @@ function cleanup(processHandle, cdp) {
   ensureTestVideo();
   const env = {
     ...process.env,
-    SONGCUT_GUI_DIST: "1",
-    SONGCUT_API_EXE: path.join(root, "backend", "songcut-api", "songcut-api.exe"),
-    SONGCUT_REPO_ROOT: root,
-    SONGCUT_FFMPEG_DIR: path.join(root, "third_party", "ffmpeg", "bin"),
-    SONGCUT_MODEL_DIR: path.join(root, "models"),
-    OV_CACHE_DIR: path.join(root, "ov-cache"),
-    HF_HOME: path.join(root, "hf-home"),
-    HF_HUB_DISABLE_TELEMETRY: "1",
-    OV_TELEMETRY_ENABLE: "NO",
     SONGCUT_E2E_VIDEO: input,
     SONGCUT_E2E_OUTPUT_DIR: outputDir
   };
   const processHandle = spawn(
-    path.join(root, "electron", "songcut.exe"),
-    [`--remote-debugging-port=${port}`, path.join(root, "app")],
+    path.join(root, "songcut.exe"),
+    [`--remote-debugging-port=${port}`],
     { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }
   );
   processHandle.stdout.on("data", (data) => log(`[app-out] ${data.toString().trim()}`));
@@ -667,6 +658,7 @@ function cleanup(processHandle, cdp) {
       `(() => ({
         buttons: [...document.querySelectorAll("button")].map((button) => button.innerText || button.title),
         hasBoundarySecondsInput: !!document.querySelector(".boundary-seconds-input[aria-label='Boundary seconds']"),
+        hasBoundaryNudgeSecondsInput: !!document.querySelector(".boundary-nudge-seconds-input[aria-label='Boundary nudge seconds']"),
         timelineViewportCount: document.querySelectorAll(".timeline-scroll-area .scroll-area-viewport").length,
         hasSegmentList: !!document.querySelector(".segment-list .segment-list-body.scroll-area .scroll-area-viewport"),
         segmentHeaderOutsideScrollArea: !!document.querySelector(".segment-list > .segment-list-header") &&
@@ -678,11 +670,14 @@ function cleanup(processHandle, cdp) {
     assertPass(
       initial.buttons.includes("Play start boundary") &&
         initial.buttons.includes("Play end boundary") &&
+        initial.buttons.includes("Nudge nearest boundary left") &&
+        initial.buttons.includes("Nudge nearest boundary right") &&
         initial.buttons.includes("Export TS") &&
         initial.hasSegmentList &&
         initial.segmentHeaderOutsideScrollArea &&
-        initial.hasBoundarySecondsInput,
-      "Boundary playback or TS export controls are missing from the toolbar.",
+        initial.hasBoundarySecondsInput &&
+        initial.hasBoundaryNudgeSecondsInput,
+      "Boundary playback, nudge, or TS export controls are missing from the toolbar.",
       initial
     );
     assertPass(await capturePng(cdp, initialScreenshotPath, "INITIAL_RENDER", processHandle), "Initial render screenshot could not be captured.");
@@ -980,6 +975,22 @@ function cleanup(processHandle, cdp) {
       "boundary integer normalization"
     );
     log("BOUNDARY_SECONDS_INTEGER_OK", boundaryInteger);
+    const boundaryNudgeDefaults = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".boundary-nudge-seconds-input");
+        return input ? { value: input.value, step: input.step, min: input.min } : null;
+      })()`
+    );
+    assertPass(
+      boundaryNudgeDefaults &&
+        boundaryNudgeDefaults.value === "0.1" &&
+        boundaryNudgeDefaults.step === "0.1" &&
+        boundaryNudgeDefaults.min === "0.1",
+      "Boundary nudge seconds input does not default to 0.1 second steps.",
+      boundaryNudgeDefaults
+    );
+    log("BOUNDARY_NUDGE_SECONDS_DEFAULT_OK", boundaryNudgeDefaults);
     const boundaryInputSet = await evaluate(
       cdp,
       `(() => {
@@ -1196,6 +1207,30 @@ function cleanup(processHandle, cdp) {
       "export progress dialog"
     );
     log("EXPORT_PROGRESS_DIALOG_OK", progressOpen);
+    await evaluate(cdp, `window.close(); true`);
+    const quitConfirm = await waitFor(
+      cdp,
+      `(() => {
+        const dialogs = [...document.querySelectorAll(".dialog")].map((node) => node.innerText);
+        return dialogs.some((text) => text.includes("Quit songcut?") && text.includes("Quit anyway") && text.includes("Cancel"))
+          ? dialogs
+          : false;
+      })()`,
+      10_000,
+      "running task quit confirmation"
+    );
+    log("RUNNING_TASK_QUIT_CONFIRM_OK", quitConfirm);
+    await clickButton(cdp, "Cancel");
+    await waitFor(
+      cdp,
+      `(() => {
+        const text = document.body.innerText;
+        return !text.includes("Quit songcut?") && text.includes("Export Progress");
+      })()`,
+      10_000,
+      "quit confirmation cancel"
+    );
+    log("RUNNING_TASK_QUIT_CANCEL_OK");
     const exported = await waitForExportedFile();
     assertPass(
       exported.some((file) => file.name === "01_Smoke Song Edited.mp4"),
@@ -1237,7 +1272,7 @@ function cleanup(processHandle, cdp) {
   }
 })().catch((error) => {
   log("E2E_FAIL", { message: error.message, stack: error.stack });
-  for (const imageName of ["songcut-api.exe", "songcut.exe"]) {
+  for (const imageName of ["songcut.exe", "songcut-electron.exe"]) {
     try {
       execFileSync("taskkill", ["/IM", imageName, "/F"], { stdio: "ignore" });
     } catch {}

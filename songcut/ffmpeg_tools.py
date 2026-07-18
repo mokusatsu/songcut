@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
-import subprocess
+import sys
+import win_safesubprocess as subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -15,44 +14,77 @@ class FfmpegPaths:
     ffprobe: Path
 
 
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _candidate_dirs(root: Path | None = None) -> Iterable[Path]:
-    env_dir = os.environ.get("SONGCUT_FFMPEG_DIR")
-    if env_dir:
-        env_path = Path(env_dir)
-        yield env_path
-        yield env_path / "bin"
+def _search_root(root: Path | None = None) -> Path:
+    if root is not None:
+        return root
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return repo_root()
 
-    base = root or repo_root()
-    yield base / "third_party" / "ffmpeg" / "bin"
-    yield base / "third_party" / "ffmpeg"
+
+def _paired_tools(directory: Path) -> FfmpegPaths | None:
+    ffmpeg = directory / "ffmpeg.exe"
+    ffprobe = directory / "ffprobe.exe"
+    if ffmpeg.exists() and ffprobe.exists():
+        return FfmpegPaths(ffmpeg=ffmpeg, ffprobe=ffprobe)
+    return None
+
+
+def _recursive_ffmpeg(root: Path) -> FfmpegPaths | None:
+    common_dirs = [
+        root / "third_party" / "ffmpeg" / "bin",
+        root / "third_party" / "ffmpeg",
+    ]
+    seen: set[Path] = set()
+    for directory in common_dirs:
+        resolved = directory.resolve() if directory.exists() else directory
+        seen.add(resolved)
+        paths = _paired_tools(directory)
+        if paths:
+            return paths
+
+    if not root.exists():
+        return None
+
+    for ffmpeg in sorted(root.rglob("ffmpeg.exe")):
+        directory = ffmpeg.parent
+        resolved = directory.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths = _paired_tools(directory)
+        if paths:
+            return paths
+    return None
 
 
 def find_ffmpeg(root: Path | None = None) -> FfmpegPaths:
-    for directory in _candidate_dirs(root):
-        ffmpeg = directory / "ffmpeg.exe"
-        ffprobe = directory / "ffprobe.exe"
-        if ffmpeg.exists() and ffprobe.exists():
-            return FfmpegPaths(ffmpeg=ffmpeg, ffprobe=ffprobe)
+    search_root = _search_root(root)
+    bundled = _recursive_ffmpeg(search_root)
+    if bundled:
+        return bundled
 
     ffmpeg_on_path = shutil.which("ffmpeg")
     ffprobe_on_path = shutil.which("ffprobe")
     if ffmpeg_on_path and ffprobe_on_path:
         return FfmpegPaths(ffmpeg=Path(ffmpeg_on_path), ffprobe=Path(ffprobe_on_path))
 
-    searched = ", ".join(str(path) for path in _candidate_dirs(root))
     raise FileNotFoundError(
-        "ffmpeg.exe and ffprobe.exe were not found. Put them under "
-        f"third_party/ffmpeg/bin or set SONGCUT_FFMPEG_DIR. Searched: {searched}"
+        "ffmpeg.exe and ffprobe.exe were not found. Searched recursively under "
+        f"{search_root} first, then searched PATH."
     )
 
 
 def ffprobe_json(ffprobe: Path, source: Path, extra_args: list[str]) -> dict:
     command = [str(ffprobe), "-v", "error", *extra_args, "-of", "json", str(source)]
-    result = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
     return json.loads(result.stdout or "{}")
 
 
@@ -90,7 +122,7 @@ def read_pcm_s16le(
         "s16le",
         "pipe:1",
     ]
-    result = subprocess.run(command, check=True, capture_output=True)
+    result = subprocess.run(command, check=True, capture_output=True, creationflags=CREATE_NO_WINDOW)
     return result.stdout
 
 
@@ -125,4 +157,4 @@ def export_clip(
         *codec_args,
         str(target),
     ]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, creationflags=CREATE_NO_WINDOW)

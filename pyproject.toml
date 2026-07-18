@@ -5,6 +5,7 @@ description = "Local VSinger singing-stream segment extractor for Intel CPU/NPU-
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=2.0",
+  "win-safesubprocess>=0.1,<0.2",
 ]
 
 [project.optional-dependencies]

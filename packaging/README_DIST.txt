@@ -1,16 +1,20 @@
 songcut portable package
 
 Run:
-  Start-Songcut.bat
+  songcut.exe
 
 Contents:
+  songcut.exe          Python launcher and only user-facing entry point
+  runtime\             Python runtime files for the launcher
   app\                 Electron application files
-  electron\            Electron runtime, with songcut.exe as the launcher
-  backend\songcut-api\ PyInstaller-built Python REST API
-  third_party\ffmpeg\  bundled ffmpeg and ffprobe
+  electron\            Electron runtime, with songcut-electron.exe as the GUI shell
+  third_party\ffmpeg\  optional bundled ffmpeg and ffprobe
   models\              bundled OpenVINO Whisper small model
   ov-cache\            OpenVINO runtime cache
   hf-home\             Hugging Face cache used only if a model download is needed
+  logs\                launcher and GUI process logs
 
-The batch file sets the required environment variables and launches the GUI.
-Keep these folders together when moving this package.
+songcut.exe starts the local Python API, then starts Electron as its child
+process. ffmpeg.exe and ffprobe.exe are discovered by recursively searching this
+package folder first, then by searching PATH. Keep these folders together when
+moving this package.

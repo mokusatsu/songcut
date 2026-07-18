@@ -9,9 +9,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: ChildProcessWithoutNullStreams | null = null;
 let apiBaseUrl = "";
+let allowClose = false;
+let closeRequestPending = false;
 
 async function createWindow() {
-  apiBaseUrl = await startPythonApi();
+  apiBaseUrl = await resolveApiBaseUrl();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 960,
@@ -24,6 +26,13 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: false
     }
+  });
+  mainWindow.on("close", (event) => {
+    if (allowClose) return;
+    event.preventDefault();
+    if (closeRequestPending) return;
+    closeRequestPending = true;
+    mainWindow?.webContents.send("songcut:close-requested");
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -43,9 +52,21 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", stopPythonApi);
+app.on("before-quit", () => {
+  allowClose = true;
+  stopPythonApi();
+});
 
 ipcMain.handle("songcut:apiBaseUrl", () => apiBaseUrl);
+
+ipcMain.handle("songcut:confirm-close", () => {
+  allowClose = true;
+  app.quit();
+});
+
+ipcMain.handle("songcut:cancel-close", () => {
+  closeRequestPending = false;
+});
 
 ipcMain.handle("songcut:selectVideo", async () => {
   if (process.env.SONGCUT_E2E_VIDEO) return process.env.SONGCUT_E2E_VIDEO;
@@ -72,6 +93,15 @@ ipcMain.handle("songcut:selectOutputDirectory", async () => {
 });
 
 ipcMain.handle("songcut:fileUrl", (_event, filePath: string) => pathToFileURL(filePath).toString());
+
+async function resolveApiBaseUrl(): Promise<string> {
+  const externalBaseUrl = process.env.SONGCUT_API_BASE_URL;
+  if (externalBaseUrl) {
+    await waitForHealth(externalBaseUrl);
+    return externalBaseUrl;
+  }
+  return startPythonApi();
+}
 
 async function startPythonApi(): Promise<string> {
   const port = await findFreePort();

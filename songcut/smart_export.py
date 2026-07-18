@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tempfile
+import win_safesubprocess as subprocess
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -12,6 +12,7 @@ from .ffmpeg_tools import ffprobe_json
 MIN_SPAN_SECONDS = 0.001
 DEFAULT_SOURCE_VIDEO_BITRATE = 2_000_000
 MIN_REENCODE_BITRATE = 300_000
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 @dataclass(frozen=True)
@@ -440,6 +441,7 @@ def _run_ffmpeg(command: list[str]) -> None:
         text=True,
         encoding="utf-8",
         errors="replace",
+        creationflags=CREATE_NO_WINDOW,
     )
 
 

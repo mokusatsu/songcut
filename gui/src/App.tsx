@@ -45,6 +45,7 @@ export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playbackStopAtRef = useRef<number | null>(null);
   const selectedSegmentRef = useRef<Segment | null>(null);
+  const runningJobRef = useRef<JobRecord | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -70,6 +71,7 @@ export default function App() {
   const [outputOpen, setOutputOpen] = useState(false);
   const [timestampCopyCount, setTimestampCopyCount] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
@@ -88,13 +90,28 @@ export default function App() {
       : transcriptionJob && transcriptionJob.status !== "completed"
         ? transcriptionJob
         : job;
+  const runningJob = [exportJob, transcriptionJob, job].find(isRunningJob) ?? null;
 
   useEffect(() => {
     selectedSegmentRef.current = selectedSegment;
   }, [selectedSegment]);
 
   useEffect(() => {
+    runningJobRef.current = runningJob;
+  }, [runningJob]);
+
+  useEffect(() => {
     window.songcut.apiBaseUrl().then(setApiBaseUrl).catch((error) => setMessage(String(error)));
+  }, []);
+
+  useEffect(() => {
+    return window.songcut.onCloseRequested(() => {
+      if (runningJobRef.current) {
+        setQuitConfirmOpen(true);
+        return;
+      }
+      void window.songcut.confirmClose();
+    });
   }, []);
 
   useEffect(() => {
@@ -230,6 +247,16 @@ export default function App() {
     } catch (error) {
       setMessage(`Export failed: ${String(error)}`);
     }
+  }
+
+  function cancelQuit() {
+    setQuitConfirmOpen(false);
+    void window.songcut.cancelClose();
+  }
+
+  function confirmQuit() {
+    setQuitConfirmOpen(false);
+    void window.songcut.confirmClose();
   }
 
   function buildOutputItems(): OutputItem[] {
@@ -486,8 +513,33 @@ export default function App() {
         </div>
       </Dialog>
       <ExportProgressDialog open={exportProgressOpen} job={exportJob} onClose={() => setExportProgressOpen(false)} />
+      <Dialog open={quitConfirmOpen} title="Quit songcut?" onClose={cancelQuit}>
+        <p className="dialog-message">
+          {runningJob
+            ? `${jobKindLabel(runningJob.kind)} is still running. Quitting now will stop the task and any external processes it started.`
+            : "A task is still running. Quitting now will stop it."}
+        </p>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={cancelQuit}>
+            Cancel
+          </Button>
+          <Button onClick={confirmQuit}>Quit anyway</Button>
+        </div>
+      </Dialog>
     </main>
   );
+}
+
+function isRunningJob(job: JobRecord | null | undefined): job is JobRecord {
+  return job?.status === "queued" || job?.status === "running";
+}
+
+function jobKindLabel(kind: string) {
+  if (kind === "analysis") return "Analysis";
+  if (kind === "transcription") return "Transcription";
+  if (kind === "export") return "Export";
+  if (kind === "download-whisper") return "Whisper model download";
+  return "A task";
 }
 
 function BoundaryControls(props: {

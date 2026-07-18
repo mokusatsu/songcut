@@ -7,7 +7,8 @@ The default profile targets an Intel Core Ultra 7 258V style local machine:
 - Prefer authored set-list timestamps in the video metadata when they exist.
 - Fall back to a local NumPy DSP detector when timestamps are unavailable.
 - Detect OpenVINO devices when OpenVINO is installed, with intended priority `NPU -> GPU -> CPU`.
-- Use the bundled `third_party/ffmpeg/bin/ffmpeg.exe` and `ffprobe.exe`.
+- Use `ffmpeg.exe` and `ffprobe.exe` discovered under the app/repository root,
+  falling back to executables on `PATH`.
 
 ## Usage
 
@@ -71,9 +72,11 @@ Guide lines may use either `80:45 Title` or `1:20:45 Title`. A line with one tim
 
 ## Desktop GUI
 
-The GUI lives in `gui/` and uses Electron + React + Vite. Electron launches the
-Python REST API and talks to it over localhost. The renderer supports both a
-native file-open dialog and drag-and-drop video loading.
+The GUI lives in `gui/` and uses Electron + React + Vite. In development,
+Electron can launch the Python REST API and talk to it over localhost. In the
+portable distribution, the top-level Python launcher starts the API first, then
+starts Electron as a managed child process. The renderer supports both a native
+file-open dialog and drag-and-drop video loading.
 
 Install frontend dependencies from `gui/`, then run:
 
@@ -91,6 +94,10 @@ The backend API entry point is:
 ```powershell
 C:\Users\lain\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m songcut.api --host 127.0.0.1 --port 8765
 ```
+
+The portable package entry point is `songcut.exe` at the package root. Packaged
+ffmpeg is optional: the app searches the package root recursively for a matching
+`ffmpeg.exe`/`ffprobe.exe` pair, then falls back to `PATH`.
 
 GUI-specific Python dependencies are grouped under `songcut[gui]`. Whisper uses
 the pre-converted OpenVINO `OpenVINO/whisper-small-fp16-ov` download by default,

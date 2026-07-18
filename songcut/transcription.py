@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import tempfile
+import win_safesubprocess as subprocess
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,6 +18,7 @@ from .hardware import detect_openvino_devices
 WHISPER_MODEL_ID = "openai/whisper-small"
 WHISPER_MODEL_NAME = "whisper-small"
 WHISPER_OPENVINO_REPO_ID = "OpenVINO/whisper-small-fp16-ov"
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ def ensure_whisper_model(model_dir: Path | None = None, *, quantized_int8: bool 
         ]
         if quantized_int8:
             command.extend(["--weight-format", "int8"])
-        subprocess.run(command, check=True)
+        subprocess.run(command, check=True, creationflags=CREATE_NO_WINDOW)
     else:
         download_preconverted_whisper(tmp_target)
 
@@ -294,7 +295,7 @@ def extract_segment_wav(ffmpeg: Path, source: Path, target: Path, *, start: floa
         "wav",
         str(target),
     ]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, creationflags=CREATE_NO_WINDOW)
 
 
 def read_wav_mono_16k(path: Path) -> np.ndarray:
