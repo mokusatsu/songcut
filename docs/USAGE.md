@@ -14,6 +14,15 @@ After installation, restart your terminal and download the video:
 yt-dlp "<YouTube URL>"
 ```
 
+# Installing FFmpeg
+
+If the app reports that it cannot find FFmpeg at startup, install it with the
+following command, then restart the app:
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
 # Loading and Analyzing a Video
 
 ![Load and analyze](image/load-analyze.png)

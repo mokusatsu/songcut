@@ -938,7 +938,7 @@ export default function App() {
       />
       <Dialog open={timestampCopyCount !== null} title="Export TS" onClose={() => setTimestampCopyCount(null)}>
         <p className="dialog-message">
-          {`クリップボードにコピーしました。${timestampCopyCount ?? 0}件のタイムスタンプ行を含みます。`}
+          {`Copied ${timestampCopyCount ?? 0} timestamp ${timestampCopyCount === 1 ? "line" : "lines"} to the clipboard.`}
         </p>
         <div className="dialog-actions">
           <Button onClick={() => setTimestampCopyCount(null)}>OK</Button>

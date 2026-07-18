@@ -1437,7 +1437,7 @@ function cleanup(processHandle, cdp) {
       `(() => {
         const dialog = document.querySelector(".dialog");
         const text = dialog?.innerText || "";
-        return text.includes("Export TS") && text.includes("クリップボードにコピーしました") ? text : false;
+        return text.includes("Export TS") && text.includes("Copied 2 timestamp lines to the clipboard.") ? text : false;
       })()`,
       5000,
       "TS comment copy dialog"

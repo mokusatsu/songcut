@@ -11,6 +11,14 @@ winget install DenoLand.Deno
 ```
 yt-dlp \[youtube-url\]
 ```
+
+# ffmpegの準備
+起動時にffmpegが見つからないエラーが出る場合、下記のコマンドでインストールしてアプリを再起動してください。
+```
+winget install Gyan.FFmpeg
+```
+
+
 # 動画の読み込みと解析
 ![load and analyze](image/load-analyze.png)
 
