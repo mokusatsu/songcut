@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import argparse
+import socket
+import threading
+import time
+import traceback
+import uuid
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from .ffmpeg_tools import find_ffmpeg
+from .gui_pipeline import analyze_for_gui, probe_video
+from .smart_export import export_smart_clip
+from .transcription import (
+    WHISPER_MODEL_ID,
+    WHISPER_OPENVINO_REPO_ID,
+    ensure_whisper_model,
+    select_whisper_runtime,
+    transcribe_segments,
+    whisper_model_dir,
+    whisper_model_ready,
+)
+
+try:
+    from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from pydantic import BaseModel, Field
+except Exception as exc:  # pragma: no cover - optional GUI dependency
+    raise RuntimeError("Install songcut[gui] to run the REST API.") from exc
+
+
+class ProbeRequest(BaseModel):
+    path: str
+
+
+class AnalyzeRequest(BaseModel):
+    path: str
+    guide_text: str = ""
+    timestamp_source: str = "auto"
+    device: str = "auto"
+    transcribe: bool = True
+    whisper_device: str = "auto"
+    whisper_language: str | None = "<|ja|>"
+
+
+class ExportItem(BaseModel):
+    id: str
+    filename_stem: str
+    start: float
+    end: float
+    checked: bool = True
+
+
+class ExportRequest(BaseModel):
+    source_path: str
+    output_dir: str
+    items: list[ExportItem] = Field(default_factory=list)
+    timestamp_comment_text: str = ""
+
+
+class JobRecord(BaseModel):
+    id: str
+    kind: str
+    status: str
+    progress: float = 0.0
+    message: str = ""
+    result: Any = None
+    error: str | None = None
+    created_at: float
+    updated_at: float
+
+
+app = FastAPI(title="songcut API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_jobs: dict[str, JobRecord] = {}
+_jobs_lock = threading.Lock()
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    ffmpeg = find_ffmpeg()
+    return {"ok": True, "ffmpeg": str(ffmpeg.ffmpeg), "ffprobe": str(ffmpeg.ffprobe)}
+
+
+@app.get("/devices")
+def devices() -> dict[str, Any]:
+    singing = {}
+    whisper = {}
+    for requested in ("auto", "npu", "gpu", "cpu"):
+        try:
+            whisper[requested] = asdict(select_whisper_runtime(requested))
+        except Exception as exc:
+            whisper[requested] = {"error": str(exc)}
+    return {"whisper": whisper, "singing": singing}
+
+
+@app.get("/models/whisper")
+def whisper_model_status() -> dict[str, Any]:
+    runtime = select_whisper_runtime("auto")
+    model_dir = whisper_model_dir()
+    return {
+        "model_id": WHISPER_MODEL_ID,
+        "openvino_repo_id": WHISPER_OPENVINO_REPO_ID,
+        "model_dir": str(model_dir),
+        "ready": whisper_model_ready(model_dir),
+        "runtime": asdict(runtime),
+    }
+
+
+@app.post("/models/whisper/download")
+def download_whisper_model() -> JobRecord:
+    return start_job("download-whisper", lambda job_id: _download_whisper_job(job_id))
+
+
+@app.post("/videos/probe")
+def probe(request: ProbeRequest) -> dict[str, Any]:
+    source = require_file(request.path)
+    ffmpeg = find_ffmpeg()
+    return probe_video(ffmpeg.ffprobe, source)
+
+
+@app.post("/analysis/jobs")
+def create_analysis_job(request: AnalyzeRequest) -> JobRecord:
+    return start_job("analysis", lambda job_id: _analysis_job(job_id, request))
+
+
+@app.post("/export/jobs")
+def create_export_job(request: ExportRequest) -> JobRecord:
+    return start_job("export", lambda job_id: _export_job(job_id, request))
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str) -> JobRecord:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
+
+
+def start_job(kind: str, target) -> JobRecord:
+    job_id = str(uuid.uuid4())
+    now = time.time()
+    record = JobRecord(id=job_id, kind=kind, status="queued", created_at=now, updated_at=now)
+    with _jobs_lock:
+        _jobs[job_id] = record
+    thread = threading.Thread(target=target, args=(job_id,), daemon=True)
+    thread.start()
+    return record
+
+
+def update_job(job_id: str, **changes: Any) -> None:
+    with _jobs_lock:
+        current = _jobs[job_id]
+        data = current.model_dump()
+        data.update(changes)
+        data["updated_at"] = time.time()
+        _jobs[job_id] = JobRecord(**data)
+
+
+def fail_job(job_id: str, exc: Exception) -> None:
+    update_job(job_id, status="failed", progress=1.0, error=f"{exc}\n{traceback.format_exc()}")
+
+
+def _download_whisper_job(job_id: str) -> None:
+    try:
+        update_job(job_id, status="running", progress=0.05, message="Downloading and converting Whisper small.")
+        model_dir = ensure_whisper_model()
+        update_job(job_id, status="completed", progress=1.0, message="Whisper model ready.", result={"model_dir": str(model_dir)})
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _analysis_job(job_id: str, request: AnalyzeRequest) -> None:
+    try:
+        update_job(job_id, status="running", progress=0.05, message="Analyzing singing segments.")
+        source = require_file(request.path)
+        payload = analyze_for_gui(
+            source,
+            guide_text=request.guide_text,
+            timestamp_source=request.timestamp_source,
+            device=request.device,
+        )
+        update_job(job_id, progress=0.72, message="Singing analysis complete.")
+        if request.transcribe and payload["segments"]:
+            transcription_job = start_job(
+                "transcription",
+                lambda transcription_job_id: _transcription_job(
+                    transcription_job_id,
+                    source,
+                    [dict(segment) for segment in payload["segments"]],
+                    requested_device=request.whisper_device,
+                    language=request.whisper_language,
+                    initial_prompt=request.guide_text.strip() or None,
+                ),
+            )
+            payload["transcription_job_id"] = transcription_job.id
+        update_job(job_id, status="completed", progress=1.0, message="Analysis complete.", result=payload)
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _transcription_job(
+    job_id: str,
+    source: Path,
+    segments: list[dict[str, Any]],
+    *,
+    requested_device: str,
+    language: str | None,
+    initial_prompt: str | None,
+) -> None:
+    try:
+        update_job(job_id, status="running", progress=0.01, message="Preparing Whisper transcription.", result={"transcripts": []})
+        ffmpeg_paths = find_ffmpeg()
+        transcripts: list[dict[str, Any]] = []
+
+        def on_segment(index: int, total: int, transcript) -> None:
+            transcripts.append(asdict(transcript))
+            update_job(
+                job_id,
+                status="running",
+                progress=index / max(1, total),
+                message=f"Transcribed {index}/{total} segments.",
+                result={"transcripts": transcripts},
+            )
+
+        transcribe_segments(
+            ffmpeg_paths,
+            source,
+            segments,
+            requested_device=requested_device,
+            language=language,
+            initial_prompt=initial_prompt,
+            on_segment=on_segment,
+        )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Transcription complete.",
+            result={"transcripts": transcripts},
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _export_job(job_id: str, request: ExportRequest) -> None:
+    try:
+        source = require_file(request.source_path)
+        output_dir = Path(request.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        ffmpeg = find_ffmpeg()
+        selected = [item for item in request.items if item.checked]
+        exported = []
+        timestamp_comment_path: str | None = None
+        if request.timestamp_comment_text.strip():
+            target_text = request.timestamp_comment_text.rstrip() + "\n"
+            timestamp_path = output_dir / "ts_comments.txt"
+            timestamp_path.write_text(target_text, encoding="utf-8")
+            timestamp_comment_path = str(timestamp_path)
+        for index, item in enumerate(selected, start=1):
+            update_job(
+                job_id,
+                status="running",
+                progress=(index - 1) / max(1, len(selected)),
+                message=f"Smart rendering {item.id}.",
+            )
+            target = output_dir / f"{item.filename_stem}.mp4"
+            exported.append(export_smart_clip(ffmpeg.ffmpeg, ffmpeg.ffprobe, source, target, start=item.start, end=item.end))
+        result: dict[str, Any] = {"exported": exported}
+        if timestamp_comment_path:
+            result["timestamp_comment_path"] = timestamp_comment_path
+        update_job(job_id, status="completed", progress=1.0, message="Export complete.", result=result)
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def require_file(path: str) -> Path:
+    source = Path(path)
+    if not source.exists() or not source.is_file():
+        raise HTTPException(status_code=400, detail=f"file not found: {path}")
+    return source
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="songcut-api")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    args = parser.parse_args(argv)
+    import uvicorn
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+def find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

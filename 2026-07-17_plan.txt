@@ -1,0 +1,37 @@
+# Core Ultra 7 258V前提の歌枠抽出設計
+
+## Summary
+- 258VはIntel公式仕様上、Lunar Lake世代、NPU 47 TOPS、Arc 140V GPU 64 TOPS、合計115 TOPSのAI性能を持つため、OpenVINO中心のローカル推論設計にする。
+- Vulkanは主経路にしない。既定は `OpenVINO NPU -> OpenVINO GPU -> OpenVINO CPU` の順でフォールバックする。
+- `ffmpeg` は `C:\dev\songcut\third_party\ffmpeg` 配下から検出する。
+
+## Key Implementation
+- NPU向き:
+  - 固定shapeのAudioSet系分類、VAD、軽量歌唱判定器。
+  - INT8/FP16化できるONNX/OpenVINO IRモデル。
+- GPU/CPU向き:
+  - NPU非対応演算、動的shape、長いチャンク処理、音源分離。
+  - Demucs系はv1必須から外し、候補区間だけ高精度モードで使う。
+- 判定アルゴリズム:
+  - 音声を0.5秒hop/2〜4秒contextで解析。
+  - `Singing / Speech / Music` 確率、VAD、ピッチ連続性、音量、スペクトル特徴を統合。
+  - 雑談+BGMは speech高・pitch連続性低として除外。
+  - 歌唱+伴奏は singing高・pitch連続性高として残す。
+  - ヒステリシス+時間平滑化で、最短歌唱12秒、6秒以下の穴は結合、前後1秒余白。
+
+## Interfaces
+- `songcut analyze input.mp4 --profile intel-258v --device auto --out outdir`
+- `--device auto`: `NPU,GPU,CPU` の順で試す。
+- `--device npu`: NPU必須。失敗時は明示エラー。
+- `segments.json` に `device_used`, `fallbacks`, `backend`, `model_versions`, `ffmpeg_path` を保存する。
+
+## Test Plan
+- NPU/GPU/CPU検出とフォールバック。
+- `third_party/ffmpeg` 未配置時の診断。
+- 雑談のみ、雑談+BGM、歌唱+伴奏、原曲ボーカル入りBGM、3時間配信。
+- 目標は歌唱候補recall 95%以上、境界誤差中央値3秒以内。
+
+## References
+- Intel 258V公式仕様: [Intel Core Ultra 7 Processor 258V](https://www.intel.com/content/www/us/en/products/sku/240957/intel-core-ultra-7-processor-258v-12m-cache-up-to-4-80-ghz/specifications.html)
+- OpenVINO: [Supported Devices](https://docs.openvino.ai/2026/documentation/compatibility-and-support/supported-devices.html)
+- ONNX Runtime: [OpenVINO Execution Provider](https://onnxruntime.ai/docs/execution-providers/OpenVINO-ExecutionProvider.html)

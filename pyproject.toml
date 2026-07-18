@@ -1,0 +1,34 @@
+[project]
+name = "songcut"
+version = "0.1.0"
+description = "Local VSinger singing-stream segment extractor for Intel CPU/NPU-class machines."
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+openvino = [
+  "openvino>=2026.0",
+]
+gui = [
+  "fastapi>=0.116",
+  "uvicorn[standard]>=0.35",
+  "openvino>=2026.0",
+  "openvino-genai>=2026.0",
+  "openvino-tokenizers>=2026.0",
+  "huggingface-hub>=0.30",
+  "pyinstaller>=6.0",
+]
+
+[project.scripts]
+songcut = "songcut.cli:main"
+songcut-api = "songcut.api:main"
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["songcut"]
+py-modules = ["songcut_cli"]
