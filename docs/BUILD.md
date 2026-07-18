@@ -118,9 +118,28 @@ Or pass them as parameters:
   -Git "C:\Path\To\git.exe"
 ```
 
-The output is written to `dist\songcut-win-x64` by default. Close any running
-copy of the packaged app before rebuilding so Windows can delete the previous
-Electron runtime files.
+The default command is a normal distribution build. It updates only
+`dist\songcut-win-x64` and does not create or update release archives. Close any
+running copy of the packaged app before rebuilding so Windows can delete the
+previous Electron runtime files.
+
+To create a release build, pass `-Release`:
+
+```powershell
+.\packaging\build_dist.ps1 -Release
+```
+
+After updating `dist\songcut-win-x64`, the release build also creates:
+
+```text
+dist\songcut-[version]-full.zip
+dist\songcut-[version].zip
+```
+
+The full archive contains every file from `songcut-win-x64`. The standard
+archive contains the same package, but keeps `third_party` and `models` as empty
+directories. Archive contents start at `songcut.exe`; there is no enclosing
+`songcut-win-x64` directory inside either ZIP file.
 
 The package version is `VERSION` plus the Git commit count, for example
 `1.0.3`. If `.models\openvino\whisper-small` exists in the repository, it is

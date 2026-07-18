@@ -3,7 +3,8 @@ param(
   [string]$Python = $env:SONGCUT_PYTHON,
   [string]$Pnpm = $env:SONGCUT_PNPM,
   [string]$Node = $env:SONGCUT_NODE,
-  [string]$Git = $env:SONGCUT_GIT
+  [string]$Git = $env:SONGCUT_GIT,
+  [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +38,160 @@ function Resolve-ToolPath {
 
   throw "$Name was not found. Install it on PATH, set `$env:$EnvName, or pass -$ParameterName."
 }
+
+function ConvertTo-ZipEntryName {
+  param(
+    [string]$SourceRoot,
+    [string]$ItemPath
+  )
+
+  $RelativePath = $ItemPath.Substring($SourceRoot.Length).TrimStart([char[]]@("\", "/"))
+  return ($RelativePath -replace "\\", "/")
+}
+
+function Test-ExcludedArchivePath {
+  param(
+    [string]$EntryName,
+    [string[]]$ExcludedTopLevelDirectories
+  )
+
+  if ($ExcludedTopLevelDirectories.Count -eq 0) {
+    return $false
+  }
+
+  $TopLevelName = ($EntryName -split "/", 2)[0]
+  return $ExcludedTopLevelDirectories -contains $TopLevelName
+}
+
+function Assert-ReleaseArchive {
+  param(
+    [string]$SourceDirectory,
+    [string]$ArchivePath,
+    [string[]]$EmptyTopLevelDirectories = @()
+  )
+
+  $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
+  $ExpectedFiles = @(
+    Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -File |
+      ForEach-Object { ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName } |
+      Where-Object { -not (Test-ExcludedArchivePath -EntryName $_ -ExcludedTopLevelDirectories $EmptyTopLevelDirectories) } |
+      Sort-Object
+  )
+
+  $Archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
+  try {
+    $EntryNames = @($Archive.Entries | ForEach-Object { $_.FullName })
+    $ActualFiles = @(
+      $EntryNames |
+        Where-Object { -not $_.EndsWith("/") } |
+        Sort-Object
+    )
+    $Difference = @(
+      Compare-Object -ReferenceObject $ExpectedFiles -DifferenceObject $ActualFiles -CaseSensitive
+    )
+    if ($Difference.Count -ne 0) {
+      $Example = ($Difference | Select-Object -First 5 | Out-String).Trim()
+      throw "Release archive contents did not match the package files: $ArchivePath`n$Example"
+    }
+
+    foreach ($DirectoryName in $EmptyTopLevelDirectories) {
+      $RootEntryName = "$DirectoryName/"
+      if ($EntryNames -cnotcontains $RootEntryName) {
+        throw "Release archive is missing the empty directory entry '$RootEntryName': $ArchivePath"
+      }
+
+      $UnexpectedEntry = $EntryNames |
+        Where-Object {
+          $_ -ne $RootEntryName -and
+          $_.StartsWith($RootEntryName, [System.StringComparison]::OrdinalIgnoreCase)
+        } |
+        Select-Object -First 1
+      if ($UnexpectedEntry) {
+        throw "Release archive directory '$RootEntryName' was not empty: $UnexpectedEntry"
+      }
+    }
+  }
+  finally {
+    $Archive.Dispose()
+  }
+}
+
+function New-ReleaseArchive {
+  param(
+    [string]$SourceDirectory,
+    [string]$DestinationPath,
+    [string[]]$EmptyTopLevelDirectories = @()
+  )
+
+  $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
+  $DestinationDirectory = Split-Path -Parent $DestinationPath
+  New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
+
+  foreach ($DirectoryName in $EmptyTopLevelDirectories) {
+    if ([string]::IsNullOrWhiteSpace($DirectoryName) -or $DirectoryName -match "[\\/]") {
+      throw "Empty archive directory names must be top-level names: $DirectoryName"
+    }
+  }
+
+  $TemporaryPath = Join-Path $DestinationDirectory ".$([System.IO.Path]::GetFileName($DestinationPath)).$([guid]::NewGuid().ToString("N")).tmp"
+  $Archive = $null
+  try {
+    $Archive = [System.IO.Compression.ZipFile]::Open(
+      $TemporaryPath,
+      [System.IO.Compression.ZipArchiveMode]::Create
+    )
+
+    foreach ($DirectoryName in $EmptyTopLevelDirectories) {
+      $Archive.CreateEntry("$DirectoryName/") | Out-Null
+    }
+
+    Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -Directory |
+      Sort-Object FullName |
+      ForEach-Object {
+        $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
+        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+          $Archive.CreateEntry("$EntryName/") | Out-Null
+        }
+      }
+
+    Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -File |
+      Sort-Object FullName |
+      ForEach-Object {
+        $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
+        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+          [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $Archive,
+            $_.FullName,
+            $EntryName,
+            [System.IO.Compression.CompressionLevel]::Optimal
+          ) | Out-Null
+        }
+      }
+
+    $Archive.Dispose()
+    $Archive = $null
+
+    Assert-ReleaseArchive `
+      -SourceDirectory $SourceRoot `
+      -ArchivePath $TemporaryPath `
+      -EmptyTopLevelDirectories $EmptyTopLevelDirectories
+
+    if (Test-Path -LiteralPath $DestinationPath) {
+      Remove-Item -LiteralPath $DestinationPath -Force
+    }
+    Move-Item -LiteralPath $TemporaryPath -Destination $DestinationPath
+  }
+  finally {
+    if ($null -ne $Archive) {
+      $Archive.Dispose()
+    }
+    if (Test-Path -LiteralPath $TemporaryPath) {
+      Remove-Item -LiteralPath $TemporaryPath -Force
+    }
+  }
+}
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GuiRoot = Join-Path $RepoRoot "gui"
@@ -187,3 +342,17 @@ Copy-Item -Path (Join-Path $RepoRoot "packaging\README_DIST.txt") -Destination (
 
 Write-Host "Created portable package: $PackageRoot"
 Write-Host "Version: $AppVersion"
+
+if ($Release) {
+  $FullArchivePath = Join-Path $DistRoot "songcut-$AppVersion-full.zip"
+  $StandardArchivePath = Join-Path $DistRoot "songcut-$AppVersion.zip"
+
+  New-ReleaseArchive -SourceDirectory $PackageRoot -DestinationPath $FullArchivePath
+  New-ReleaseArchive `
+    -SourceDirectory $PackageRoot `
+    -DestinationPath $StandardArchivePath `
+    -EmptyTopLevelDirectories @("third_party", "models")
+
+  Write-Host "Created full release archive: $FullArchivePath"
+  Write-Host "Created standard release archive: $StandardArchivePath"
+}

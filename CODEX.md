@@ -56,6 +56,24 @@ The script also accepts the same tools as parameters:
 `git rev-list --count HEAD`, and copies `.models\openvino\whisper-small` only
 when that local model directory exists.
 
+Treat a normal build and a release build as separate commands. A normal build
+updates only the unpacked `dist\songcut-win-x64` directory:
+
+```powershell
+.\packaging\build_dist.ps1
+```
+
+When asked to create a release build, pass `-Release`:
+
+```powershell
+.\packaging\build_dist.ps1 -Release
+```
+
+The release build also writes `dist\songcut-[version]-full.zip`, containing
+everything from `songcut-win-x64`, and `dist\songcut-[version].zip`, containing
+the same package with empty `third_party` and `models` directories. The normal
+build does not create or update these release archives.
+
 Close any running `dist\songcut-win-x64\songcut.exe` or
 `songcut-electron.exe` processes before rebuilding the portable package,
 because Windows can keep Electron runtime files locked.

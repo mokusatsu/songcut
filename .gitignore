@@ -12,6 +12,7 @@ third_party/
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/
+dist/songcut-*.zip
 out/
 testdata/
 testdata/analysis_*.s16

@@ -118,9 +118,28 @@ $env:SONGCUT_GIT = (Get-Command git).Source
   -Git "C:\Path\To\git.exe"
 ```
 
-出力先は既定で `dist\songcut-win-x64` です。再ビルド前には、実行中のパッケージ版
-アプリを閉じてください。Windows が Electron ランタイムファイルをロックしていると
-古い出力ディレクトリを削除できません。
+既定のコマンドは通常の配布ビルドです。`dist\songcut-win-x64` だけを更新し、Release
+用の ZIP は生成・更新しません。再ビルド前には、実行中のパッケージ版アプリを閉じて
+ください。Windows が Electron ランタイムファイルをロックしていると、古い出力
+ディレクトリを削除できません。
+
+Release ビルドを作成する場合は `-Release` を指定します。
+
+```powershell
+.\packaging\build_dist.ps1 -Release
+```
+
+Release ビルドは `dist\songcut-win-x64` を更新した後、次のファイルも生成します。
+
+```text
+dist\songcut-[version]-full.zip
+dist\songcut-[version].zip
+```
+
+full ZIP には `songcut-win-x64` の全ファイルが含まれます。通常版 ZIP は同じ内容から
+`third_party` と `models` の中身だけを除外し、両ディレクトリ自体は空のまま残します。
+どちらの ZIP も内部に `songcut-win-x64` 親ディレクトリを作らず、`songcut.exe` などが
+直下に入ります。
 
 パッケージのバージョンは `VERSION` と Git のコミット数を組み合わせた値です。例:
 `1.0.3`。リポジトリ内に `.models\openvino\whisper-small` がある場合は、配布物の
