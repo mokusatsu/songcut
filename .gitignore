@@ -8,6 +8,7 @@ __pycache__/
 .hf-home/
 .hf-xet/
 .ov-cache/
+third_party/
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/
