@@ -1,4 +1,4 @@
-import type { AnalysisResult, JobRecord, VideoInfo } from "@/types";
+import type { AnalysisResult, FfmpegCheckResult, JobRecord, VideoInfo } from "@/types";
 
 export async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -37,6 +37,10 @@ export function startAnalysis(baseUrl: string, filePath: string, guideText: stri
 
 export function startWhisperDownload(baseUrl: string) {
   return postJson<JobRecord>(baseUrl, "/models/whisper/download", {});
+}
+
+export function checkFfmpeg(baseUrl: string) {
+  return getJson<FfmpegCheckResult>(baseUrl, "/ffmpeg/check");
 }
 
 export function startExport(baseUrl: string, sourcePath: string, outputDir: string, items: unknown[], timestampCommentText = "") {

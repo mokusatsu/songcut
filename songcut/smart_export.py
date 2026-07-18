@@ -181,7 +181,8 @@ def render_profile_for(info: SourceMediaInfo, source: Path) -> RenderProfile:
     codec = info.video_codec
     format_parts = {part.strip().lower() for part in info.format_name.split(",") if part.strip()}
     suffix = source.suffix.lower()
-    is_webm = suffix == ".webm" or "webm" in format_parts
+    is_webm = suffix == ".webm" or ("webm" in format_parts and suffix != ".mkv")
+    is_matroska = suffix == ".mkv" or ("matroska" in format_parts and not is_webm)
     is_mp4ish = suffix in {".mp4", ".m4v", ".mov"} or bool(
         format_parts.intersection({"mov", "mp4", "m4a", "3gp", "3g2", "mj2"})
     )
@@ -193,6 +194,12 @@ def render_profile_for(info: SourceMediaInfo, source: Path) -> RenderProfile:
         audio_encoder = "libopus"
         audio_bitrate = "160k"
         smart_copy = codec in {"vp8", "vp9", "av1"}
+    elif is_matroska:
+        container_family = "mkv"
+        output_suffix = ".mkv"
+        video_encoder = _matroska_video_encoder(codec)
+        audio_encoder, audio_bitrate = _matroska_audio_profile(info)
+        smart_copy = codec in {"h264", "vp8", "vp9", "av1"}
     else:
         container_family = "mp4" if is_mp4ish or codec in {"h264", "av1"} else "mp4"
         output_suffix = ".mp4"
@@ -252,7 +259,7 @@ def _export_smart_spans(ffmpeg: Path, source: Path, target: Path, plan: SmartRen
         _concat_video_spans(ffmpeg, span_paths, video_target, plan)
 
         if plan.has_audio:
-            audio_target = tmp / f"audio{'.webm' if plan.container_family == 'webm' else '.m4a'}"
+            audio_target = tmp / f"audio{_audio_suffix(plan)}"
             _export_audio(ffmpeg, source, audio_target, plan)
             _mux_video_audio(ffmpeg, video_target, audio_target, target, plan)
         else:
@@ -344,7 +351,7 @@ def _export_video_copy_span(
         "-c:v",
         "copy",
     ]
-    if plan.container_family == "mp4" and plan.video_codec == "h264":
+    if _uses_h264_transport_stream(plan):
         command.extend(["-bsf:v", "h264_mp4toannexb"])
     command.extend(["-avoid_negative_ts", "make_zero"])
     command.extend(_fragment_output_args(plan))
@@ -485,6 +492,30 @@ def _webm_video_encoder(codec: str) -> str:
     return "libvpx-vp9"
 
 
+def _matroska_video_encoder(codec: str) -> str:
+    if codec == "vp8":
+        return "libvpx"
+    if codec == "vp9":
+        return "libvpx-vp9"
+    if codec == "av1":
+        return "libsvtav1"
+    return "libx264"
+
+
+def _matroska_audio_profile(info: SourceMediaInfo) -> tuple[str, str]:
+    if info.audio_codec in {"opus", "vorbis"} or info.video_codec in {"vp8", "vp9", "av1"}:
+        return "libopus", "160k"
+    return "aac", "192k"
+
+
+def _audio_suffix(plan: SmartRenderPlan) -> str:
+    if plan.container_family == "webm":
+        return ".webm"
+    if plan.container_family == "mkv":
+        return ".mka"
+    return ".m4a"
+
+
 def _container_args(plan: SmartRenderPlan) -> list[str]:
     if plan.container_family == "mp4":
         return ["-movflags", "+faststart"]
@@ -492,15 +523,19 @@ def _container_args(plan: SmartRenderPlan) -> list[str]:
 
 
 def _fragment_output_args(plan: SmartRenderPlan) -> list[str]:
-    if plan.container_family == "mp4" and plan.video_codec == "h264":
+    if _uses_h264_transport_stream(plan):
         return ["-f", "mpegts"]
     return []
 
 
 def _fragment_suffix(plan: SmartRenderPlan) -> str:
-    if plan.container_family == "mp4" and plan.video_codec == "h264":
+    if _uses_h264_transport_stream(plan):
         return ".ts"
     return plan.output_suffix
+
+
+def _uses_h264_transport_stream(plan: SmartRenderPlan) -> bool:
+    return plan.video_codec == "h264" and plan.container_family in {"mp4", "mkv"}
 
 
 def _fallback_plan(plan: SmartRenderPlan, reason: str) -> SmartRenderPlan:

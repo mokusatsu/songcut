@@ -175,6 +175,90 @@ class SmartExportTests(unittest.TestCase):
             [("encode", 1.0, 2.0), ("copy", 2.0, 4.0), ("encode", 4.0, 5.0)],
         )
 
+    def test_plan_h264_mkv_uses_matroska_profile(self) -> None:
+        info = SourceMediaInfo(
+            format_name="matroska,webm",
+            duration=100.0,
+            size=None,
+            video_codec="h264",
+            video_bitrate=1_000_000,
+            audio_codec="aac",
+            audio_bitrate=128_000,
+            has_audio=True,
+        )
+
+        with (
+            mock.patch("songcut.smart_export.probe_source_media", return_value=info),
+            mock.patch("songcut.smart_export.probe_keyframes", return_value=[0.0, 2.0, 4.0, 6.0]),
+        ):
+            plan = plan_smart_render(Path("ffprobe"), Path("source.mkv"), start=1.0, end=5.0)
+
+        self.assertEqual(plan.output_suffix, ".mkv")
+        self.assertEqual(plan.container_family, "mkv")
+        self.assertEqual(plan.video_encoder, "libx264")
+        self.assertEqual(plan.audio_encoder, "aac")
+        self.assertIsNone(plan.fallback_reason)
+        self.assertEqual(
+            [(span.mode, span.start, span.end) for span in plan.spans],
+            [("encode", 1.0, 2.0), ("copy", 2.0, 4.0), ("encode", 4.0, 5.0)],
+        )
+
+    def test_plan_vp9_mkv_uses_matroska_profile(self) -> None:
+        info = SourceMediaInfo(
+            format_name="matroska",
+            duration=100.0,
+            size=None,
+            video_codec="vp9",
+            video_bitrate=800_000,
+            audio_codec="opus",
+            audio_bitrate=128_000,
+            has_audio=True,
+        )
+
+        with (
+            mock.patch("songcut.smart_export.probe_source_media", return_value=info),
+            mock.patch("songcut.smart_export.probe_keyframes", return_value=[0.0, 2.0, 4.0, 6.0]),
+        ):
+            plan = plan_smart_render(Path("ffprobe"), Path("source.mkv"), start=1.0, end=5.0)
+
+        self.assertEqual(plan.output_suffix, ".mkv")
+        self.assertEqual(plan.container_family, "mkv")
+        self.assertEqual(plan.video_encoder, "libvpx-vp9")
+        self.assertEqual(plan.audio_encoder, "libopus")
+        self.assertIsNone(plan.fallback_reason)
+        self.assertEqual(
+            [(span.mode, span.start, span.end) for span in plan.spans],
+            [("encode", 1.0, 2.0), ("copy", 2.0, 4.0), ("encode", 4.0, 5.0)],
+        )
+
+    def test_plan_av1_mkv_uses_matroska_profile(self) -> None:
+        info = SourceMediaInfo(
+            format_name="matroska",
+            duration=100.0,
+            size=None,
+            video_codec="av1",
+            video_bitrate=900_000,
+            audio_codec="opus",
+            audio_bitrate=128_000,
+            has_audio=True,
+        )
+
+        with (
+            mock.patch("songcut.smart_export.probe_source_media", return_value=info),
+            mock.patch("songcut.smart_export.probe_keyframes", return_value=[0.0, 2.0, 4.0, 6.0]),
+        ):
+            plan = plan_smart_render(Path("ffprobe"), Path("source.mkv"), start=1.0, end=5.0)
+
+        self.assertEqual(plan.output_suffix, ".mkv")
+        self.assertEqual(plan.container_family, "mkv")
+        self.assertEqual(plan.video_encoder, "libsvtav1")
+        self.assertEqual(plan.audio_encoder, "libopus")
+        self.assertIsNone(plan.fallback_reason)
+        self.assertEqual(
+            [(span.mode, span.start, span.end) for span in plan.spans],
+            [("encode", 1.0, 2.0), ("copy", 2.0, 4.0), ("encode", 4.0, 5.0)],
+        )
+
     def test_export_smart_clip_runs_encode_copy_concat_audio_and_mux_commands(self) -> None:
         plan = SmartRenderPlan(
             start=10.0,
@@ -263,6 +347,53 @@ class SmartExportTests(unittest.TestCase):
         self.assertEqual(result["target"], str(expected_target))
         self.assertTrue(any("libsvtav1" in command for command in commands))
         self.assertTrue(any("libopus" in command for command in commands))
+        self.assertEqual(commands[-1][-1], str(expected_target))
+
+    def test_export_smart_clip_changes_target_suffix_for_mkv(self) -> None:
+        plan = SmartRenderPlan(
+            start=1.0,
+            end=5.0,
+            output_suffix=".mkv",
+            container_family="mkv",
+            video_codec="h264",
+            video_encoder="libx264",
+            audio_encoder="aac",
+            audio_bitrate="192k",
+            source_video_bitrate=900_000,
+            reencode_bitrate=1_350_000,
+            has_audio=True,
+            copy_start=2.0,
+            copy_end=4.0,
+            keyframes=[0.0, 2.0, 4.0, 6.0],
+            spans=[
+                SmartRenderSpan("encode", 1.0, 2.0),
+                SmartRenderSpan("copy", 2.0, 4.0),
+                SmartRenderSpan("encode", 4.0, 5.0),
+            ],
+            fallback_reason=None,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_name:
+            requested_target = Path(tmp_name) / "clip.mp4"
+            expected_target = Path(tmp_name) / "clip.mkv"
+            with (
+                mock.patch("songcut.smart_export.plan_smart_render", return_value=plan),
+                mock.patch("songcut.smart_export.subprocess.run") as run,
+                mock.patch("songcut.smart_export._validate_export"),
+            ):
+                result = export_smart_clip(
+                    Path("ffmpeg"),
+                    Path("ffprobe"),
+                    Path("source.mkv"),
+                    requested_target,
+                    start=1.0,
+                    end=5.0,
+                )
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(result["target"], str(expected_target))
+        self.assertTrue(any("h264_mp4toannexb" in command for command in commands))
+        self.assertTrue(any(["-f", "mpegts"] == command[index : index + 2] for command in commands for index in range(len(command) - 1)))
         self.assertEqual(commands[-1][-1], str(expected_target))
 
     def test_export_smart_clip_falls_back_when_smart_pipeline_fails(self) -> None:

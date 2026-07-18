@@ -6,11 +6,12 @@ import threading
 import time
 import traceback
 import uuid
+import win_safesubprocess as subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .ffmpeg_tools import find_ffmpeg
+from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg
 from .gui_pipeline import analyze_for_gui, probe_video
 from .smart_export import export_smart_clip
 from .transcription import (
@@ -83,12 +84,26 @@ app.add_middleware(
 
 _jobs: dict[str, JobRecord] = {}
 _jobs_lock = threading.Lock()
+FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html"
 
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    ffmpeg = find_ffmpeg()
-    return {"ok": True, "ffmpeg": str(ffmpeg.ffmpeg), "ffprobe": str(ffmpeg.ffprobe)}
+    ffmpeg = _ffmpeg_check_payload()
+    payload: dict[str, Any] = {"ok": True}
+    if ffmpeg["ok"]:
+        payload["ffmpeg"] = ffmpeg["ffmpeg"]
+        payload["ffprobe"] = ffmpeg["ffprobe"]
+    else:
+        payload["ffmpeg"] = None
+        payload["ffprobe"] = None
+        payload["ffmpeg_error"] = ffmpeg["error"]
+    return payload
+
+
+@app.get("/ffmpeg/check")
+def ffmpeg_check() -> dict[str, Any]:
+    return _ffmpeg_check_payload()
 
 
 @app.get("/devices")
@@ -169,6 +184,42 @@ def update_job(job_id: str, **changes: Any) -> None:
 
 def fail_job(job_id: str, exc: Exception) -> None:
     update_job(job_id, status="failed", progress=1.0, error=f"{exc}\n{traceback.format_exc()}")
+
+
+def _ffmpeg_check_payload() -> dict[str, Any]:
+    try:
+        ffmpeg = find_ffmpeg()
+        _check_executable_runs("ffmpeg", ffmpeg.ffmpeg)
+        _check_executable_runs("ffprobe", ffmpeg.ffprobe)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "ffmpeg": None,
+            "ffprobe": None,
+            "error": str(exc),
+            "download_url": FFMPEG_DOWNLOAD_URL,
+        }
+    return {
+        "ok": True,
+        "ffmpeg": str(ffmpeg.ffmpeg),
+        "ffprobe": str(ffmpeg.ffprobe),
+        "download_url": FFMPEG_DOWNLOAD_URL,
+    }
+
+
+def _check_executable_runs(label: str, executable: Path) -> None:
+    try:
+        subprocess.run(
+            [str(executable), "-version"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"{label} could not be started: {executable} ({exc})") from exc
 
 
 def _download_whisper_job(job_id: str) -> None:

@@ -48,7 +48,7 @@ Export clips:
 C:\Users\lain\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m songcut.cli export out\segments.json --source testdata\input.mp4 --out clips
 ```
 
-Export uses smart rendering by default. It probes keyframes, copies GOPs that are fully inside the requested range, and re-encodes the boundary GOPs at an estimated source video bitrate multiplied by 1.5. H.264 and AV1 MP4/MOV sources are written as `.mp4`; VP8/VP9/AV1 WebM sources are written as `.webm`; unsupported codecs fall back to full re-encode.
+Export uses smart rendering by default. It probes keyframes, copies GOPs that are fully inside the requested range, and re-encodes the boundary GOPs at an estimated source video bitrate multiplied by 1.5. H.264 and AV1 MP4/MOV sources are written as `.mp4`; VP8/VP9/AV1 WebM sources are written as `.webm`; H.264/VP8/VP9/AV1 MKV sources are written as `.mkv`; unsupported codecs fall back to full re-encode.
 
 Smoke-test only the first clip with stream copy:
 

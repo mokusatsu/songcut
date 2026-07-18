@@ -124,7 +124,12 @@ input {
   gap: 4px;
 }
 
-.boundary-seconds-input {
+.boundary-nudge-controls {
+  gap: 4px;
+}
+
+.boundary-seconds-input,
+.boundary-nudge-seconds-input {
   width: 58px;
   padding-right: 8px;
   text-align: center;
@@ -663,6 +668,45 @@ tbody tr:hover {
 .export-progress-note {
   color: #9badb5;
   font-size: 13px;
+}
+
+.ffmpeg-check {
+  display: grid;
+  gap: 10px;
+}
+
+.ffmpeg-check-paths {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  color: #aebbc2;
+  font-size: 13px;
+}
+
+.ffmpeg-check-paths code,
+.ffmpeg-check-error {
+  min-width: 0;
+  padding: 8px;
+  overflow: auto;
+  color: #e8eef2;
+  background: #10171a;
+  border: 1px solid #33454d;
+  border-radius: 6px;
+}
+
+.ffmpeg-check-error {
+  max-height: 160px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.external-link {
+  color: #8de1d1;
+}
+
+.external-link:hover {
+  color: #b9efe6;
 }
 
 @media (max-width: 900px) {

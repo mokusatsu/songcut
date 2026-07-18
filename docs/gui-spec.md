@@ -45,6 +45,9 @@ ffmpeg discovery:
 - Search recursively under the packaged executable root or repository root for a
   directory containing both `ffmpeg.exe` and `ffprobe.exe`.
 - If no pair is found under that root, fall back to `PATH`.
+- Missing ffmpeg must not prevent the GUI shell from starting. The app shows a
+  startup `ffmpeg Check` dialog only when the pair is unavailable, and the
+  Settings menu can run the same check on demand.
 
 ## Main screen layout
 
@@ -59,6 +62,37 @@ ffmpeg discovery:
   3. Waveform timeline.
   4. Segment timeline for the selected segment.
   5. Segment list.
+
+## Application menu
+
+- Top-level order: `File`, `Edit`, `Play`, `View`, `Export`, `Settings`,
+  `Window`, `Help`.
+- `File` adds `Load Movie`, which uses the same file-open flow as the toolbar
+  `Load` button.
+- `Edit` keeps only the songcut editing groups plus `Cut`, `Copy`, and `Paste`;
+  `Undo`, `Redo`, and `Select All` are omitted.
+- `Edit` groups:
+  - Disabled heading `-- Nudge Adjust Boundary --`, with `Nudge Boundary Left` and
+    `Nudge Boundary Right`.
+  - Disabled heading `-- Timeline --`, with `Zoom +`, `Zoom -`, and `Zoom Level`
+    submenu entries for `100%`, `200%`, `400%`, `800%`, `1600%`, and `3200%`.
+- `Play` groups:
+  - Disabled heading `-- Movie Control --`, with the same five actions as the playback
+    toolbar: `Start`, `Previous Boundary`, `Play`, `Pause`, and `Next Boundary`.
+  - Disabled heading `-- Play Boundary --`, with `Play Start Boundary` and
+    `Play End Boundary` for the selected segment.
+- `Export` provides `Export Movie` and `Export TS Text`.
+- `Settings` provides `Prepare Whisper Model` and `ffmpeg Check`.
+- `View` and `Window` retain standard Electron role-based items.
+- `Help` provides `About songcut`, `Open Repository`, and
+  `Report Issue / Request Feature`. About uses the native Electron dialog and
+  shows build time plus the Electron runtime version. The repository and issue
+  entries open `https://github.com/mokusatsu/songcut` and
+  `https://github.com/mokusatsu/songcut/issues` in the default browser.
+- Menu item enabled/checked states track the renderer state for loaded video,
+  selected segment, checked export rows, play/pause state, and timeline zoom.
+- The toolbar keeps the main workflow buttons except `Prepare Whisper`, which is
+  available only from `Settings > Prepare Whisper Model`.
 
 ## File loading
 
@@ -188,7 +222,11 @@ Current implementation state:
 ## REST API
 
 - `GET /health`
-  - Verifies API availability and returns ffmpeg paths.
+  - Verifies API availability. Returns ffmpeg paths when available and an
+    `ffmpeg_error` field when they are missing.
+- `GET /ffmpeg/check`
+  - Returns `{ ok, ffmpeg, ffprobe, error, download_url }` for the Settings menu
+    check. The download URL is `https://www.ffmpeg.org/download.html`.
 - `GET /devices`
   - Returns singing backend and Whisper device availability.
 - `GET /models/whisper`

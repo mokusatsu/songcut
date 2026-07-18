@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   ChevronsLeft,
   ChevronsRight,
@@ -15,7 +17,6 @@ import {
   Scissors,
   SkipBack,
   SkipForward,
-  Upload,
   Wand2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,11 +26,28 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
-import { probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
-import type { AnalysisResult, ExportCandidate, JobRecord, Segment, Transcript, VideoInfo, WaveformPoint } from "@/types";
+import { checkFfmpeg, probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
+import type {
+  AnalysisResult,
+  ExportCandidate,
+  FfmpegCheckResult,
+  JobRecord,
+  Segment,
+  Transcript,
+  VideoInfo,
+  WaveformPoint
+} from "@/types";
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
+const MIN_SEGMENT_SECONDS = 0.1;
+const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
+
+type BoundaryEdge = "start" | "end";
+type BoundaryTarget = {
+  segmentId: string;
+  edge: BoundaryEdge;
+};
 
 type OutputItem = {
   id: string;
@@ -58,6 +76,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [boundarySecondsInput, setBoundarySecondsInput] = useState("5");
+  const [boundaryNudgeSecondsInput, setBoundaryNudgeSecondsInput] = useState("0.1");
   const [zoomIndex, setZoomIndex] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
@@ -72,6 +91,9 @@ export default function App() {
   const [timestampCopyCount, setTimestampCopyCount] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
+  const [ffmpegCheckOpen, setFfmpegCheckOpen] = useState(false);
+  const [ffmpegCheckPending, setFfmpegCheckPending] = useState(false);
+  const [ffmpegCheckResult, setFfmpegCheckResult] = useState<FfmpegCheckResult | null>(null);
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
@@ -103,6 +125,33 @@ export default function App() {
   useEffect(() => {
     window.songcut.apiBaseUrl().then(setApiBaseUrl).catch((error) => setMessage(String(error)));
   }, []);
+
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    let cancelled = false;
+    setFfmpegCheckPending(true);
+    checkFfmpeg(apiBaseUrl)
+      .then((result) => {
+        if (cancelled) return;
+        setFfmpegCheckResult(result);
+        if (!result.ok) {
+          setFfmpegCheckOpen(true);
+          setMessage("ffmpeg check failed.");
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setFfmpegCheckResult({ ok: false, error: String(error), download_url: FFMPEG_DOWNLOAD_URL });
+        setFfmpegCheckOpen(true);
+        setMessage("ffmpeg check failed.");
+      })
+      .finally(() => {
+        if (!cancelled) setFfmpegCheckPending(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     return window.songcut.onCloseRequested(() => {
@@ -209,6 +258,24 @@ export default function App() {
     setJob(started);
     await waitForJob(apiBaseUrl, started.id, setJob);
     setMessage("Whisper small model is ready.");
+  }
+
+  async function runFfmpegCheck(showSuccess: boolean) {
+    if (!apiBaseUrl) return;
+    if (showSuccess) setFfmpegCheckOpen(true);
+    setFfmpegCheckPending(true);
+    try {
+      const result = await checkFfmpeg(apiBaseUrl);
+      setFfmpegCheckResult(result);
+      if (showSuccess || !result.ok) setFfmpegCheckOpen(true);
+      setMessage(result.ok ? "ffmpeg and ffprobe are available." : "ffmpeg check failed.");
+    } catch (error) {
+      setFfmpegCheckResult({ ok: false, error: String(error), download_url: FFMPEG_DOWNLOAD_URL });
+      setFfmpegCheckOpen(true);
+      setMessage("ffmpeg check failed.");
+    } finally {
+      setFfmpegCheckPending(false);
+    }
   }
 
   async function analyze() {
@@ -350,6 +417,27 @@ export default function App() {
     if (target !== undefined) seek(target);
   }
 
+  function nudgeNearestBoundary(direction: -1 | 1) {
+    const target = nearestBoundaryTarget(segments, currentTime);
+    if (!target) return;
+    const segment = segments.find((item) => item.id === target.segmentId);
+    if (!segment) return;
+
+    const seconds = parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput);
+    const maxDuration = Math.max(duration || 0, segment.end);
+    const nextTime =
+      target.edge === "start"
+        ? clamp(segment.start + direction * seconds, 0, segment.end - MIN_SEGMENT_SECONDS)
+        : clamp(segment.end + direction * seconds, segment.start + MIN_SEGMENT_SECONDS, maxDuration);
+
+    setSelectedSegmentId(segment.id);
+    updateSegment(
+      segment.id,
+      target.edge === "start" ? { start: nextTime, user_edited: true } : { end: nextTime, user_edited: true }
+    );
+    seek(nextTime);
+  }
+
   function onDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setDropActive(false);
@@ -366,6 +454,76 @@ export default function App() {
     }
     loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
+
+  useEffect(() => {
+    window.songcut.updateMenuState({
+      apiReady: Boolean(apiBaseUrl),
+      hasVideo: Boolean(videoUrl),
+      hasSegments: segments.length > 0,
+      hasSelectedSegment: Boolean(videoUrl && selectedSegment),
+      hasCheckedSegments: checkedCount > 0,
+      playing,
+      zoomIndex
+    });
+  }, [apiBaseUrl, videoUrl, segments.length, selectedSegment?.id, checkedCount, playing, zoomIndex]);
+
+  useEffect(() => {
+    return window.songcut.onMenuCommand((command) => {
+      switch (command.type) {
+        case "load-movie":
+          void selectVideo();
+          break;
+        case "nudge-boundary-left":
+          nudgeNearestBoundary(-1);
+          break;
+        case "nudge-boundary-right":
+          nudgeNearestBoundary(1);
+          break;
+        case "zoom-in":
+          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
+          break;
+        case "zoom-out":
+          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
+          break;
+        case "set-zoom":
+          setZoomIndex(clamp(command.zoomIndex, 0, zoomLevels.length - 1));
+          break;
+        case "start":
+          seek(0);
+          break;
+        case "previous-boundary":
+          jumpBoundary(-1);
+          break;
+        case "play":
+          void videoRef.current?.play();
+          break;
+        case "pause":
+          videoRef.current?.pause();
+          break;
+        case "next-boundary":
+          jumpBoundary(1);
+          break;
+        case "play-start-boundary":
+          playStartBoundary();
+          break;
+        case "play-end-boundary":
+          playEndBoundary();
+          break;
+        case "export-movie":
+          if (checkedCount > 0) setOutputOpen(true);
+          break;
+        case "export-ts-text":
+          void exportTimestampComments();
+          break;
+        case "prepare-whisper-model":
+          void ensureWhisper().catch((error) => setMessage(String(error)));
+          break;
+        case "ffmpeg-check":
+          void runFfmpegCheck(true);
+          break;
+      }
+    });
+  }, [apiBaseUrl, videoUrl, selectedSegment?.id, segments, checkedCount, currentTime, boundarySecondsInput, boundaryNudgeSecondsInput, zoomIndex]);
 
   return (
     <main
@@ -414,10 +572,6 @@ export default function App() {
             <FolderOpen size={16} />
             Load
           </Button>
-          <Button variant="secondary" onClick={ensureWhisper} disabled={!apiBaseUrl}>
-            <Upload size={16} />
-            Prepare Whisper
-          </Button>
           <Button onClick={analyze} disabled={!videoPath || !apiBaseUrl}>
             <Wand2 size={16} />
             Analyze
@@ -438,6 +592,16 @@ export default function App() {
             onBlur={() => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))}
             onStart={playStartBoundary}
             onEnd={playEndBoundary}
+          />
+          <BoundaryNudgeControls
+            value={boundaryNudgeSecondsInput}
+            disabled={!segments.length || !videoUrl}
+            onChange={setBoundaryNudgeSecondsInput}
+            onBlur={() =>
+              setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput)))
+            }
+            onLeft={() => nudgeNearestBoundary(-1)}
+            onRight={() => nudgeNearestBoundary(1)}
           />
           <PlaybackControls
             onPlay={() => videoRef.current?.play()}
@@ -512,6 +676,12 @@ export default function App() {
           <Button onClick={() => setTimestampCopyCount(null)}>OK</Button>
         </div>
       </Dialog>
+      <FfmpegCheckDialog
+        open={ffmpegCheckOpen}
+        pending={ffmpegCheckPending}
+        result={ffmpegCheckResult}
+        onClose={() => setFfmpegCheckOpen(false)}
+      />
       <ExportProgressDialog open={exportProgressOpen} job={exportJob} onClose={() => setExportProgressOpen(false)} />
       <Dialog open={quitConfirmOpen} title="Quit songcut?" onClose={cancelQuit}>
         <p className="dialog-message">
@@ -567,6 +737,38 @@ function BoundaryControls(props: {
         inputMode="numeric"
         pattern="[0-9]*"
         aria-label="Boundary seconds"
+        value={props.value}
+        onChange={(event) => props.onChange(event.currentTarget.value)}
+        onBlur={props.onBlur}
+      />
+    </div>
+  );
+}
+
+function BoundaryNudgeControls(props: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+  onBlur: () => void;
+  onLeft: () => void;
+  onRight: () => void;
+}) {
+  return (
+    <div className="icon-group boundary-nudge-controls">
+      <Button size="icon" variant="ghost" onClick={props.onLeft} disabled={props.disabled} title="Nudge nearest boundary left">
+        <ArrowLeft size={17} />
+      </Button>
+      <Button size="icon" variant="ghost" onClick={props.onRight} disabled={props.disabled} title="Nudge nearest boundary right">
+        <ArrowRight size={17} />
+      </Button>
+      <Input
+        className="boundary-nudge-seconds-input"
+        type="number"
+        min="0.1"
+        max="60"
+        step="0.1"
+        inputMode="decimal"
+        aria-label="Boundary nudge seconds"
         value={props.value}
         onChange={(event) => props.onChange(event.currentTarget.value)}
         onBlur={props.onBlur}
@@ -907,7 +1109,7 @@ function SegmentTimeline(props: {
               duration={safeDuration}
               viewportRef={props.viewportRef}
               onEditingChange={props.onEditingChange}
-              onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - 0.1), user_edited: true })}
+              onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
             />
             <DragHandle
               left={endX}
@@ -916,7 +1118,7 @@ function SegmentTimeline(props: {
               duration={safeDuration}
               viewportRef={props.viewportRef}
               onEditingChange={props.onEditingChange}
-              onChange={(time) => props.onChange({ end: clamp(time, segment.start + 0.1, safeDuration), user_edited: true })}
+              onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
             />
           </>
         ) : null}
@@ -1204,6 +1406,45 @@ function ExportProgressDialog(props: { open: boolean; job: JobRecord | null; onC
   );
 }
 
+function FfmpegCheckDialog(props: {
+  open: boolean;
+  pending: boolean;
+  result: FfmpegCheckResult | null;
+  onClose: () => void;
+}) {
+  const downloadUrl = props.result?.download_url || FFMPEG_DOWNLOAD_URL;
+  return (
+    <Dialog open={props.open} title="ffmpeg Check" onClose={props.onClose}>
+      <div className="ffmpeg-check">
+        {props.pending ? (
+          <p className="dialog-message">Checking ffmpeg.exe and ffprobe.exe.</p>
+        ) : props.result?.ok ? (
+          <>
+            <p className="dialog-message">ffmpeg.exe and ffprobe.exe are available.</p>
+            <div className="ffmpeg-check-paths">
+              <span>ffmpeg</span>
+              <code>{props.result.ffmpeg}</code>
+              <span>ffprobe</span>
+              <code>{props.result.ffprobe}</code>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="dialog-message">ffmpeg.exe and ffprobe.exe were not found.</p>
+            <pre className="ffmpeg-check-error">{props.result?.error || "ffmpeg check failed."}</pre>
+            <a className="external-link" href={downloadUrl} target="_blank" rel="noreferrer">
+              Open ffmpeg download page
+            </a>
+          </>
+        )}
+      </div>
+      <div className="dialog-actions">
+        <Button onClick={props.onClose}>OK</Button>
+      </div>
+    </Dialog>
+  );
+}
+
 function previewRange(video: HTMLVideoElement | null, start: number, end: number) {
   if (!video) return;
   const duration = Math.max(0, end - start);
@@ -1250,6 +1491,29 @@ function normalizeBoundarySecondsInput(value: string) {
   if (Number.isFinite(parsed)) return formatBoundarySeconds(parseBoundarySeconds(value));
   const digits = value.replace(/\D/g, "");
   return digits ? formatBoundarySeconds(parseBoundarySeconds(digits)) : "";
+}
+
+function nearestBoundaryTarget(segments: Segment[], time: number): BoundaryTarget | null {
+  let nearest: (BoundaryTarget & { distance: number }) | null = null;
+  for (const segment of segments) {
+    for (const edge of ["start", "end"] as const) {
+      const boundaryTime = segment[edge];
+      const distance = Math.abs(boundaryTime - time);
+      if (!nearest || distance < nearest.distance) {
+        nearest = { segmentId: segment.id, edge, distance };
+      }
+    }
+  }
+  return nearest ? { segmentId: nearest.segmentId, edge: nearest.edge } : null;
+}
+
+function parseBoundaryNudgeSeconds(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? clamp(Math.round(parsed * 10) / 10, MIN_SEGMENT_SECONDS, 60) : MIN_SEGMENT_SECONDS;
+}
+
+function formatBoundaryNudgeSeconds(value: number) {
+  return parseBoundaryNudgeSeconds(String(value)).toFixed(1);
 }
 
 function segmentTitle(segment: Segment) {

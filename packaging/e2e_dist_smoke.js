@@ -146,6 +146,35 @@ async function clickButton(cdp, text, occurrence = 0) {
   if (!ok) throw new Error(`Button not found: ${text}`);
 }
 
+async function prepareWhisperModel(cdp) {
+  return evaluate(
+    cdp,
+    `(async () => {
+      const baseUrl = await window.songcut.apiBaseUrl();
+      const startResponse = await fetch(baseUrl + "/models/whisper/download", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}"
+      });
+      if (!startResponse.ok) {
+        return { ok: false, error: await startResponse.text() };
+      }
+      let job = await startResponse.json();
+      for (let index = 0; index < 225; index += 1) {
+        const jobResponse = await fetch(baseUrl + "/jobs/" + job.id);
+        if (!jobResponse.ok) {
+          return { ok: false, error: await jobResponse.text(), job };
+        }
+        job = await jobResponse.json();
+        if (job.status === "completed") return { ok: true, job };
+        if (job.status === "failed") return { ok: false, error: job.error || "job failed", job };
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
+      return { ok: false, error: "Timed out preparing Whisper model.", job };
+    })()`
+  );
+}
+
 async function clickAt(cdp, selector, xRatio = 0.5, yRatio = 0.5) {
   const point = await evaluate(
     cdp,
@@ -737,16 +766,8 @@ function cleanup(processHandle, cdp) {
     log("SPLIT_DRAG_OK", { before: splitBefore, after: splitAfter });
     await dragSplitter(cdp, -90);
 
-    await clickButton(cdp, "Prepare Whisper");
-    const whisperReady = await waitFor(
-      cdp,
-      `(() => {
-        const text = document.body.innerText;
-        return text.includes("Whisper small model is ready.") || text.includes("Whisper model ready.") ? text : false;
-      })()`,
-      180_000,
-      "Whisper preparation"
-    );
+    const whisperReady = await prepareWhisperModel(cdp);
+    assertPass(whisperReady?.ok, "Whisper preparation failed.", whisperReady);
     log("WHISPER_READY_OK", whisperReady);
 
     await setGuideText(cdp, "1. 0:00-0:04\n├ Smoke Song\n└ (Smoke)\n");

@@ -1,16 +1,61 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { statSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repositoryUrl = "https://github.com/mokusatsu/songcut";
+const issuesUrl = "https://github.com/mokusatsu/songcut/issues";
 
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: ChildProcessWithoutNullStreams | null = null;
 let apiBaseUrl = "";
 let allowClose = false;
 let closeRequestPending = false;
+
+const zoomLevels = [1, 2, 4, 8, 16, 32];
+
+type SongcutMenuCommand =
+  | { type: "load-movie" }
+  | { type: "nudge-boundary-left" }
+  | { type: "nudge-boundary-right" }
+  | { type: "zoom-in" }
+  | { type: "zoom-out" }
+  | { type: "set-zoom"; zoomIndex: number }
+  | { type: "start" }
+  | { type: "previous-boundary" }
+  | { type: "play" }
+  | { type: "pause" }
+  | { type: "next-boundary" }
+  | { type: "play-start-boundary" }
+  | { type: "play-end-boundary" }
+  | { type: "export-movie" }
+  | { type: "export-ts-text" }
+  | { type: "prepare-whisper-model" }
+  | { type: "ffmpeg-check" };
+
+type SongcutMenuState = {
+  apiReady: boolean;
+  hasVideo: boolean;
+  hasSegments: boolean;
+  hasSelectedSegment: boolean;
+  hasCheckedSegments: boolean;
+  playing: boolean;
+  zoomIndex: number;
+};
+
+let menuState: SongcutMenuState = {
+  apiReady: false,
+  hasVideo: false,
+  hasSegments: false,
+  hasSelectedSegment: false,
+  hasCheckedSegments: false,
+  playing: false,
+  zoomIndex: 0
+};
 
 async function createWindow() {
   apiBaseUrl = await resolveApiBaseUrl();
@@ -34,6 +79,13 @@ async function createWindow() {
     closeRequestPending = true;
     mainWindow?.webContents.send("songcut:close-requested");
   });
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+  setApplicationMenu();
 
   const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
   const useDevServer = process.env.SONGCUT_GUI_DIST !== "1" && (!app.isPackaged || process.env.SONGCUT_GUI_DEV === "1");
@@ -93,6 +145,146 @@ ipcMain.handle("songcut:selectOutputDirectory", async () => {
 });
 
 ipcMain.handle("songcut:fileUrl", (_event, filePath: string) => pathToFileURL(filePath).toString());
+
+ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuState>) => {
+  menuState = {
+    ...menuState,
+    ...nextState,
+    zoomIndex: clampMenuZoom(nextState.zoomIndex ?? menuState.zoomIndex)
+  };
+  setApplicationMenu();
+});
+
+function setApplicationMenu() {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate()));
+}
+
+function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
+  const canUseVideo = menuState.hasVideo;
+  const canUseSegments = canUseVideo && menuState.hasSegments;
+  const canUseSelectedSegment = canUseVideo && menuState.hasSelectedSegment;
+  const canExport = menuState.hasCheckedSegments;
+  const zoomIndex = clampMenuZoom(menuState.zoomIndex);
+
+  const send = (command: SongcutMenuCommand) => () => sendMenuCommand(command);
+
+  return [
+    {
+      label: "File",
+      submenu: [
+        { label: "Load Movie", click: send({ type: "load-movie" }) },
+        { type: "separator" },
+        { role: "close" }
+      ]
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { label: "-- Nudge Adjust Boundary --", enabled: false },
+        { label: "Nudge Boundary Left", enabled: canUseSegments, click: send({ type: "nudge-boundary-left" }) },
+        { label: "Nudge Boundary Right", enabled: canUseSegments, click: send({ type: "nudge-boundary-right" }) },
+        { type: "separator" },
+        { label: "-- Timeline --", enabled: false },
+        { label: "Zoom +", enabled: zoomIndex < zoomLevels.length - 1, click: send({ type: "zoom-in" }) },
+        { label: "Zoom -", enabled: zoomIndex > 0, click: send({ type: "zoom-out" }) },
+        {
+          label: "Zoom Level",
+          submenu: zoomLevels.map((level, index) => ({
+            label: `${level * 100}%`,
+            type: "radio",
+            checked: index === zoomIndex,
+            click: send({ type: "set-zoom", zoomIndex: index })
+          }))
+        },
+        { type: "separator" },
+        { label: "Cut", role: "cut" },
+        { label: "Copy", role: "copy" },
+        { label: "Paste", role: "paste" }
+      ]
+    },
+    {
+      label: "Play",
+      submenu: [
+        { label: "-- Movie Control --", enabled: false },
+        { label: "Start", enabled: canUseVideo, click: send({ type: "start" }) },
+        { label: "Previous Boundary", enabled: canUseSegments, click: send({ type: "previous-boundary" }) },
+        { label: "Play", enabled: canUseVideo && !menuState.playing, click: send({ type: "play" }) },
+        { label: "Pause", enabled: canUseVideo && menuState.playing, click: send({ type: "pause" }) },
+        { label: "Next Boundary", enabled: canUseSegments, click: send({ type: "next-boundary" }) },
+        { type: "separator" },
+        { label: "-- Play Boundary --", enabled: false },
+        { label: "Play Start Boundary", enabled: canUseSelectedSegment, click: send({ type: "play-start-boundary" }) },
+        { label: "Play End Boundary", enabled: canUseSelectedSegment, click: send({ type: "play-end-boundary" }) }
+      ]
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" }
+      ]
+    },
+    {
+      label: "Export",
+      submenu: [
+        { label: "Export Movie", enabled: canExport, click: send({ type: "export-movie" }) },
+        { label: "Export TS Text", enabled: canExport, click: send({ type: "export-ts-text" }) }
+      ]
+    },
+    {
+      label: "Settings",
+      submenu: [
+        { label: "Prepare Whisper Model", enabled: menuState.apiReady, click: send({ type: "prepare-whisper-model" }) },
+        { label: "ffmpeg Check", enabled: menuState.apiReady, click: send({ type: "ffmpeg-check" }) }
+      ]
+    },
+    {
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "close" }]
+    },
+    {
+      label: "Help",
+      submenu: [
+        { label: "About songcut", click: showAboutSongcut },
+        { type: "separator" },
+        { label: "Open Repository", click: () => void shell.openExternal(repositoryUrl) },
+        { label: "Report Issue / Request Feature", click: () => void shell.openExternal(issuesUrl) }
+      ]
+    }
+  ];
+}
+
+function sendMenuCommand(command: SongcutMenuCommand) {
+  mainWindow?.webContents.send("songcut:menu-command", command);
+}
+
+function clampMenuZoom(value: number) {
+  return Math.max(0, Math.min(zoomLevels.length - 1, Math.round(value)));
+}
+
+function showAboutSongcut() {
+  app.setAboutPanelOptions({
+    applicationName: "songcut",
+    applicationVersion: app.getVersion(),
+    credits: `Build time: ${formatBuildTime()}\nElectron: ${process.versions.electron}`
+  });
+  app.showAboutPanel();
+}
+
+function formatBuildTime() {
+  try {
+    return statSync(__filename).mtime.toLocaleString();
+  } catch {
+    return "Unknown";
+  }
+}
 
 async function resolveApiBaseUrl(): Promise<string> {
   const externalBaseUrl = process.env.SONGCUT_API_BASE_URL;

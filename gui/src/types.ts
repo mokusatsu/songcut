@@ -75,3 +75,11 @@ export type JobRecord = {
   result?: unknown;
   error?: string | null;
 };
+
+export type FfmpegCheckResult = {
+  ok: boolean;
+  ffmpeg?: string | null;
+  ffprobe?: string | null;
+  error?: string | null;
+  download_url: string;
+};
