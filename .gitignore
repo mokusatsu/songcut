@@ -22,3 +22,6 @@ gui/.vite/
 gui/*.tsbuildinfo
 gui/vite.config.js
 gui/vite.config.d.ts
+
+# Microsoft Office temporary files
+~$*
