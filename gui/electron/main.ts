@@ -7,6 +7,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const usageEnglishUrl = "https://mokusatsu.github.io/songcut/USAGE.html";
+const usageJapaneseUrl = "https://mokusatsu.github.io/songcut/USAGE.ja.html";
+const keyboardShortcutsUrl = "https://mokusatsu.github.io/songcut/KEYBOARD_SHORTCUTS.html";
 const repositoryUrl = "https://github.com/mokusatsu/songcut";
 const issuesUrl = "https://github.com/mokusatsu/songcut/issues";
 
@@ -367,6 +370,10 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: "Help",
       submenu: [
         { label: "About songcut", click: showAboutSongcut },
+        { type: "separator" },
+        { label: "User Guide (English)", click: () => void shell.openExternal(usageEnglishUrl) },
+        { label: "User Guide (Japanese)", click: () => void shell.openExternal(usageJapaneseUrl) },
+        { label: "Keyboard Shortcuts", click: () => void shell.openExternal(keyboardShortcutsUrl) },
         { type: "separator" },
         { label: "Open Repository", click: () => void shell.openExternal(repositoryUrl) },
         { label: "Report Issue / Request Feature", click: () => void shell.openExternal(issuesUrl) }
