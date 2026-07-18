@@ -1,6 +1,6 @@
 # songcut
 
-![songcut logo](assets/icons/songcut-1024.png)
+<img src="assets/icons/songcut-1024.png" aria-label="songcut logo" width=640>
 
 English follows the Japanese.
 
