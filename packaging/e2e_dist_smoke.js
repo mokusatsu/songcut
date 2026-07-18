@@ -3,19 +3,29 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const repo = path.resolve(__dirname, "..");
-const root = path.join(repo, "dist", "songcut-win-x64");
+const root = process.env.SONGCUT_E2E_PACKAGE_ROOT
+  ? path.resolve(process.env.SONGCUT_E2E_PACKAGE_ROOT)
+  : path.join(repo, "dist", "songcut-win-x64");
 const input = path.join(repo, "out", "e2e_input.mp4");
 const outputDir = path.join(repo, "out", "e2e-export");
+const e2eUserDataDir = path.join(repo, "out", "e2e-user-data");
 const initialScreenshotPath = path.join(repo, "out", "e2e-initial-render.png");
 const loadedScreenshotPath = path.join(repo, "out", "e2e-loaded-layout.png");
 const reviewScreenshotPath = path.join(repo, "out", "e2e-export-review.png");
 const screenshotPath = path.join(repo, "out", "e2e-final.png");
 const logPath = path.join(repo, "out", "e2e-dist-smoke.log");
 const port = Number(process.env.SONGCUT_E2E_DEBUG_PORT || 9230);
+const editorSettingStorageKeys = {
+  boundaryPreview: "songcut:boundary-preview-seconds",
+  boundaryNudge: "songcut:boundary-nudge-seconds",
+  videoSplit: "songcut:video-split-percent"
+};
 
 fs.mkdirSync(path.join(repo, "out"), { recursive: true });
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(outputDir, { recursive: true });
+fs.rmSync(e2eUserDataDir, { recursive: true, force: true });
+fs.mkdirSync(e2eUserDataDir, { recursive: true });
 fs.writeFileSync(logPath, "");
 
 function log(message, value) {
@@ -125,6 +135,28 @@ async function waitFor(cdp, expression, timeoutMs, label) {
   throw new Error(`Timeout waiting for ${label}; last=${JSON.stringify(last)}`);
 }
 
+async function reloadRenderer(cdp) {
+  await cdp.send("Page.reload", { ignoreCache: true });
+  await sleep(750);
+  await waitFor(
+    cdp,
+    `!!window.songcut && document.querySelectorAll(".timeline-scroll-area .scroll-area-viewport").length === 1 && document.body.innerText.includes("Load")`,
+    30_000,
+    "renderer reload"
+  );
+}
+
+async function resetEditorSettings(cdp) {
+  await evaluate(
+    cdp,
+    `(() => {
+      for (const key of ${JSON.stringify(Object.values(editorSettingStorageKeys))}) localStorage.removeItem(key);
+      return true;
+    })()`
+  );
+  await reloadRenderer(cdp);
+}
+
 function assertPass(condition, message, details) {
   if (!condition) {
     const suffix = details === undefined ? "" : ` ${JSON.stringify(details)}`;
@@ -136,14 +168,19 @@ async function clickButton(cdp, text, occurrence = 0) {
   const ok = await evaluate(
     cdp,
     `(() => {
-      const buttons = [...document.querySelectorAll("button")].filter((button) => (button.innerText || button.title).trim() === ${JSON.stringify(text)});
+      const buttons = [...document.querySelectorAll("button")].filter((button) => {
+        const label = (button.innerText || button.title).trim();
+        return label === ${JSON.stringify(text)} || label.startsWith(${JSON.stringify(`${text} (`)});
+      });
       const button = buttons[${occurrence}];
       if (!button) return false;
+      if (button.disabled) return { disabled: true, label: (button.innerText || button.title).trim() };
       button.click();
-      return true;
+      return { disabled: false, label: (button.innerText || button.title).trim() };
     })()`
   );
   if (!ok) throw new Error(`Button not found: ${text}`);
+  if (ok.disabled) throw new Error(`Button is disabled: ${ok.label}`);
 }
 
 async function prepareWhisperModel(cdp) {
@@ -196,11 +233,11 @@ async function clickAt(cdp, selector, xRatio = 0.5, yRatio = 0.5) {
   await sleep(300);
 }
 
-async function clickSelector(cdp, selector) {
+async function clickSelector(cdp, selector, occurrence = 0) {
   const ok = await evaluate(
     cdp,
     `(() => {
-      const element = document.querySelector(${JSON.stringify(selector)});
+      const element = document.querySelectorAll(${JSON.stringify(selector)})[${occurrence}];
       if (!element) return false;
       element.click();
       return true;
@@ -256,6 +293,556 @@ async function editFirstSegmentTitle(cdp, text) {
   );
   if (!ok) throw new Error("Editable segment title not found.");
   await waitFor(cdp, `!document.querySelector(".segment-list .title-edit-input")`, 10_000, "title editor commit");
+}
+
+const shortcutKeys = {
+  KeyA: "a",
+  KeyC: "c",
+  KeyD: "d",
+  KeyE: "e",
+  KeyQ: "q",
+  KeyS: "s",
+  KeyW: "w",
+  KeyX: "x",
+  KeyZ: "z",
+  Space: " "
+};
+
+async function dispatchShortcut(cdp, code, options = {}) {
+  const key = shortcutKeys[code];
+  if (!key) throw new Error(`Unknown shortcut code: ${code}`);
+  const targetSelector = options.targetSelector || "body";
+  const dispatched = await evaluate(
+    cdp,
+    `(() => {
+      const target = document.querySelector(${JSON.stringify(targetSelector)});
+      if (!target) return null;
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        code: ${JSON.stringify(code)},
+        key: ${JSON.stringify(key)},
+        ctrlKey: ${Boolean(options.ctrlKey)},
+        shiftKey: ${Boolean(options.shiftKey)},
+        altKey: ${Boolean(options.altKey)},
+        metaKey: ${Boolean(options.metaKey)},
+        repeat: ${Boolean(options.repeat)},
+        isComposing: ${Boolean(options.isComposing)}
+      });
+      ${options.keyCode === undefined ? "" : `Object.defineProperty(event, "keyCode", { value: ${Number(options.keyCode)} });`}
+      ${options.defaultPrevented ? "event.preventDefault();" : ""}
+      const accepted = target.dispatchEvent(event);
+      return { accepted, defaultPrevented: event.defaultPrevented };
+    })()`
+  );
+  if (!dispatched) throw new Error(`Shortcut target not found: ${targetSelector}`);
+  await sleep(options.waitMs ?? 180);
+  return dispatched;
+}
+
+async function shortcutState(cdp) {
+  return evaluate(
+    cdp,
+    `(() => {
+      const video = document.querySelector("video");
+      const selected = document.querySelector(".segment-list tbody tr.selected");
+      const handles = [...document.querySelectorAll(".drag-handle")].map((handle) => handle.style.left);
+      const zoom = [...document.querySelectorAll("button")]
+        .map((button) => button.innerText.trim())
+        .find((text) => /^\\d+%$/.test(text)) || "";
+      return {
+        selectedId: selected?.children[2]?.innerText || "",
+        currentTime: video?.currentTime ?? null,
+        paused: video?.paused ?? null,
+        handles,
+        zoom
+      };
+    })()`
+  );
+}
+
+function assertShortcutStateEqual(before, after, message) {
+  const same =
+    before.selectedId === after.selectedId &&
+    before.paused === after.paused &&
+    before.zoom === after.zoom &&
+    JSON.stringify(before.handles) === JSON.stringify(after.handles) &&
+    Math.abs((before.currentTime ?? 0) - (after.currentTime ?? 0)) <= 0.04;
+  assertPass(same, message, { before, after });
+}
+
+async function assertSuppressedShortcut(cdp, label, options = {}) {
+  await dispatchShortcut(cdp, "KeyX");
+  const before = await shortcutState(cdp);
+  assertPass(before.zoom === "100%", `${label}: could not reset zoom before suppression check.`, before);
+  await dispatchShortcut(cdp, "KeyC", options);
+  const after = await shortcutState(cdp);
+  assertShortcutStateEqual(before, after, `${label}: suppressed shortcut changed editor state.`);
+}
+
+async function assertTemporaryInteractiveTargetSuppressed(cdp, targetMarkup, label) {
+  const selector = `[data-shortcut-suppression=${JSON.stringify(label)}]`;
+  const added = await evaluate(
+    cdp,
+    `(() => {
+      const host = document.createElement("div");
+      host.innerHTML = ${JSON.stringify(targetMarkup)};
+      const target = host.firstElementChild;
+      if (!target) return false;
+      target.setAttribute("data-shortcut-suppression", ${JSON.stringify(label)});
+      document.body.appendChild(target);
+      target.focus();
+      return true;
+    })()`
+  );
+  assertPass(added, `${label}: could not add suppression test target.`);
+  try {
+    await assertSuppressedShortcut(cdp, label, { targetSelector: selector });
+  } finally {
+    await evaluate(cdp, `document.querySelector(${JSON.stringify(selector)})?.remove(); true`);
+  }
+}
+
+async function setBoundarySecondsInput(cdp, value) {
+  const changed = await evaluate(
+    cdp,
+    `(() => {
+      const input = document.querySelector(".boundary-seconds-input");
+      if (!input) return false;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      input.focus();
+      setter.call(input, ${JSON.stringify(String(value))});
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.blur();
+      return true;
+    })()`
+  );
+  assertPass(changed, "Boundary seconds input was not editable for shortcut checks.");
+  await waitFor(
+    cdp,
+    `document.querySelector(".boundary-seconds-input")?.value === ${JSON.stringify(String(value))}`,
+    5000,
+    `boundary seconds set to ${value}`
+  );
+}
+
+async function setBoundaryNudgeSecondsInput(cdp, value) {
+  const changed = await evaluate(
+    cdp,
+    `(() => {
+      const input = document.querySelector(".boundary-nudge-seconds-input");
+      if (!input) return false;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+      input.focus();
+      setter.call(input, ${JSON.stringify(String(value))});
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.blur();
+      return true;
+    })()`
+  );
+  assertPass(changed, "Boundary nudge seconds input was not editable for persistence checks.");
+  await waitFor(
+    cdp,
+    `document.querySelector(".boundary-nudge-seconds-input")?.value === ${JSON.stringify(Number(value).toFixed(1))}`,
+    5000,
+    `boundary nudge seconds set to ${value}`
+  );
+}
+
+async function editorSettingState(cdp) {
+  return evaluate(
+    cdp,
+    `(() => {
+      const splitText = getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split");
+      return {
+        boundaryPreviewInput: document.querySelector(".boundary-seconds-input")?.value || "",
+        boundaryNudgeInput: document.querySelector(".boundary-nudge-seconds-input")?.value || "",
+        splitPercent: Number.parseFloat(splitText),
+        boundaryPreviewStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)}),
+        boundaryNudgeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)}),
+        videoSplitStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)})
+      };
+    })()`
+  );
+}
+
+async function runEditorSettingPersistenceChecks(cdp) {
+  const defaults = await waitFor(
+    cdp,
+    `(() => {
+      const preview = document.querySelector(".boundary-seconds-input")?.value;
+      const nudge = document.querySelector(".boundary-nudge-seconds-input")?.value;
+      const split = Number.parseFloat(getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split"));
+      return preview === "5" && nudge === "0.5" && Math.abs(split - 52) < 0.01;
+    })()`,
+    5000,
+    "default editor settings"
+  );
+  assertPass(defaults, "Editor settings did not start with the expected defaults.");
+
+  await setBoundarySecondsInput(cdp, 7);
+  await setBoundaryNudgeSecondsInput(cdp, 1.2);
+  await dragSplitter(cdp, 70);
+  log("EDITOR_SETTINGS_CHANGED_STATE", await editorSettingState(cdp));
+  const changed = await waitFor(
+    cdp,
+    `(() => {
+      const preview = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)});
+      const nudge = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)});
+      const split = Number(localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}));
+      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 52) > 0.1
+        ? { preview, nudge, split }
+        : false;
+    })()`,
+    5000,
+    "changed editor settings storage"
+  );
+
+  await reloadRenderer(cdp);
+  const restored = await editorSettingState(cdp);
+  assertPass(
+    restored.boundaryPreviewInput === "7" &&
+      restored.boundaryNudgeInput === "1.2" &&
+      Math.abs(restored.splitPercent - changed.split) < 0.01 &&
+      restored.boundaryPreviewStored === "7" &&
+      restored.boundaryNudgeStored === "1.2" &&
+      Math.abs(Number(restored.videoSplitStored) - changed.split) < 0.01,
+    "Editor settings were not restored after a renderer reload.",
+    { changed, restored }
+  );
+  log("EDITOR_SETTINGS_PERSISTENCE_OK", { changed, restored });
+
+  await resetEditorSettings(cdp);
+}
+
+async function runShortcutChecks(cdp) {
+  await setBoundarySecondsInput(cdp, 1);
+  await clickSelector(cdp, ".segment-list tbody tr", 0);
+  await dispatchShortcut(cdp, "KeyX");
+
+  const firstBefore = await shortcutState(cdp);
+  assertPass(firstBefore.selectedId === "guide-001", "Shortcut checks did not start on the first segment.", firstBefore);
+  await dispatchShortcut(cdp, "KeyW");
+  const firstEdge = await shortcutState(cdp);
+  assertShortcutStateEqual(firstBefore, firstEdge, "W wrapped or changed state at the first segment.");
+
+  await dispatchShortcut(cdp, "KeyS");
+  const secondSelected = await shortcutState(cdp);
+  assertPass(
+    secondSelected.selectedId === "guide-002" && secondSelected.currentTime >= 1.9 && secondSelected.currentTime <= 2.15,
+    "S did not select and seek to the next segment.",
+    secondSelected
+  );
+  await dispatchShortcut(cdp, "KeyS");
+  const lastEdge = await shortcutState(cdp);
+  assertShortcutStateEqual(secondSelected, lastEdge, "S wrapped or changed state at the last segment.");
+
+  await dispatchShortcut(cdp, "KeyW");
+  const firstSelected = await shortcutState(cdp);
+  assertPass(
+    firstSelected.selectedId === "guide-001" && firstSelected.currentTime >= 0 && firstSelected.currentTime <= 0.15,
+    "W did not select and seek to the previous segment.",
+    firstSelected
+  );
+  log("SHORTCUT_SEGMENT_SELECTION_OK", { firstEdge, secondSelected, lastEdge, firstSelected });
+
+  const listPrepared = await evaluate(
+    cdp,
+    `(() => {
+      const body = document.querySelector(".segment-list-body");
+      const viewport = body?.querySelector(".scroll-area-viewport");
+      if (!body || !viewport) return false;
+      body.dataset.e2eStyle = body.getAttribute("style") || "";
+      body.style.flex = "0 0 46px";
+      body.style.height = "46px";
+      return true;
+    })()`
+  );
+  assertPass(listPrepared, "Could not prepare the segment list for sticky-header scrolling checks.");
+  await sleep(200);
+  await dispatchShortcut(cdp, "KeyS");
+  await evaluate(
+    cdp,
+    `(() => {
+      const viewport = document.querySelector(".segment-list .scroll-area-viewport");
+      if (!viewport) return false;
+      viewport.scrollTop = viewport.scrollHeight;
+      return true;
+    })()`
+  );
+  await dispatchShortcut(cdp, "KeyW");
+  const selectedRowVisibility = await evaluate(
+    cdp,
+    `(() => {
+      const viewport = document.querySelector(".segment-list .scroll-area-viewport");
+      const list = document.querySelector(".segment-list");
+      const header = list?.querySelector(".segment-list-header-table");
+      const body = list?.querySelector(".segment-list-body");
+      const scrollbar = list?.querySelector(".segment-list-body .scroll-area-scrollbar-vertical");
+      const row = viewport?.querySelector("tbody tr.selected");
+      if (!viewport || !list || !header || !body || !row) return null;
+      const viewportRect = viewport.getBoundingClientRect();
+      const listRect = list.getBoundingClientRect();
+      const headerRect = header.getBoundingClientRect();
+      const bodyRect = body.getBoundingClientRect();
+      const scrollbarRect = scrollbar?.getBoundingClientRect();
+      const rowRect = row.getBoundingClientRect();
+      return {
+        selectedId: row.children[2]?.innerText || "",
+        listRight: listRect.right,
+        headerRight: headerRect.right,
+        bodyTop: bodyRect.top,
+        viewportBottom: viewportRect.bottom,
+        viewportTop: viewportRect.top,
+        headerBottom: headerRect.bottom,
+        scrollbarTop: scrollbarRect?.top ?? null,
+        rowTop: rowRect.top,
+        rowBottom: rowRect.bottom,
+        scrollTop: viewport.scrollTop
+      };
+    })()`
+  );
+  assertPass(
+    selectedRowVisibility &&
+      selectedRowVisibility.selectedId === "guide-001" &&
+      selectedRowVisibility.bodyTop >= selectedRowVisibility.headerBottom - 1 &&
+      selectedRowVisibility.viewportTop >= selectedRowVisibility.headerBottom - 1 &&
+      (selectedRowVisibility.scrollbarTop === null ||
+        selectedRowVisibility.scrollbarTop >= selectedRowVisibility.headerBottom - 1) &&
+      selectedRowVisibility.headerRight >= selectedRowVisibility.listRight - 1.5 &&
+      selectedRowVisibility.rowTop >= selectedRowVisibility.viewportTop - 1 &&
+      selectedRowVisibility.rowBottom <= selectedRowVisibility.viewportBottom + 1,
+    "Segment scrollbar overlapped the header, reserved header width, or hid the keyboard-selected row.",
+    selectedRowVisibility
+  );
+  log("SEGMENT_HEADER_SCROLLBAR_SEPARATION_OK", selectedRowVisibility);
+
+  await evaluate(
+    cdp,
+    `(() => {
+      const body = document.querySelector(".segment-list-body");
+      if (!body) return false;
+      const style = body.dataset.e2eStyle;
+      if (style) body.setAttribute("style", style);
+      else body.removeAttribute("style");
+      delete body.dataset.e2eStyle;
+      const viewport = body.querySelector(".scroll-area-viewport");
+      if (viewport) viewport.scrollTop = 0;
+      return true;
+    })()`
+  );
+  await sleep(200);
+
+  await cdp.send("DOM.enable");
+  await cdp.send("CSS.enable");
+  const domDocument = await cdp.send("DOM.getDocument");
+  const hoverRow = await cdp.send("DOM.querySelector", {
+    nodeId: domDocument.result.root.nodeId,
+    selector: ".segment-list tbody tr:nth-child(2)"
+  });
+  const hoverRowNodeId = hoverRow.result.nodeId;
+  assertPass(hoverRowNodeId, "Could not locate the non-selected segment row for hover color checks.");
+  await cdp.send("CSS.forcePseudoState", { nodeId: hoverRowNodeId, forcedPseudoClasses: ["hover"] });
+  await sleep(150);
+  const rowColors = await evaluate(
+    cdp,
+    `(() => {
+      const selected = document.querySelector(".segment-list tbody tr.selected");
+      const hovered = document.querySelector(".segment-list tbody tr:hover");
+      if (!selected || !hovered) return null;
+      const selectedStyle = getComputedStyle(selected);
+      return {
+        hoveredId: hovered.children[2]?.innerText || "",
+        selectedBackground: selectedStyle.backgroundColor,
+        selectedInset: selectedStyle.boxShadow,
+        hoveredBackground: getComputedStyle(hovered).backgroundColor
+      };
+    })()`
+  );
+  await cdp.send("CSS.forcePseudoState", { nodeId: hoverRowNodeId, forcedPseudoClasses: [] });
+  assertPass(
+    rowColors &&
+      rowColors.hoveredId === "guide-002" &&
+      rowColors.selectedBackground.includes("242, 109, 91") &&
+      rowColors.selectedInset.includes("242, 109, 91") &&
+      rowColors.hoveredBackground === "rgb(33, 50, 57)" &&
+      rowColors.hoveredBackground !== rowColors.selectedBackground,
+    "Selected and hovered segment rows do not use distinct red and neutral highlights.",
+    rowColors
+  );
+  log("SEGMENT_SELECTION_COLOR_OK", rowColors);
+
+  await dispatchShortcut(cdp, "KeyD", { ctrlKey: true });
+  const nextBoundary = await shortcutState(cdp);
+  assertPass(
+    nextBoundary.currentTime >= 1.9 && nextBoundary.currentTime <= 2.15,
+    "Ctrl+D did not jump to the next boundary.",
+    nextBoundary
+  );
+  await dispatchShortcut(cdp, "KeyA", { ctrlKey: true });
+  const previousBoundary = await shortcutState(cdp);
+  assertPass(
+    previousBoundary.currentTime >= 0 && previousBoundary.currentTime <= 0.15,
+    "Ctrl+A did not jump to the previous boundary.",
+    previousBoundary
+  );
+  log("SHORTCUT_BOUNDARY_JUMP_OK", { nextBoundary, previousBoundary });
+
+  await dispatchShortcut(cdp, "KeyE");
+  const nudgedRight = await shortcutState(cdp);
+  assertPass(
+    nudgedRight.currentTime >= 0.48 && nudgedRight.currentTime <= 0.55,
+    "E did not nudge the nearest boundary right.",
+    nudgedRight
+  );
+  await dispatchShortcut(cdp, "KeyQ");
+  const nudgedLeft = await shortcutState(cdp);
+  assertPass(
+    nudgedLeft.currentTime >= 0 && nudgedLeft.currentTime <= 0.04,
+    "Q did not nudge the nearest boundary left.",
+    nudgedLeft
+  );
+  log("SHORTCUT_BOUNDARY_NUDGE_OK", { nudgedRight, nudgedLeft });
+
+  await dispatchShortcut(cdp, "KeyC");
+  const zoom200 = await shortcutState(cdp);
+  await dispatchShortcut(cdp, "KeyC");
+  const zoom400 = await shortcutState(cdp);
+  await dispatchShortcut(cdp, "KeyZ");
+  const zoomBack200 = await shortcutState(cdp);
+  await dispatchShortcut(cdp, "KeyX");
+  const zoom100 = await shortcutState(cdp);
+  assertPass(
+    zoom200.zoom === "200%" && zoom400.zoom === "400%" && zoomBack200.zoom === "200%" && zoom100.zoom === "100%",
+    "Z/X/C did not move through the expected zoom levels.",
+    { zoom200, zoom400, zoomBack200, zoom100 }
+  );
+  log("SHORTCUT_ZOOM_OK", { zoom200, zoom400, zoomBack200, zoom100 });
+
+  await dispatchShortcut(cdp, "KeyA");
+  const startPreview = await shortcutState(cdp);
+  assertPass(
+    startPreview.paused === false && startPreview.currentTime >= 0 && startPreview.currentTime < 0.7,
+    "A did not play the start boundary.",
+    startPreview
+  );
+  await dispatchShortcut(cdp, "Space");
+  const pausedAfterStart = await shortcutState(cdp);
+  assertPass(pausedAfterStart.paused === true, "Space did not pause start-boundary playback.", pausedAfterStart);
+
+  await dispatchShortcut(cdp, "Space");
+  const playingFromSpace = await shortcutState(cdp);
+  assertPass(playingFromSpace.paused === false, "Space did not start playback.", playingFromSpace);
+  await dispatchShortcut(cdp, "Space");
+  const pausedFromSpace = await shortcutState(cdp);
+  assertPass(pausedFromSpace.paused === true, "Space did not pause playback.", pausedFromSpace);
+
+  await dispatchShortcut(cdp, "KeyD");
+  const endPreview = await shortcutState(cdp);
+  assertPass(
+    endPreview.paused === false && endPreview.currentTime >= 1 && endPreview.currentTime < 1.7,
+    "D did not play the end boundary.",
+    endPreview
+  );
+  await dispatchShortcut(cdp, "Space");
+  const pausedAfterEnd = await shortcutState(cdp);
+  assertPass(pausedAfterEnd.paused === true, "Space did not pause end-boundary playback.", pausedAfterEnd);
+  log("SHORTCUT_PLAYBACK_OK", { startPreview, pausedAfterStart, playingFromSpace, pausedFromSpace, endPreview, pausedAfterEnd });
+
+  const repeatedShortcuts = [
+    ["KeyA", {}],
+    ["KeyD", {}],
+    ["KeyW", {}],
+    ["KeyS", {}],
+    ["KeyQ", {}],
+    ["KeyE", {}],
+    ["Space", {}],
+    ["KeyA", { ctrlKey: true }],
+    ["KeyD", { ctrlKey: true }],
+    ["KeyZ", {}],
+    ["KeyX", {}],
+    ["KeyC", {}]
+  ];
+  for (const [code, modifiers] of repeatedShortcuts) {
+    await clickSelector(cdp, ".segment-list tbody tr", code === "KeyW" && !modifiers.ctrlKey ? 1 : 0);
+    await dispatchShortcut(cdp, "KeyX");
+    if (code === "KeyZ" || code === "KeyX") await dispatchShortcut(cdp, "KeyC");
+    await evaluate(
+      cdp,
+      `(() => {
+        const video = document.querySelector("video");
+        if (!video) return false;
+        video.pause();
+        video.currentTime = 0.25;
+        video.dispatchEvent(new Event("timeupdate"));
+        return true;
+      })()`
+    );
+    await sleep(100);
+    const before = await shortcutState(cdp);
+    await dispatchShortcut(cdp, code, { ...modifiers, repeat: true });
+    const after = await shortcutState(cdp);
+    assertShortcutStateEqual(before, after, `${code} repeat event was not ignored.`);
+  }
+  log("SHORTCUT_ALL_REPEAT_EVENTS_IGNORED_OK", repeatedShortcuts.map(([code, modifiers]) => ({ code, ...modifiers })));
+
+  await assertSuppressedShortcut(cdp, "defaultPrevented event", { defaultPrevented: true });
+  await assertSuppressedShortcut(cdp, "IME composing event", { isComposing: true });
+  await assertSuppressedShortcut(cdp, "IME keyCode 229 event", { keyCode: 229 });
+  log("SHORTCUT_EVENT_GUARDS_SUPPRESSED_OK", ["defaultPrevented", "isComposing", "keyCode-229"]);
+
+  const unexpectedModifiers = [
+    ["Ctrl+Z", "KeyZ", { ctrlKey: true }],
+    ["Ctrl+X", "KeyX", { ctrlKey: true }],
+    ["Ctrl+C", "KeyC", { ctrlKey: true }],
+    ["Shift+A", "KeyA", { shiftKey: true }],
+    ["Alt+C", "KeyC", { altKey: true }],
+    ["Meta+C", "KeyC", { metaKey: true }]
+  ];
+  for (const [label, code, modifiers] of unexpectedModifiers) {
+    await dispatchShortcut(cdp, "KeyX");
+    const before = await shortcutState(cdp);
+    await dispatchShortcut(cdp, code, modifiers);
+    const after = await shortcutState(cdp);
+    assertShortcutStateEqual(before, after, `${label} was misidentified as an editor shortcut.`);
+  }
+  log("SHORTCUT_UNEXPECTED_MODIFIERS_IGNORED_OK", unexpectedModifiers.map(([label]) => label));
+
+  const interactiveTargets = [
+    ["input", "<input />"],
+    ["textarea", "<textarea></textarea>"],
+    ["select", "<select><option>one</option></select>"],
+    ["button", "<button type='button'>button</button>"],
+    ["link", "<a href='#'>link</a>"],
+    ["contenteditable", "<div contenteditable='true' tabindex='0'></div>"],
+    ["role-textbox", "<div role='textbox' tabindex='0'></div>"],
+    ["role-button", "<div role='button' tabindex='0'></div>"],
+    ["role-checkbox", "<div role='checkbox' tabindex='0'></div>"],
+    ["role-radio", "<div role='radio' tabindex='0'></div>"],
+    ["role-slider", "<div role='slider' tabindex='0'></div>"],
+    ["role-menuitem", "<div role='menuitem' tabindex='0'></div>"]
+  ];
+  for (const [label, markup] of interactiveTargets) {
+    await assertTemporaryInteractiveTargetSuppressed(cdp, markup, label);
+  }
+  log("SHORTCUT_ALL_INTERACTIVE_TARGETS_SUPPRESSED_OK", interactiveTargets.map(([label]) => label));
+
+  await dispatchShortcut(cdp, "KeyX");
+  await clickButton(cdp, "View", 0);
+  await waitFor(cdp, `!!document.querySelector("[role='dialog'][aria-modal='true']")`, 5000, "shortcut suppression dialog");
+  const dialogBefore = await shortcutState(cdp);
+  await dispatchShortcut(cdp, "KeyC");
+  await dispatchShortcut(cdp, "Space");
+  const dialogAfter = await shortcutState(cdp);
+  assertShortcutStateEqual(dialogBefore, dialogAfter, "Modal dialog did not suppress editor shortcuts.");
+  await clickButton(cdp, "Close");
+  await waitFor(cdp, `!document.querySelector("[role='dialog'][aria-modal='true']")`, 5000, "shortcut suppression dialog close");
+  log("SHORTCUT_MODAL_DIALOG_SUPPRESSED_OK", { dialogBefore, dialogAfter });
+
+  await clickSelector(cdp, ".segment-list tbody tr", 0);
+  await dispatchShortcut(cdp, "KeyX");
+  await evaluate(cdp, `document.querySelector("video")?.pause(); true`);
+  log("ALL_SHORTCUT_CHECKS_OK");
 }
 
 async function dropVideo(cdp) {
@@ -645,11 +1232,10 @@ function cleanup(processHandle, cdp) {
     if (cdp) cdp.close();
   } catch {}
   try {
-    processHandle.kill();
-  } catch {}
-  for (const imageName of ["songcut.exe", "songcut-electron.exe"]) {
+    execFileSync("taskkill", ["/PID", String(processHandle.pid), "/T", "/F"], { stdio: "ignore" });
+  } catch {
     try {
-      execFileSync("taskkill", ["/IM", imageName, "/F"], { stdio: "ignore" });
+      processHandle.kill();
     } catch {}
   }
 }
@@ -659,7 +1245,8 @@ function cleanup(processHandle, cdp) {
   const env = {
     ...process.env,
     SONGCUT_E2E_VIDEO: input,
-    SONGCUT_E2E_OUTPUT_DIR: outputDir
+    SONGCUT_E2E_OUTPUT_DIR: outputDir,
+    SONGCUT_E2E_USER_DATA_DIR: e2eUserDataDir
   };
   const processHandle = spawn(
     path.join(root, "songcut.exe"),
@@ -682,6 +1269,7 @@ function cleanup(processHandle, cdp) {
       30_000,
       "initial render"
     );
+    await resetEditorSettings(cdp);
     const initial = await evaluate(
       cdp,
       `(() => ({
@@ -690,26 +1278,24 @@ function cleanup(processHandle, cdp) {
         hasBoundaryNudgeSecondsInput: !!document.querySelector(".boundary-nudge-seconds-input[aria-label='Boundary nudge seconds']"),
         timelineViewportCount: document.querySelectorAll(".timeline-scroll-area .scroll-area-viewport").length,
         hasSegmentList: !!document.querySelector(".segment-list .segment-list-body.scroll-area .scroll-area-viewport"),
-        segmentHeaderOutsideScrollArea: !!document.querySelector(".segment-list > .segment-list-header") &&
-          !document.querySelector(".segment-list > .segment-list-header")?.closest(".scroll-area"),
         text: document.body.innerText
       }))()`
     );
     log("RENDER_OK", initial);
     assertPass(
-      initial.buttons.includes("Play start boundary") &&
-        initial.buttons.includes("Play end boundary") &&
-        initial.buttons.includes("Nudge nearest boundary left") &&
-        initial.buttons.includes("Nudge nearest boundary right") &&
+      initial.buttons.some((label) => label.startsWith("Play start boundary (A)")) &&
+        initial.buttons.some((label) => label.startsWith("Play end boundary (D)")) &&
+        initial.buttons.some((label) => label.startsWith("Nudge nearest boundary left (Q)")) &&
+        initial.buttons.some((label) => label.startsWith("Nudge nearest boundary right (E)")) &&
         initial.buttons.includes("Export TS") &&
         initial.hasSegmentList &&
-        initial.segmentHeaderOutsideScrollArea &&
         initial.hasBoundarySecondsInput &&
         initial.hasBoundaryNudgeSecondsInput,
       "Boundary playback, nudge, or TS export controls are missing from the toolbar.",
       initial
     );
     assertPass(await capturePng(cdp, initialScreenshotPath, "INITIAL_RENDER", processHandle), "Initial render screenshot could not be captured.");
+    await runEditorSettingPersistenceChecks(cdp);
 
     const bridge = await evaluate(
       cdp,
@@ -770,7 +1356,10 @@ function cleanup(processHandle, cdp) {
     assertPass(whisperReady?.ok, "Whisper preparation failed.", whisperReady);
     log("WHISPER_READY_OK", whisperReady);
 
-    await setGuideText(cdp, "1. 0:00-0:04\n├ Smoke Song\n└ (Smoke)\n");
+    await setGuideText(
+      cdp,
+      "1. 0:00-0:02\n├ Smoke Song\n└ (Smoke)\n2. 0:02-0:04\n├ Encore Song\n└ (Encore)\n"
+    );
     log("GUIDE_TEXT_OK", await evaluate(cdp, `document.querySelector("textarea")?.value || ""`));
 
     await clickButton(cdp, "Analyze");
@@ -785,24 +1374,56 @@ function cleanup(processHandle, cdp) {
     );
     let beforeRows = await tableRows(cdp);
     log("ANALYZE_OK", beforeRows);
-    assertPass(beforeRows[0][1] === "Smoke Song", "Guide title was not reflected in the analysis segment list.", beforeRows);
-    assertPass(beforeRows[0][2] === "guide-001", "Guide text was not reflected in the analysis segment list.", beforeRows);
-    assertPass(beforeRows[0][3] === "0:00" && beforeRows[0][4] === "0:04", "Guided segment range was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows.length === 2, "The shortcut fixture did not create two guided segments.", beforeRows);
+    assertPass(beforeRows[0][1] === "Smoke Song", "First guide title was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows[0][2] === "guide-001", "First guide entry was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows[0][3] === "0:00" && beforeRows[0][4] === "0:02", "First guided segment range was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows[1][1] === "Encore Song", "Second guide title was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows[1][2] === "guide-002", "Second guide entry was not reflected in the analysis segment list.", beforeRows);
+    assertPass(beforeRows[1][3] === "0:02" && beforeRows[1][4] === "0:04", "Second guided segment range was not reflected in the analysis segment list.", beforeRows);
 
     await editFirstSegmentTitle(cdp, "Smoke Song Edited");
     beforeRows = await tableRows(cdp);
     assertPass(beforeRows[0][1] === "Smoke Song Edited", "Editable segment title did not update the segment list.", beforeRows);
     log("TITLE_EDIT_OK", beforeRows);
 
+    await runShortcutChecks(cdp);
+
+    const beforeTsCopy = await evaluate(
+      cdp,
+      `(() => ({
+        checkboxes: [...document.querySelectorAll(".segment-list input[type=checkbox]")].map((checkbox) => checkbox.checked),
+        exportTsDisabled: [...document.querySelectorAll("button")].find((button) => button.innerText.trim() === "Export TS")?.disabled ?? null,
+        message: document.querySelector(".status-main")?.innerText || "",
+        dialogCount: document.querySelectorAll("[role='dialog'][aria-modal='true']").length
+      }))()`
+    );
+    log("BEFORE_TS_COPY", beforeTsCopy);
+    await evaluate(cdp, `window.songcut.writeClipboard(""); true`);
     await clickButton(cdp, "Export TS");
+    await sleep(300);
+    const afterTsCopyClick = await evaluate(
+      cdp,
+      `(() => ({
+        clipboard: window.songcut?.readClipboard?.() || "",
+        message: document.querySelector(".status-main")?.innerText || "",
+        dialogs: [...document.querySelectorAll("[role='dialog'][aria-modal='true']")].map((dialog) => dialog.innerText)
+      }))()`
+    );
+    log("AFTER_TS_COPY_CLICK", afterTsCopyClick);
     const copiedTsComment = await waitFor(
       cdp,
       `(() => {
         const text = window.songcut?.readClipboard?.() || "";
-        return text.includes("0:00 - 0:04 Smoke Song Edited") ? text : false;
+        return text || false;
       })()`,
       5000,
       "TS comment clipboard copy"
+    );
+    assertPass(
+      copiedTsComment.includes("0:00 - 0:02 Smoke Song Edited") && copiedTsComment.includes("0:02 - 0:04 Encore Song"),
+      "TS comment clipboard text did not include both guided segments.",
+      copiedTsComment
     );
     log("EXPORT_TS_CLIPBOARD_OK", copiedTsComment);
     const copyDialog = await waitFor(
@@ -1005,10 +1626,10 @@ function cleanup(processHandle, cdp) {
     );
     assertPass(
       boundaryNudgeDefaults &&
-        boundaryNudgeDefaults.value === "0.1" &&
+        boundaryNudgeDefaults.value === "0.5" &&
         boundaryNudgeDefaults.step === "0.1" &&
         boundaryNudgeDefaults.min === "0.1",
-      "Boundary nudge seconds input does not default to 0.1 second steps.",
+      "Boundary nudge seconds input does not default to 0.5 seconds in 0.1 second steps.",
       boundaryNudgeDefaults
     );
     log("BOUNDARY_NUDGE_SECONDS_DEFAULT_OK", boundaryNudgeDefaults);
@@ -1058,7 +1679,7 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const video = document.querySelector("video");
-        return video && !video.paused && video.currentTime >= 3 && video.currentTime < 3.8
+        return video && !video.paused && video.currentTime >= 1 && video.currentTime < 1.8
           ? { currentTime: video.currentTime, paused: video.paused }
           : false;
       })()`,
@@ -1069,7 +1690,7 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const video = document.querySelector("video");
-        return video && video.paused && video.currentTime >= 3.95 && video.currentTime <= 4.08
+        return video && video.paused && video.currentTime >= 1.95 && video.currentTime <= 2.08
           ? { currentTime: video.currentTime, paused: video.paused }
           : false;
       })()`,
@@ -1091,17 +1712,34 @@ function cleanup(processHandle, cdp) {
     );
     log("SEGMENT_SELECT_OK", selectedRow);
 
-    const checkedDefault = await evaluate(cdp, `document.querySelector(".segment-list input[type=checkbox]")?.checked === true`);
-    assertPass(checkedDefault, "Segment checkbox is not checked by default.");
-    await clickSelector(cdp, ".segment-list input[type=checkbox]");
+    const checkedDefault = await evaluate(
+      cdp,
+      `[...document.querySelectorAll(".segment-list input[type=checkbox]")].every((checkbox) => checkbox.checked === true)`
+    );
+    assertPass(checkedDefault, "Segment checkboxes are not checked by default.");
+    await clickSelector(cdp, ".segment-list input[type=checkbox]", 0);
+    const oneCheckedState = await waitFor(
+      cdp,
+      `(() => {
+        const checkboxes = [...document.querySelectorAll(".segment-list input[type=checkbox]")];
+        const exportButton = [...document.querySelectorAll("button")].find((button) => button.innerText.trim() === "Export");
+        return checkboxes.length === 2 && checkboxes[0].checked === false && checkboxes[1].checked === true
+          ? { checked: checkboxes.map((checkbox) => checkbox.checked), exportDisabled: exportButton?.disabled ?? null }
+          : false;
+      })()`,
+      10_000,
+      "one remaining checked segment"
+    );
+    assertPass(oneCheckedState.exportDisabled === false, "Export was disabled while one segment remained checked.", oneCheckedState);
+    await clickSelector(cdp, ".segment-list input[type=checkbox]", 1);
     const uncheckedState = await waitFor(
       cdp,
       `(() => {
-        const checkbox = document.querySelector(".segment-list input[type=checkbox]");
+        const checkboxes = [...document.querySelectorAll(".segment-list input[type=checkbox]")];
         const exportButton = [...document.querySelectorAll("button")].find((button) => (button.innerText || button.title).trim() === "Export");
         const exportTsButton = [...document.querySelectorAll("button")].find((button) => (button.innerText || button.title).trim() === "Export TS");
-        return checkbox && checkbox.checked === false
-          ? { checked: checkbox.checked, exportDisabled: exportButton?.disabled ?? null, exportTsDisabled: exportTsButton?.disabled ?? null }
+        return checkboxes.length === 2 && checkboxes.every((checkbox) => checkbox.checked === false)
+          ? { checked: checkboxes.map((checkbox) => checkbox.checked), exportDisabled: exportButton?.disabled ?? null, exportTsDisabled: exportTsButton?.disabled ?? null }
           : false;
       })()`,
       10_000,
@@ -1110,8 +1748,16 @@ function cleanup(processHandle, cdp) {
     assertPass(uncheckedState.exportDisabled === true, "Unchecked segment did not disable export when no rows remain checked.", uncheckedState);
     assertPass(uncheckedState.exportTsDisabled === true, "Unchecked segment did not disable TS export when no rows remain checked.", uncheckedState);
     log("CHECKBOX_EXCLUDE_OK", uncheckedState);
-    await clickSelector(cdp, ".segment-list input[type=checkbox]");
-    await waitFor(cdp, `document.querySelector(".segment-list input[type=checkbox]")?.checked === true`, 10_000, "checkbox re-enable");
+    await clickSelector(cdp, ".segment-list input[type=checkbox]", 0);
+    await waitFor(
+      cdp,
+      `(() => {
+        const checkboxes = [...document.querySelectorAll(".segment-list input[type=checkbox]")];
+        return checkboxes.length === 2 && checkboxes[0].checked === true && checkboxes[1].checked === false;
+      })()`,
+      10_000,
+      "first checkbox re-enable"
+    );
 
     await clickButton(cdp, "View");
     const transcriptBefore = await waitFor(

@@ -10,6 +10,10 @@ const __dirname = path.dirname(__filename);
 const repositoryUrl = "https://github.com/mokusatsu/songcut";
 const issuesUrl = "https://github.com/mokusatsu/songcut/issues";
 
+if (process.env.SONGCUT_E2E_USER_DATA_DIR) {
+  app.setPath("userData", process.env.SONGCUT_E2E_USER_DATA_DIR);
+}
+
 let mainWindow: BrowserWindow | null = null;
 let apiProcess: ChildProcessWithoutNullStreams | null = null;
 let apiBaseUrl = "";
@@ -27,6 +31,8 @@ type SongcutMenuCommand =
   | { type: "load-movie" }
   | { type: "nudge-boundary-left" }
   | { type: "nudge-boundary-right" }
+  | { type: "previous-segment" }
+  | { type: "next-segment" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
   | { type: "set-zoom"; zoomIndex: number }
@@ -51,6 +57,8 @@ type SongcutMenuState = {
   hasSegments: boolean;
   hasSelectedSegment: boolean;
   hasCheckedSegments: boolean;
+  canSelectPreviousSegment: boolean;
+  canSelectNextSegment: boolean;
   playing: boolean;
   zoomIndex: number;
   analysisDevice: AnalysisDevice;
@@ -63,6 +71,8 @@ let menuState: SongcutMenuState = {
   hasSegments: false,
   hasSelectedSegment: false,
   hasCheckedSegments: false,
+  canSelectPreviousSegment: false,
+  canSelectNextSegment: false,
   playing: false,
   zoomIndex: 0,
   analysisDevice: "auto",
@@ -195,18 +205,43 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: "Edit",
       submenu: [
         { label: "-- Nudge Adjust Boundary --", enabled: false },
-        { label: "Nudge Boundary Left", enabled: canUseSegments, click: send({ type: "nudge-boundary-left" }) },
-        { label: "Nudge Boundary Right", enabled: canUseSegments, click: send({ type: "nudge-boundary-right" }) },
+        {
+          label: "Nudge Boundary Left",
+          accelerator: "Q",
+          registerAccelerator: false,
+          enabled: canUseSegments,
+          click: send({ type: "nudge-boundary-left" })
+        },
+        {
+          label: "Nudge Boundary Right",
+          accelerator: "E",
+          registerAccelerator: false,
+          enabled: canUseSegments,
+          click: send({ type: "nudge-boundary-right" })
+        },
         { type: "separator" },
         { label: "-- Timeline --", enabled: false },
-        { label: "Zoom +", enabled: zoomIndex < zoomLevels.length - 1, click: send({ type: "zoom-in" }) },
-        { label: "Zoom -", enabled: zoomIndex > 0, click: send({ type: "zoom-out" }) },
+        {
+          label: "Zoom +",
+          accelerator: "C",
+          registerAccelerator: false,
+          enabled: zoomIndex < zoomLevels.length - 1,
+          click: send({ type: "zoom-in" })
+        },
+        {
+          label: "Zoom -",
+          accelerator: "Z",
+          registerAccelerator: false,
+          enabled: zoomIndex > 0,
+          click: send({ type: "zoom-out" })
+        },
         {
           label: "Zoom Level",
           submenu: zoomLevels.map((level, index) => ({
             label: `${level * 100}%`,
             type: "radio",
             checked: index === zoomIndex,
+            ...(index === 0 ? { accelerator: "X", registerAccelerator: false } : {}),
             click: send({ type: "set-zoom", zoomIndex: index })
           }))
         },
@@ -219,16 +254,61 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
     {
       label: "Play",
       submenu: [
+        { label: "-- Segment Selection --", enabled: false },
+        {
+          label: "Previous Segment",
+          accelerator: "W",
+          registerAccelerator: false,
+          enabled: canUseSegments && menuState.canSelectPreviousSegment,
+          click: send({ type: "previous-segment" })
+        },
+        {
+          label: "Next Segment",
+          accelerator: "S",
+          registerAccelerator: false,
+          enabled: canUseSegments && menuState.canSelectNextSegment,
+          click: send({ type: "next-segment" })
+        },
+        { type: "separator" },
         { label: "-- Movie Control --", enabled: false },
         { label: "Start", enabled: canUseVideo, click: send({ type: "start" }) },
-        { label: "Previous Boundary", enabled: canUseSegments, click: send({ type: "previous-boundary" }) },
-        { label: "Play", enabled: canUseVideo && !menuState.playing, click: send({ type: "play" }) },
-        { label: "Pause", enabled: canUseVideo && menuState.playing, click: send({ type: "pause" }) },
-        { label: "Next Boundary", enabled: canUseSegments, click: send({ type: "next-boundary" }) },
+        {
+          label: "Previous Boundary",
+          accelerator: "Ctrl+A",
+          registerAccelerator: false,
+          enabled: canUseSegments,
+          click: send({ type: "previous-boundary" })
+        },
+        {
+          label: menuState.playing ? "Pause" : "Play",
+          accelerator: "Space",
+          registerAccelerator: false,
+          enabled: canUseVideo,
+          click: send(menuState.playing ? { type: "pause" } : { type: "play" })
+        },
+        {
+          label: "Next Boundary",
+          accelerator: "Ctrl+D",
+          registerAccelerator: false,
+          enabled: canUseSegments,
+          click: send({ type: "next-boundary" })
+        },
         { type: "separator" },
         { label: "-- Play Boundary --", enabled: false },
-        { label: "Play Start Boundary", enabled: canUseSelectedSegment, click: send({ type: "play-start-boundary" }) },
-        { label: "Play End Boundary", enabled: canUseSelectedSegment, click: send({ type: "play-end-boundary" }) }
+        {
+          label: "Play Start Boundary",
+          accelerator: "A",
+          registerAccelerator: false,
+          enabled: canUseSelectedSegment,
+          click: send({ type: "play-start-boundary" })
+        },
+        {
+          label: "Play End Boundary",
+          accelerator: "D",
+          registerAccelerator: false,
+          enabled: canUseSelectedSegment,
+          click: send({ type: "play-end-boundary" })
+        }
       ]
     },
     {

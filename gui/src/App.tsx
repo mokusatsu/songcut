@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
   ArrowLeft,
@@ -27,6 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
 import { checkFfmpeg, probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
+import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
 import type { AnalysisDevice, WhisperDevice } from "@/lib/api";
 import type {
   AnalysisResult,
@@ -41,10 +42,18 @@ import type {
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const MIN_SEGMENT_SECONDS = 0.1;
+const DEFAULT_BOUNDARY_SECONDS = 5;
+const DEFAULT_BOUNDARY_NUDGE_SECONDS = 0.5;
+const DEFAULT_VIDEO_SPLIT_PERCENT = 52;
+const MIN_VIDEO_SPLIT_PERCENT = 32;
+const MAX_VIDEO_SPLIT_PERCENT = 72;
 const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
 const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
 const MAX_SCRATCH_PREVIEW_MILLISECONDS = 5000;
 const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
+const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
+const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
+const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
@@ -83,8 +92,8 @@ export default function App() {
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [boundarySecondsInput, setBoundarySecondsInput] = useState("5");
-  const [boundaryNudgeSecondsInput, setBoundaryNudgeSecondsInput] = useState("0.1");
+  const [boundarySecondsInput, setBoundarySecondsInput] = useState(readBoundarySecondsInput);
+  const [boundaryNudgeSecondsInput, setBoundaryNudgeSecondsInput] = useState(readBoundaryNudgeSecondsInput);
   const [scratchPreviewMilliseconds, setScratchPreviewMilliseconds] = useState(readScratchPreviewMilliseconds);
   const [scratchPreviewMillisecondsInput, setScratchPreviewMillisecondsInput] = useState(
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
@@ -94,7 +103,7 @@ export default function App() {
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
-  const [split, setSplit] = useState(52);
+  const [split, setSplit] = useState(readVideoSplitPercent);
   const [job, setJob] = useState<JobRecord | null>(null);
   const [exportJob, setExportJob] = useState<JobRecord | null>(null);
   const [exportProgressOpen, setExportProgressOpen] = useState(false);
@@ -115,6 +124,9 @@ export default function App() {
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
     [segments, selectedSegmentId]
   );
+  const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
+  const canSelectPreviousSegment = selectedSegmentIndex > 0;
+  const canSelectNextSegment = selectedSegmentIndex >= 0 && selectedSegmentIndex < segments.length - 1;
   const duration = videoInfo?.duration ?? analysis?.duration ?? videoRef.current?.duration ?? 0;
   const zoom = zoomLevels[zoomIndex];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
@@ -141,6 +153,38 @@ export default function App() {
       // Keep the setting for this session when persistent storage is unavailable.
     }
   }, [scratchPreviewMilliseconds]);
+
+  useEffect(() => {
+    if (!boundarySecondsInput.trim()) return;
+    try {
+      window.localStorage.setItem(
+        BOUNDARY_SECONDS_STORAGE_KEY,
+        formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))
+      );
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [boundarySecondsInput]);
+
+  useEffect(() => {
+    if (!boundaryNudgeSecondsInput.trim()) return;
+    try {
+      window.localStorage.setItem(
+        BOUNDARY_NUDGE_SECONDS_STORAGE_KEY,
+        formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))
+      );
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [boundaryNudgeSecondsInput]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VIDEO_SPLIT_STORAGE_KEY, String(split));
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [split]);
 
   useEffect(() => {
     if (scratchSettingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
@@ -405,6 +449,20 @@ export default function App() {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
   }
 
+  function selectSegment(segment: Segment) {
+    setSelectedSegmentId(segment.id);
+    setSegmentFocusRequest((request) => request + 1);
+    seek(segment.start);
+  }
+
+  function selectAdjacentSegment(direction: -1 | 1) {
+    if (!selectedSegment) return;
+    const index = segments.findIndex((segment) => segment.id === selectedSegment.id);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= segments.length) return;
+    selectSegment(segments[nextIndex]);
+  }
+
   function applyTranscriptResult(result: unknown) {
     const transcripts = (result as { transcripts?: Transcript[] } | null | undefined)?.transcripts;
     if (Array.isArray(transcripts)) applyTranscripts(transcripts);
@@ -586,6 +644,8 @@ export default function App() {
       hasSegments: segments.length > 0,
       hasSelectedSegment: Boolean(videoUrl && selectedSegment),
       hasCheckedSegments: checkedCount > 0,
+      canSelectPreviousSegment,
+      canSelectNextSegment,
       playing,
       zoomIndex,
       analysisDevice,
@@ -597,6 +657,8 @@ export default function App() {
     segments.length,
     selectedSegment?.id,
     checkedCount,
+    canSelectPreviousSegment,
+    canSelectNextSegment,
     playing,
     zoomIndex,
     analysisDevice,
@@ -614,6 +676,12 @@ export default function App() {
           break;
         case "nudge-boundary-right":
           nudgeNearestBoundary(1);
+          break;
+        case "previous-segment":
+          selectAdjacentSegment(-1);
+          break;
+        case "next-segment":
+          selectAdjacentSegment(1);
           break;
         case "zoom-in":
           setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
@@ -672,6 +740,60 @@ export default function App() {
     });
   }, [apiBaseUrl, videoUrl, selectedSegment?.id, segments, checkedCount, currentTime, boundarySecondsInput, boundaryNudgeSecondsInput, zoomIndex]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const action = resolveEditorShortcut(event);
+      if (!action || isEditorShortcutSuppressed(event)) return;
+      event.preventDefault();
+
+      switch (action) {
+        case "play-start-boundary":
+          playStartBoundary();
+          break;
+        case "play-end-boundary":
+          playEndBoundary();
+          break;
+        case "previous-segment":
+          selectAdjacentSegment(-1);
+          break;
+        case "next-segment":
+          selectAdjacentSegment(1);
+          break;
+        case "nudge-boundary-left":
+          nudgeNearestBoundary(-1);
+          break;
+        case "nudge-boundary-right":
+          nudgeNearestBoundary(1);
+          break;
+        case "toggle-playback": {
+          const video = videoRef.current;
+          if (!video) break;
+          if (video.paused) playVideo();
+          else pauseVideo();
+          break;
+        }
+        case "previous-boundary":
+          jumpBoundary(-1);
+          break;
+        case "next-boundary":
+          jumpBoundary(1);
+          break;
+        case "zoom-out":
+          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
+          break;
+        case "reset-zoom":
+          setZoomIndex(0);
+          break;
+        case "zoom-in":
+          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [boundaryNudgeSecondsInput, boundarySecondsInput, currentTime, duration, segments, selectedSegment]);
+
   return (
     <main
       className={dropActive ? "app drop-active" : "app"}
@@ -703,7 +825,7 @@ export default function App() {
           const startSplit = split;
           const move = (moveEvent: PointerEvent) => {
             const delta = ((moveEvent.clientY - startY) / window.innerHeight) * 100;
-            setSplit(clamp(startSplit + delta, 32, 72));
+            setSplit(clamp(startSplit + delta, MIN_VIDEO_SPLIT_PERCENT, MAX_VIDEO_SPLIT_PERCENT));
           };
           const up = () => {
             window.removeEventListener("pointermove", move);
@@ -787,11 +909,7 @@ export default function App() {
         <SegmentList
           segments={segments}
           selectedId={selectedSegment?.id ?? null}
-          onSelect={(segment) => {
-            setSelectedSegmentId(segment.id);
-            setSegmentFocusRequest((request) => request + 1);
-            seek(segment.start);
-          }}
+          onSelect={selectSegment}
           onToggle={(segment, checked) => updateSegment(segment.id, { checked })}
           onTitleChange={(segment, title) => updateSegment(segment.id, { title })}
           onTranscript={setTranscriptSegment}
@@ -907,10 +1025,24 @@ function BoundaryControls(props: {
 }) {
   return (
     <div className="icon-group boundary-controls">
-      <Button size="icon" variant="ghost" onClick={props.onStart} disabled={props.disabled} title="Play start boundary">
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={props.onStart}
+        disabled={props.disabled}
+        title="Play start boundary (A)"
+        aria-keyshortcuts="A"
+      >
         <SkipBack size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onEnd} disabled={props.disabled} title="Play end boundary">
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={props.onEnd}
+        disabled={props.disabled}
+        title="Play end boundary (D)"
+        aria-keyshortcuts="D"
+      >
         <SkipForward size={17} />
       </Button>
       <Input
@@ -940,10 +1072,24 @@ function BoundaryNudgeControls(props: {
 }) {
   return (
     <div className="icon-group boundary-nudge-controls">
-      <Button size="icon" variant="ghost" onClick={props.onLeft} disabled={props.disabled} title="Nudge nearest boundary left">
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={props.onLeft}
+        disabled={props.disabled}
+        title="Nudge nearest boundary left (Q)"
+        aria-keyshortcuts="Q"
+      >
         <ArrowLeft size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onRight} disabled={props.disabled} title="Nudge nearest boundary right">
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={props.onRight}
+        disabled={props.disabled}
+        title="Nudge nearest boundary right (E)"
+        aria-keyshortcuts="E"
+      >
         <ArrowRight size={17} />
       </Button>
       <Input
@@ -968,16 +1114,16 @@ function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onSt
       <Button size="icon" variant="ghost" onClick={props.onStart} title="Start">
         <Rewind size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPrev} title="Previous boundary">
+      <Button size="icon" variant="ghost" onClick={props.onPrev} title="Previous boundary (Ctrl+A)" aria-keyshortcuts="Control+A">
         <ChevronsLeft size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPlay} title="Play">
+      <Button size="icon" variant="ghost" onClick={props.onPlay} title="Play (Space)" aria-keyshortcuts="Space">
         <Play size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPause} title="Pause">
+      <Button size="icon" variant="ghost" onClick={props.onPause} title="Pause (Space)" aria-keyshortcuts="Space">
         <Pause size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onNext} title="Next boundary">
+      <Button size="icon" variant="ghost" onClick={props.onNext} title="Next boundary (Ctrl+D)" aria-keyshortcuts="Control+D">
         <ChevronsRight size={17} />
       </Button>
     </div>
@@ -987,13 +1133,13 @@ function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onSt
 function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void; onReset: () => void }) {
   return (
     <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onOut} title="Zoom out">
+      <Button size="icon" variant="ghost" onClick={props.onOut} title="Zoom out (Z)" aria-keyshortcuts="Z">
         <Minus size={17} />
       </Button>
-      <Button variant="ghost" size="sm" onClick={props.onReset} title="Reset zoom">
+      <Button variant="ghost" size="sm" onClick={props.onReset} title="100% zoom (X)" aria-keyshortcuts="X">
         {props.zoom * 100}%
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onIn} title="Zoom in">
+      <Button size="icon" variant="ghost" onClick={props.onIn} title="Zoom in (C)" aria-keyshortcuts="C">
         <Plus size={17} />
       </Button>
     </div>
@@ -1444,26 +1590,51 @@ function SegmentList(props: {
   onTitleChange: (segment: Segment, title: string) => void;
   onTranscript: (segment: Segment) => void;
 }) {
+  const selectedRowRef = useRef<HTMLTableRowElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const selectedRow = selectedRowRef.current;
+    if (!viewport || !selectedRow) return;
+
+    const viewportRect = viewport.getBoundingClientRect();
+    const rowRect = selectedRow.getBoundingClientRect();
+    if (rowRect.top < viewportRect.top) {
+      viewport.scrollTop -= viewportRect.top - rowRect.top;
+    } else if (rowRect.bottom > viewportRect.bottom) {
+      viewport.scrollTop += rowRect.bottom - viewportRect.bottom;
+    }
+  }, [props.selectedId]);
+
   return (
     <div className="segment-list">
-      <ScrollArea className="segment-list-body" scrollbars={["vertical"]}>
-        <table className="segment-list-table">
+      <table className="segment-list-table segment-list-header-table">
+        <SegmentColumnGroup />
+        <thead>
+          <tr>
+            <th>Export</th>
+            <th>Title</th>
+            <th>ID</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Duration</th>
+            <th>Confidence</th>
+            <th>Text</th>
+          </tr>
+        </thead>
+      </table>
+      <ScrollArea className="segment-list-body" viewportRef={viewportRef} scrollbars={["vertical"]}>
+        <table className="segment-list-table segment-list-body-table">
           <SegmentColumnGroup />
-          <thead>
-            <tr>
-              <th>Export</th>
-              <th>Title</th>
-              <th>ID</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Duration</th>
-              <th>Confidence</th>
-              <th>Text</th>
-            </tr>
-          </thead>
           <tbody>
             {props.segments.map((segment) => (
-              <tr key={segment.id} className={segment.id === props.selectedId ? "selected" : ""} onClick={() => props.onSelect(segment)}>
+              <tr
+                key={segment.id}
+                ref={segment.id === props.selectedId ? selectedRowRef : undefined}
+                className={segment.id === props.selectedId ? "selected" : ""}
+                onClick={() => props.onSelect(segment)}
+              >
                 <td>
                   <Checkbox
                     checked={segment.checked !== false}
@@ -1723,9 +1894,50 @@ function readScratchPreviewMilliseconds() {
   }
 }
 
+function readBoundarySecondsInput() {
+  try {
+    const stored = window.localStorage.getItem(BOUNDARY_SECONDS_STORAGE_KEY);
+    return stored?.trim()
+      ? formatBoundarySeconds(parseBoundarySeconds(stored))
+      : formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
+  } catch {
+    return formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
+  }
+}
+
+function readBoundaryNudgeSecondsInput() {
+  try {
+    const stored = window.localStorage.getItem(BOUNDARY_NUDGE_SECONDS_STORAGE_KEY);
+    return stored?.trim()
+      ? formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(stored))
+      : formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
+  } catch {
+    return formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
+  }
+}
+
+function readVideoSplitPercent() {
+  try {
+    const stored = window.localStorage.getItem(VIDEO_SPLIT_STORAGE_KEY);
+    return normalizeVideoSplitPercent(stored);
+  } catch {
+    return DEFAULT_VIDEO_SPLIT_PERCENT;
+  }
+}
+
+function normalizeVideoSplitPercent(value: unknown) {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+    return DEFAULT_VIDEO_SPLIT_PERCENT;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed)
+    ? clamp(parsed, MIN_VIDEO_SPLIT_PERCENT, MAX_VIDEO_SPLIT_PERCENT)
+    : DEFAULT_VIDEO_SPLIT_PERCENT;
+}
+
 function parseBoundarySeconds(value: string) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? clamp(Math.round(parsed), 1, 60) : 5;
+  return Number.isFinite(parsed) ? clamp(Math.round(parsed), 1, 60) : DEFAULT_BOUNDARY_SECONDS;
 }
 
 function formatBoundarySeconds(value: number) {
@@ -1756,7 +1968,9 @@ function nearestBoundaryTarget(segments: Segment[], time: number): BoundaryTarge
 
 function parseBoundaryNudgeSeconds(value: string) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? clamp(Math.round(parsed * 10) / 10, MIN_SEGMENT_SECONDS, 60) : MIN_SEGMENT_SECONDS;
+  return Number.isFinite(parsed)
+    ? clamp(Math.round(parsed * 10) / 10, MIN_SEGMENT_SECONDS, 60)
+    : DEFAULT_BOUNDARY_NUDGE_SECONDS;
 }
 
 function formatBoundaryNudgeSeconds(value: number) {

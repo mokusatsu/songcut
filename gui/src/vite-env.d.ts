@@ -7,6 +7,8 @@ type SongcutMenuCommand =
   | { type: "load-movie" }
   | { type: "nudge-boundary-left" }
   | { type: "nudge-boundary-right" }
+  | { type: "previous-segment" }
+  | { type: "next-segment" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
   | { type: "set-zoom"; zoomIndex: number }
@@ -31,6 +33,8 @@ type SongcutMenuState = {
   hasSegments: boolean;
   hasSelectedSegment: boolean;
   hasCheckedSegments: boolean;
+  canSelectPreviousSegment: boolean;
+  canSelectNextSegment: boolean;
   playing: boolean;
   zoomIndex: number;
   analysisDevice: AnalysisDevice;

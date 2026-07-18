@@ -421,10 +421,6 @@ progress {
   min-height: 0;
 }
 
-.segment-list-body .scroll-area-viewport {
-  padding-right: 12px;
-}
-
 .segment-list-body .scroll-area-scrollbar-vertical {
   margin-top: 2px;
   margin-bottom: 2px;
@@ -437,13 +433,15 @@ table {
 }
 
 .segment-list table {
-  table-layout: auto;
+  table-layout: fixed;
 }
 
-.segment-list-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+.segment-list-header-table {
+  flex: 0 0 auto;
+}
+
+.segment-list-body-table td:last-child {
+  padding-right: 19px;
 }
 
 th,
@@ -454,17 +452,13 @@ td {
   white-space: nowrap;
 }
 
-td:nth-child(2) {
-  min-width: 240px;
-}
-
 th {
   color: #aebbc2;
   background: #1d282d;
 }
 
 .segment-col-export {
-  width: 1%;
+  width: 66px;
 }
 
 .segment-col-title {
@@ -472,29 +466,40 @@ th {
 }
 
 .segment-col-id {
-  width: 1%;
+  width: 84px;
 }
 
-.segment-col-time,
+.segment-col-time {
+  width: 62px;
+}
+
 .segment-col-duration {
-  width: 1%;
+  width: 70px;
 }
 
 .segment-col-confidence {
-  width: 1%;
+  width: 90px;
 }
 
 .segment-col-text {
-  width: 1%;
+  width: 74px;
 }
 
 tr {
   cursor: pointer;
 }
 
-tr.selected,
 tbody tr:hover {
   background: #213239;
+}
+
+tr.selected {
+  background: rgba(242, 109, 91, 0.3);
+  box-shadow: inset 3px 0 #f26d5b;
+}
+
+tr.selected:hover {
+  background: rgba(242, 109, 91, 0.38);
 }
 
 .checkbox {

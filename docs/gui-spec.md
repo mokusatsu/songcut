@@ -55,6 +55,8 @@ ffmpeg discovery:
 - The top pane is the video pane.
 - The bottom pane is the operation pane.
 - The boundary between panes is draggable.
+- The split position is persisted in renderer local storage and restored on the
+  next launch. Its default is `52%` and its valid range is `32%` to `72%`.
 - Video uses `object-fit: contain` so it always preserves aspect ratio.
 - The operation pane contains, from top to bottom:
   1. Primary toolbar.
@@ -62,6 +64,20 @@ ffmpeg discovery:
   3. Waveform timeline.
   4. Segment timeline for the selected segment.
   5. Segment list.
+
+### Scrollable table layout rule
+
+- A fixed table header must be a sibling outside the vertical scroll area. Only
+  the body viewport owns the vertical scrollbar, so neither its track nor its
+  gutter can occupy or overlap the header range.
+- Do not simulate this separation by putting a sticky header inside the same
+  scroll viewport and offsetting the scrollbar with margins or padding. That
+  couples the result to a header height and has caused regressions.
+- Keep the separate header and body columns aligned with the same `colgroup` and
+  `table-layout: fixed` geometry. Reserve scrollbar clearance only inside the
+  body table's final cell.
+- Keyboard selection scrolling must compare the selected row against the body
+  viewport bounds; the header is not part of that viewport.
 
 ## Application menu
 
@@ -73,14 +89,20 @@ ffmpeg discovery:
   `Undo`, `Redo`, and `Select All` are omitted.
 - `Edit` groups:
   - Disabled heading `-- Nudge Adjust Boundary --`, with `Nudge Boundary Left` and
-    `Nudge Boundary Right`.
+    `Nudge Boundary Right`. Their displayed shortcuts are `Q` and `E`.
   - Disabled heading `-- Timeline --`, with `Zoom +`, `Zoom -`, and `Zoom Level`
     submenu entries for `100%`, `200%`, `400%`, `800%`, `1600%`, and `3200%`.
+    Timeline zoom shortcuts are `Z` for zoom out, `X` for 100%, and `C` for
+    zoom in.
 - `Play` groups:
-  - Disabled heading `-- Movie Control --`, with the same five actions as the playback
-    toolbar: `Start`, `Previous Boundary`, `Play`, `Pause`, and `Next Boundary`.
+  - Disabled heading `-- Segment Selection --`, with `Previous Segment` (`W`)
+    and `Next Segment` (`S`). Selection stops at the first and last segments.
+  - Disabled heading `-- Movie Control --`, with `Start`, `Previous Boundary`
+    (`Ctrl+A`), a dynamic `Play` / `Pause` item (`Space`), and `Next Boundary`
+    (`Ctrl+D`).
   - Disabled heading `-- Play Boundary --`, with `Play Start Boundary` and
-    `Play End Boundary` for the selected segment.
+    `Play End Boundary` for the selected segment. Their shortcuts are `A` and
+    `D`.
 - `Export` provides `Export Movie` and `Export TS Text`.
 - `Settings` provides `Prepare Whisper Model` and `ffmpeg Check`.
 - `View` and `Window` retain standard Electron role-based items.
@@ -93,6 +115,29 @@ ffmpeg discovery:
   selected segment, checked export rows, play/pause state, and timeline zoom.
 - The toolbar keeps the main workflow buttons except `Prepare Whisper`, which is
   available only from `Settings > Prepare Whisper Model`.
+
+## Keyboard shortcut behavior
+
+- Application editing shortcuts are handled in the renderer. Menu accelerators
+  are display-only so unmodified letter keys never bypass focus checks.
+- Every shortcut executes only on the initial keydown; auto-repeat events are
+  ignored.
+- Shortcuts are disabled while an input, textarea, select, button, link,
+  checkbox, other editable control, or modal dialog is active.
+- Shortcuts are disabled during IME composition and when unexpected modifiers
+  are held. Unmodified letter shortcuts never consume standard `Ctrl`, `Shift`,
+  `Alt`, or `Meta` combinations.
+- Keyboard segment selection keeps the selected row fully visible in the body
+  viewport below the segment-list header.
+
+## Persistent editing settings
+
+- Boundary preview duration is persisted in renderer local storage. The default
+  is `5` seconds.
+- Boundary nudge duration is persisted in renderer local storage. The default is
+  `0.5` seconds.
+- The selected segment row uses the waveform selection red (`#f26d5b`) while
+  ordinary pointer hover retains the neutral blue-gray highlight.
 
 ## File loading
 
