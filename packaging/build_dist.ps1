@@ -1,8 +1,42 @@
 param(
-  [string]$PackageName = "songcut-win-x64"
+  [string]$PackageName = "songcut-win-x64",
+  [string]$Python = $env:SONGCUT_PYTHON,
+  [string]$Pnpm = $env:SONGCUT_PNPM,
+  [string]$Node = $env:SONGCUT_NODE,
+  [string]$Git = $env:SONGCUT_GIT
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-ToolPath {
+  param(
+    [string]$Name,
+    [string]$Candidate,
+    [string]$CommandName,
+    [string]$EnvName,
+    [string]$ParameterName
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
+    if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+      return (Resolve-Path -LiteralPath $Candidate).ProviderPath
+    }
+
+    $CandidateCommand = Get-Command $Candidate -ErrorAction SilentlyContinue
+    if ($CandidateCommand) {
+      return $CandidateCommand.Source
+    }
+
+    throw "$Name was not found: $Candidate"
+  }
+
+  $Command = Get-Command $CommandName -ErrorAction SilentlyContinue
+  if ($Command) {
+    return $Command.Source
+  }
+
+  throw "$Name was not found. Install it on PATH, set `$env:$EnvName, or pass -$ParameterName."
+}
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GuiRoot = Join-Path $RepoRoot "gui"
@@ -11,22 +45,14 @@ $PackageRoot = Join-Path $DistRoot $PackageName
 $PyinstallerDist = Join-Path $DistRoot "pyinstaller"
 $PyinstallerWork = Join-Path $RepoRoot "build\pyinstaller"
 $VersionFile = Join-Path $RepoRoot "VERSION"
-$Python = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-$Pnpm = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback\pnpm.cmd"
-$NodeBin = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin"
-$Git = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe"
+$PythonExe = Resolve-ToolPath -Name "Python" -Candidate $Python -CommandName "python" -EnvName "SONGCUT_PYTHON" -ParameterName "Python"
+$NodeExe = Resolve-ToolPath -Name "Node.js" -Candidate $Node -CommandName "node" -EnvName "SONGCUT_NODE" -ParameterName "Node"
+$env:PATH = "$(Split-Path -Parent $NodeExe);$env:PATH"
+$PnpmExe = Resolve-ToolPath -Name "pnpm" -Candidate $Pnpm -CommandName "pnpm.cmd" -EnvName "SONGCUT_PNPM" -ParameterName "Pnpm"
+$GitExe = Resolve-ToolPath -Name "git" -Candidate $Git -CommandName "git" -EnvName "SONGCUT_GIT" -ParameterName "Git"
 
 if (-not (Test-Path $VersionFile)) {
   throw "VERSION file was not found: $VersionFile"
-}
-if (-not (Test-Path $Python)) {
-  throw "Python was not found: $Python"
-}
-if (-not (Test-Path $Pnpm)) {
-  throw "pnpm was not found: $Pnpm"
-}
-if (-not (Test-Path $Git)) {
-  throw "git was not found: $Git"
 }
 
 $BaseVersion = (Get-Content -Raw -Path $VersionFile).Trim()
@@ -34,7 +60,7 @@ if ($BaseVersion -notmatch "^\d+\.\d+$") {
   throw "VERSION must be MAJOR.MINOR, for example 1.0: $BaseVersion"
 }
 
-$BuildNumber = (& $Git -C $RepoRoot rev-list --count HEAD).Trim()
+$BuildNumber = (& $GitExe -C $RepoRoot rev-list --count HEAD).Trim()
 if ($LASTEXITCODE -ne 0) {
   throw "git rev-list --count HEAD failed with exit code $LASTEXITCODE"
 }
@@ -43,14 +69,13 @@ if ($BuildNumber -notmatch "^\d+$") {
 }
 $AppVersion = "$BaseVersion.$BuildNumber"
 
-$env:PATH = "$NodeBin;$env:PATH"
 $env:CI = "true"
 
 New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
 
 Push-Location $GuiRoot
 try {
-  & $Pnpm run build
+  & $PnpmExe run build
   if ($LASTEXITCODE -ne 0) {
     throw "GUI build failed with exit code $LASTEXITCODE"
   }
@@ -59,7 +84,7 @@ finally {
   Pop-Location
 }
 
-& $Python -m PyInstaller `
+& $PythonExe -m PyInstaller `
   --noconfirm `
   --clean `
   --onedir `
@@ -112,6 +137,9 @@ if (-not (Test-Path $LauncherBundle)) {
 Copy-Item -Path (Join-Path $LauncherBundle "*") -Destination $PackageRoot -Recurse
 
 $ElectronRuntime = Join-Path $GuiRoot "node_modules\electron\dist"
+if (-not (Test-Path $ElectronRuntime)) {
+  throw "Electron runtime was not found: $ElectronRuntime. Run pnpm install --frozen-lockfile in gui first."
+}
 $ElectronTarget = Join-Path $PackageRoot "electron"
 Copy-Item -Path $ElectronRuntime -Destination $ElectronTarget -Recurse
 Rename-Item -LiteralPath (Join-Path $ElectronTarget "electron.exe") -NewName "songcut-electron.exe"
