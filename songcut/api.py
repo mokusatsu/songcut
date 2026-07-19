@@ -24,6 +24,7 @@ from .transcription import (
     whisper_model_dir,
     whisper_model_ready,
 )
+from .youtube_metadata import load_timestamp_comment_candidates
 
 try:
     from fastapi import FastAPI, HTTPException
@@ -147,7 +148,11 @@ def download_whisper_model() -> JobRecord:
 def probe(request: ProbeRequest) -> dict[str, Any]:
     source = require_file(request.path)
     ffmpeg = find_ffmpeg()
-    return probe_video(ffmpeg.ffprobe, source)
+    payload = probe_video(ffmpeg.ffprobe, source)
+    candidates, warning = load_timestamp_comment_candidates(source)
+    payload["timestamp_comment_candidates"] = candidates
+    payload["info_json_warning"] = warning
+    return payload
 
 
 @app.post("/analysis/jobs")

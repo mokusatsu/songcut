@@ -7,9 +7,9 @@ winget install yt-dlp.yt-dlp
 winget install DenoLand.Deno
 ```
 
-インストール後、コマンドラインを再起動して下記でダウンロードします。
+インストール後、コマンドラインを再起動して下記でダウンロードします。--write-comments でコメントデータを同時にダウンロードしておくと、タイムスタンプコメントがある場合に自動でインポートできます。
 ```
-yt-dlp \[youtube-url\]
+yt-dlp --write-comments "<YouTube URL>"
 ```
 
 # ffmpegの準備
@@ -23,6 +23,15 @@ winget install Gyan.FFmpeg
 
 Load ボタンを押し動画を指定してください。
 タイムスタンプコメントがすでにある場合は”Paste timestamp comment here”の欄にペーストしてください。
+
+動画と同名のyt-dlp `.info.json` がある場合、songcutは動画概要欄と取得済みコメントからタイムスタンプガイドを探します。このメタデータもダウンロードする場合は、次のように実行してください。
+
+```powershell
+yt-dlp --write-comments "<YouTube URL>"
+```
+
+候補が1件の場合は編集画面が直接開き、2件の場合は動画概要欄またはコメントを選択してから編集します。適用前に、配信開始、MC、宣伝、雑談、告知など、曲ではないタイムスタンプを削除してください。**Apply to guide** を押した場合だけガイド欄を置き換えます。Close、Cancel、Skipでは現在のガイドを変更しません。
+
 AnaLyze ボタンを押すと歌唱部分の解析を開始します。タイムスタンプコメントがある場合、開始点はタイムスタンプコメントから取得し、終了点が自動的に解析されます。
 
 # 動画セグメントの編集

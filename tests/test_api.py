@@ -11,6 +11,7 @@ from songcut.api import (
     ExportItem,
     ExportRequest,
     JobRecord,
+    ProbeRequest,
     ScratchProxyRequest,
     _analysis_job,
     _export_job,
@@ -21,6 +22,7 @@ from songcut.api import (
     cancel_scratch_proxy_job,
     ffmpeg_check,
     health,
+    probe,
 )
 
 
@@ -108,6 +110,33 @@ class ApiJobTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("ffprobe could not be started", payload["error"])
         self.assertEqual(payload["download_url"], FFMPEG_DOWNLOAD_URL)
+
+    def test_probe_includes_timestamp_comment_candidates_and_warning(self) -> None:
+        source = Path("video.webm")
+        candidates = [
+            {
+                "source": "description",
+                "id": "description",
+                "author": "Uploader",
+                "text": "0:00 Start\n1:00 Song",
+                "timestamp_count": 2,
+                "like_count": None,
+            }
+        ]
+        with (
+            mock.patch("songcut.api.require_file", return_value=source),
+            mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffprobe=Path("ffprobe.exe"))),
+            mock.patch("songcut.api.probe_video", return_value={"duration": 10.0}) as probe_video,
+            mock.patch(
+                "songcut.api.load_timestamp_comment_candidates",
+                return_value=(candidates, "metadata warning"),
+            ),
+        ):
+            payload = probe(ProbeRequest(path=str(source)))
+
+        probe_video.assert_called_once_with(Path("ffprobe.exe"), source)
+        self.assertEqual(payload["timestamp_comment_candidates"], candidates)
+        self.assertEqual(payload["info_json_warning"], "metadata warning")
 
     def test_export_job_uses_smart_renderer(self) -> None:
         now = time.time()

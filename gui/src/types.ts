@@ -1,3 +1,12 @@
+export type TimestampCommentCandidate = {
+  source: "description" | "comment";
+  id: string;
+  author: string;
+  text: string;
+  timestamp_count: number;
+  like_count: number | null;
+};
+
 export type VideoInfo = {
   path: string;
   name: string;
@@ -5,6 +14,8 @@ export type VideoInfo = {
   bit_rate: number;
   video: { codec?: string; width?: number; height?: number; fps?: string; bit_rate?: number };
   audio: { codec?: string; bit_rate?: number };
+  timestamp_comment_candidates: TimestampCommentCandidate[];
+  info_json_warning: string | null;
 };
 
 export type WaveformPoint = {

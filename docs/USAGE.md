@@ -30,6 +30,20 @@ winget install Gyan.FFmpeg
 Click **Load** and select a video file. If you already have a timestamp comment,
 paste it into the **Paste timestamp comment here** field.
 
+If the video was downloaded with a matching yt-dlp `.info.json`, songcut checks
+the video description and downloaded comments for timestamp guides. To include
+that metadata when downloading, use:
+
+```powershell
+yt-dlp --write-info-json --write-comments "<YouTube URL>"
+```
+
+When one guide candidate is found, songcut opens it directly for editing. When
+two are found, choose either the video description or a timestamp comment first.
+Before applying it, remove entries that are not songs, such as the stream start,
+MC, promotions, chat, or announcements. **Apply to guide** replaces the guide
+field; closing, cancelling, or skipping leaves its current contents unchanged.
+
 Click **Analyze** to start detecting singing segments. When timestamp guide text
 is provided, the start time of each segment is taken from the timestamps and
 its end time is detected automatically.

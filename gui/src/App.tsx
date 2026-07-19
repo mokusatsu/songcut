@@ -45,6 +45,16 @@ import {
 } from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
 import {
+  applyTimestampCommentToGuide,
+  backToTimestampCommentSelection,
+  beginTimestampCommentFlow,
+  closeTimestampCommentFlow,
+  editSelectedTimestampComment,
+  selectTimestampCommentCandidate,
+  updateTimestampCommentDraft
+} from "@/lib/timestampComments";
+import type { TimestampCommentFlow } from "@/lib/timestampComments";
+import {
   buildWaveformPathSpecs,
   buildWaveformPyramid,
   normalizeWaveformDisplayMode,
@@ -60,6 +70,7 @@ import type {
   ScratchProxyResult,
   Segment,
   Transcript,
+  TimestampCommentCandidate,
   VideoInfo,
   WaveformDisplayMode,
   WaveformPoint
@@ -121,6 +132,7 @@ export default function App() {
   const [videoUrl, setVideoUrl] = useState("");
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [guideText, setGuideText] = useState("");
+  const [timestampCommentFlow, setTimestampCommentFlow] = useState<TimestampCommentFlow>(closeTimestampCommentFlow);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [exportCandidates, setExportCandidates] = useState<ExportCandidate[]>([]);
@@ -389,6 +401,7 @@ export default function App() {
     if (!apiBaseUrl) return;
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
+    setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage("Loading video.");
     const [info, fileUrl] = await Promise.all([probeVideo(apiBaseUrl, filePath), window.songcut.fileUrl(filePath)]);
     if (videoLoadGenerationRef.current !== generation) return;
@@ -404,7 +417,8 @@ export default function App() {
     setTranscriptionJob(null);
     setTranscriptSegment(null);
     setCurrentTime(0);
-    setMessage("Video loaded.");
+    setTimestampCommentFlow(beginTimestampCommentFlow(info.timestamp_comment_candidates ?? []));
+    setMessage(info.info_json_warning ? `Video loaded. ${info.info_json_warning}` : "Video loaded.");
   }
 
   async function configureScratchProxy(generation: number) {
@@ -1116,6 +1130,18 @@ export default function App() {
             : visibleTranscriptSegment?.transcript?.text || "Transcript has not been generated yet."}
         </pre>
       </Dialog>
+      <TimestampCommentDialogs
+        flow={timestampCommentFlow}
+        onClose={() => setTimestampCommentFlow(closeTimestampCommentFlow())}
+        onSelect={(id) => setTimestampCommentFlow((current) => selectTimestampCommentCandidate(current, id))}
+        onEditSelected={() => setTimestampCommentFlow((current) => editSelectedTimestampComment(current))}
+        onDraftChange={(draft) => setTimestampCommentFlow((current) => updateTimestampCommentDraft(current, draft))}
+        onBack={() => setTimestampCommentFlow((current) => backToTimestampCommentSelection(current))}
+        onApply={() => {
+          setGuideText((current) => applyTimestampCommentToGuide(timestampCommentFlow, current));
+          setTimestampCommentFlow(closeTimestampCommentFlow());
+        }}
+      />
       <OutputDialog
         open={outputOpen}
         items={buildOutputItems()}
@@ -1981,6 +2007,113 @@ function EditableTitleCell(props: { segment: Segment; onChange: (title: string) 
       {displayTitle}
     </button>
   );
+}
+
+function TimestampCommentDialogs(props: {
+  flow: TimestampCommentFlow;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+  onEditSelected: () => void;
+  onDraftChange: (draft: string) => void;
+  onBack: () => void;
+  onApply: () => void;
+}) {
+  if (props.flow.mode === "closed") return null;
+
+  if (props.flow.mode === "select") {
+    const selectionFlow = props.flow;
+    return (
+      <Dialog open title="Choose timestamp guide" onClose={props.onClose}>
+        <p className="dialog-message">
+          Timestamp guides were found in the yt-dlp metadata. Choose the version you want to review and edit.
+        </p>
+        <div className="timestamp-comment-candidates" role="radiogroup" aria-label="Timestamp guide candidates">
+          {selectionFlow.candidates.map((candidate) => {
+            const selected = candidate.id === selectionFlow.selectedId;
+            return (
+              <label
+                className={selected ? "timestamp-comment-candidate selected" : "timestamp-comment-candidate"}
+                key={`${candidate.source}:${candidate.id}`}
+              >
+                <input
+                  type="radio"
+                  name="timestamp-comment-candidate"
+                  value={candidate.id}
+                  checked={selected}
+                  onChange={() => props.onSelect(candidate.id)}
+                />
+                <div className="timestamp-comment-candidate-content">
+                  <div className="timestamp-comment-candidate-header">
+                    <strong>{timestampCommentSourceLabel(candidate)}</strong>
+                    <span>{candidate.author}</span>
+                    <span>{candidate.timestamp_count} timestamps</span>
+                    {candidate.like_count !== null ? <span>{candidate.like_count} likes</span> : null}
+                  </div>
+                  <ScrollArea
+                    className="timestamp-comment-preview"
+                    viewportClassName="timestamp-comment-preview-viewport"
+                    scrollbars={["vertical"]}
+                  >
+                    <div className="timestamp-comment-preview-content">{candidate.text}</div>
+                  </ScrollArea>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={props.onClose}>
+            Skip
+          </Button>
+          <Button onClick={props.onEditSelected}>Edit selected</Button>
+        </div>
+      </Dialog>
+    );
+  }
+
+  const editFlow = props.flow;
+  const candidate = editFlow.candidates.find((item) => item.id === editFlow.candidateId);
+  if (!candidate) return null;
+  return (
+    <Dialog open title={`Edit ${timestampCommentSourceLabel(candidate).toLowerCase()}`} onClose={props.onClose}>
+      <form
+        className="timestamp-comment-edit-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          props.onApply();
+        }}
+      >
+        <p className="dialog-message">
+          Remove timestamps that do not mark songs, such as the stream start, MC, promotions, chat, or announcements.
+        </p>
+        <Textarea
+          className="timestamp-comment-editor"
+          value={editFlow.draft}
+          autoFocus
+          onChange={(event) => props.onDraftChange(event.currentTarget.value)}
+        />
+        <div className="dialog-actions">
+          <div>
+            {editFlow.canGoBack ? (
+              <Button type="button" variant="secondary" onClick={props.onBack}>
+                Back
+              </Button>
+            ) : null}
+          </div>
+          <div className="dialog-action-group">
+            <Button type="button" variant="secondary" onClick={props.onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Apply to guide</Button>
+          </div>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
+  return candidate.source === "description" ? "Video description" : "Comment";
 }
 
 function OutputDialog(props: {
