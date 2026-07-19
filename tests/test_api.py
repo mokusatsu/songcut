@@ -37,6 +37,7 @@ class ApiJobTests(unittest.TestCase):
             )
 
         payload = {
+            "schema_version": 3,
             "segments": [{"id": "guide-001", "start": 10.0, "end": 20.0}],
             "export_candidates": [],
             "waveform": [],

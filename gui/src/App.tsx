@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
   ArrowLeft,
@@ -28,6 +28,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
 import { checkFfmpeg, probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
+import {
+  buildWaveformPathSpecs,
+  buildWaveformPyramid,
+  normalizeWaveformDisplayMode,
+  selectWaveformLevel
+} from "@/lib/waveform";
 import type { AnalysisDevice, WhisperDevice } from "@/lib/api";
 import type {
   AnalysisResult,
@@ -37,6 +43,7 @@ import type {
   Segment,
   Transcript,
   VideoInfo,
+  WaveformDisplayMode,
   WaveformPoint
 } from "@/types";
 
@@ -54,6 +61,7 @@ const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
 const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
 const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
 const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
+const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
@@ -100,6 +108,7 @@ export default function App() {
   );
   const [scratchSettingsOpen, setScratchSettingsOpen] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [waveformDisplayMode, setWaveformDisplayMode] = useState<WaveformDisplayMode>(readWaveformDisplayMode);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
@@ -185,6 +194,14 @@ export default function App() {
       // Keep the setting for this session when persistent storage is unavailable.
     }
   }, [split]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY, waveformDisplayMode);
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [waveformDisplayMode]);
 
   useEffect(() => {
     if (scratchSettingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
@@ -648,6 +665,7 @@ export default function App() {
       canSelectNextSegment,
       playing,
       zoomIndex,
+      waveformDisplayMode,
       analysisDevice,
       whisperDevice
     });
@@ -661,6 +679,7 @@ export default function App() {
     canSelectNextSegment,
     playing,
     zoomIndex,
+    waveformDisplayMode,
     analysisDevice,
     whisperDevice
   ]);
@@ -721,6 +740,10 @@ export default function App() {
           break;
         case "configure-scratch-preview":
           setScratchSettingsOpen(true);
+          break;
+        case "set-waveform-display-mode":
+          setWaveformDisplayMode(command.mode);
+          setMessage(`Waveform display set to ${waveformDisplayModeLabel(command.mode)}.`);
           break;
         case "prepare-whisper-model":
           void ensureWhisper().catch((error) => setMessage(String(error)));
@@ -898,6 +921,7 @@ export default function App() {
           currentTime={currentTime}
           playing={playing}
           zoom={zoom}
+          waveformDisplayMode={waveformDisplayMode}
           focusRequest={segmentFocusRequest}
           editing={waveformSeeking || handleEditing}
           onSeek={seek}
@@ -1171,6 +1195,7 @@ function TimelineStack(props: {
   currentTime: number;
   playing: boolean;
   zoom: number;
+  waveformDisplayMode: WaveformDisplayMode;
   focusRequest: number;
   editing: boolean;
   onSeek: (time: number) => void;
@@ -1263,9 +1288,9 @@ function TimelineStack(props: {
         <WaveformTimeline
           duration={props.duration}
           waveform={props.waveform}
+          waveformDisplayMode={props.waveformDisplayMode}
           segments={props.segments}
           selectedSegmentId={props.selectedSegment?.id ?? null}
-          currentTime={props.currentTime}
           width={width}
           viewportRef={viewportRef}
           onSeek={props.onSeek}
@@ -1289,9 +1314,9 @@ function TimelineStack(props: {
 function WaveformTimeline(props: {
   duration: number;
   waveform: WaveformPoint[];
+  waveformDisplayMode: WaveformDisplayMode;
   segments: Segment[];
   selectedSegmentId: string | null;
-  currentTime: number;
   width: number;
   viewportRef: React.RefObject<HTMLDivElement>;
   onSeek: (time: number) => void;
@@ -1453,15 +1478,52 @@ function WaveformTimeline(props: {
             fill={segment.id === props.selectedSegmentId ? "rgba(242, 109, 91, 0.3)" : "rgba(69, 179, 157, 0.26)"}
           />
         ))}
-        {props.waveform.map((point, index) => {
-          const x = (point.t / safeDuration) * props.width;
-          const h = Math.max(2, Math.abs(point.rms) * 1100);
-          return <line key={index} x1={x} x2={x} y1={43 - h} y2={43 + h} stroke="#f2cf63" strokeWidth="1" />;
-        })}
+        <StaticWaveformLayer
+          duration={props.duration}
+          waveform={props.waveform}
+          width={props.width}
+          mode={props.waveformDisplayMode}
+        />
       </svg>
     </div>
   );
 }
+
+const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
+  duration: number;
+  waveform: WaveformPoint[];
+  width: number;
+  mode: WaveformDisplayMode;
+}) {
+  const pyramid = useMemo(() => buildWaveformPyramid(props.waveform), [props.waveform]);
+  const selectedLevel = useMemo(
+    () => selectWaveformLevel(pyramid, props.duration, props.width),
+    [pyramid, props.duration, props.width]
+  );
+  const points = pyramid[selectedLevel] ?? [];
+  const paths = useMemo(
+    () => buildWaveformPathSpecs(points, props.duration, props.width, props.mode),
+    [points, props.duration, props.width, props.mode]
+  );
+
+  return (
+    <g className="waveform-static-layer" data-waveform-level={selectedLevel} data-waveform-points={points.length}>
+      {paths.map((path) => (
+        <path
+          key={path.kind}
+          className={`waveform-path waveform-path-${path.kind}`}
+          data-waveform-path={path.kind}
+          d={path.d}
+          fill="none"
+          stroke="#f2cf63"
+          strokeWidth="1"
+          opacity={path.opacity}
+          pointerEvents="none"
+        />
+      ))}
+    </g>
+  );
+});
 
 function SegmentTimeline(props: {
   duration: number;
@@ -1922,6 +1984,25 @@ function readVideoSplitPercent() {
     return normalizeVideoSplitPercent(stored);
   } catch {
     return DEFAULT_VIDEO_SPLIT_PERCENT;
+  }
+}
+
+function readWaveformDisplayMode(): WaveformDisplayMode {
+  try {
+    return normalizeWaveformDisplayMode(window.localStorage.getItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY));
+  } catch {
+    return "rms";
+  }
+}
+
+function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
+  switch (mode) {
+    case "rms":
+      return "RMS";
+    case "peak":
+      return "Peak Envelope";
+    case "peak-rms":
+      return "Peak + RMS";
   }
 }
 

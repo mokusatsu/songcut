@@ -12,7 +12,10 @@ export type WaveformPoint = {
   min: number;
   max: number;
   rms: number;
+  sample_count: number;
 };
+
+export type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 
 export type Transcript = {
   segment_id: string;
@@ -54,6 +57,7 @@ export type ExportCandidate = {
 };
 
 export type AnalysisResult = {
+  schema_version: number;
   source_path: string;
   duration: number;
   timestamp_source: string;

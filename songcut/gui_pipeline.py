@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import platform
 import sys
 import time
@@ -19,6 +20,9 @@ from .segmenter import SegmenterProfile, segments_from_features
 
 
 WAVEFORM_SAMPLE_RATE = 4000
+WAVEFORM_MIN_POINTS = 2400
+WAVEFORM_MAX_POINTS = 21600
+WAVEFORM_SECONDS_PER_POINT = 1.0
 
 
 def probe_video(ffprobe: Path, source: Path) -> dict[str, Any]:
@@ -69,7 +73,7 @@ def analyze_for_gui(
 
     selected_source = "acoustic-dsp"
     frame_scores: list[dict[str, float]] = []
-    waveform: list[dict[str, float]] = []
+    waveform: list[dict[str, float | int]] = []
 
     segments = []
     if timestamp_source in {"auto", "metadata"}:
@@ -87,11 +91,11 @@ def analyze_for_gui(
             channels=1,
         )
         waveform_samples = pcm_bytes_to_float_stereo(waveform_raw, channels=1)
-        waveform = waveform_peaks(waveform_samples, duration, buckets=2400)
+        waveform = waveform_peaks(waveform_samples, duration)
     else:
         raw = read_pcm_s16le(ffmpeg_paths.ffmpeg, source, sample_rate=16000, channels=2)
         samples = pcm_bytes_to_float_stereo(raw, channels=2)
-        waveform = waveform_peaks(samples, duration, buckets=2400)
+        waveform = waveform_peaks(samples, duration)
         config = FeatureConfig(sample_rate=16000, window_seconds=2.0, hop_seconds=0.5, smooth_frames=9)
         features = compute_features(samples, config)
         profile = SegmenterProfile(
@@ -117,7 +121,7 @@ def analyze_for_gui(
     result_source = f"{selected_source}+guide" if guide_applied else selected_source
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "source_path": str(source),
         "duration": round(duration, 3),
         "profile": profile_name,
@@ -195,28 +199,35 @@ def detected_segments_to_export_candidates(segments: list[dict[str, Any]]) -> li
     ]
 
 
-def waveform_peaks(samples: np.ndarray, duration: float, *, buckets: int) -> list[dict[str, float]]:
+def waveform_bucket_count(duration: float, frame_count: int) -> int:
+    if duration <= 0 or frame_count <= 0:
+        return 0
+    requested_points = math.ceil(duration / WAVEFORM_SECONDS_PER_POINT)
+    requested_points = max(WAVEFORM_MIN_POINTS, min(WAVEFORM_MAX_POINTS, requested_points))
+    return min(requested_points, frame_count)
+
+
+def waveform_peaks(samples: np.ndarray, duration: float) -> list[dict[str, float | int]]:
     if samples.ndim == 2:
         mono = np.mean(samples, axis=1)
     else:
         mono = samples
-    if len(mono) == 0:
+    frame_count = len(mono)
+    bucket_count = waveform_bucket_count(duration, frame_count)
+    if bucket_count == 0:
         return []
-    bucket_count = max(1, min(buckets, len(mono)))
-    chunk_size = max(1, len(mono) // bucket_count)
-    peaks: list[dict[str, float]] = []
+    peaks: list[dict[str, float | int]] = []
     for index in range(bucket_count):
-        start = index * chunk_size
-        end = len(mono) if index == bucket_count - 1 else min(len(mono), start + chunk_size)
+        start = index * frame_count // bucket_count
+        end = (index + 1) * frame_count // bucket_count
         chunk = mono[start:end]
-        if len(chunk) == 0:
-            continue
         peaks.append(
             {
-                "t": round((index / max(1, bucket_count - 1)) * duration, 3),
+                "t": round(((start + end) / (2 * frame_count)) * duration, 3),
                 "min": round(float(np.min(chunk)), 5),
                 "max": round(float(np.max(chunk)), 5),
                 "rms": round(float(np.sqrt(np.mean(chunk * chunk))), 6),
+                "sample_count": end - start,
             }
         )
     return peaks

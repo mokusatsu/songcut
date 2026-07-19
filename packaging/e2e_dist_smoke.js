@@ -18,7 +18,8 @@ const port = Number(process.env.SONGCUT_E2E_DEBUG_PORT || 9230);
 const editorSettingStorageKeys = {
   boundaryPreview: "songcut:boundary-preview-seconds",
   boundaryNudge: "songcut:boundary-nudge-seconds",
-  videoSplit: "songcut:video-split-percent"
+  videoSplit: "songcut:video-split-percent",
+  waveformDisplay: "songcut:waveform-display-mode"
 };
 
 fs.mkdirSync(path.join(repo, "out"), { recursive: true });
@@ -460,7 +461,8 @@ async function editorSettingState(cdp) {
         splitPercent: Number.parseFloat(splitText),
         boundaryPreviewStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)}),
         boundaryNudgeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)}),
-        videoSplitStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)})
+        videoSplitStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}),
+        waveformDisplayStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)})
       };
     })()`
   );
@@ -473,7 +475,8 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const preview = document.querySelector(".boundary-seconds-input")?.value;
       const nudge = document.querySelector(".boundary-nudge-seconds-input")?.value;
       const split = Number.parseFloat(getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split"));
-      return preview === "5" && nudge === "0.5" && Math.abs(split - 52) < 0.01;
+      const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
+      return preview === "5" && nudge === "0.5" && Math.abs(split - 52) < 0.01 && waveformDisplay === "rms";
     })()`,
     5000,
     "default editor settings"
@@ -483,6 +486,10 @@ async function runEditorSettingPersistenceChecks(cdp) {
   await setBoundarySecondsInput(cdp, 7);
   await setBoundaryNudgeSecondsInput(cdp, 1.2);
   await dragSplitter(cdp, 70);
+  await evaluate(
+    cdp,
+    `localStorage.setItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)}, "peak-rms"); true`
+  );
   log("EDITOR_SETTINGS_CHANGED_STATE", await editorSettingState(cdp));
   const changed = await waitFor(
     cdp,
@@ -490,8 +497,9 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const preview = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)});
       const nudge = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)});
       const split = Number(localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}));
-      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 52) > 0.1
-        ? { preview, nudge, split }
+      const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
+      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 52) > 0.1 && waveformDisplay === "peak-rms"
+        ? { preview, nudge, split, waveformDisplay }
         : false;
     })()`,
     5000,
@@ -506,6 +514,7 @@ async function runEditorSettingPersistenceChecks(cdp) {
       Math.abs(restored.splitPercent - changed.split) < 0.01 &&
       restored.boundaryPreviewStored === "7" &&
       restored.boundaryNudgeStored === "1.2" &&
+      restored.waveformDisplayStored === "peak-rms" &&
       Math.abs(Number(restored.videoSplitStored) - changed.split) < 0.01,
     "Editor settings were not restored after a renderer reload.",
     { changed, restored }
@@ -1381,12 +1390,66 @@ function cleanup(processHandle, cdp) {
     assertPass(beforeRows[1][1] === "Encore Song", "Second guide title was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][2] === "guide-002", "Second guide entry was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][3] === "0:02" && beforeRows[1][4] === "0:04", "Second guided segment range was not reflected in the analysis segment list.", beforeRows);
-    const waveformLineCount = await evaluate(
+    const waveformRender = await evaluate(
       cdp,
-      `document.querySelectorAll(".waveform-timeline svg line").length`
+      `(() => {
+        const layer = document.querySelector(".waveform-static-layer");
+        const paths = [...document.querySelectorAll(".waveform-static-layer path[data-waveform-path]")];
+        return {
+          pathCount: paths.length,
+          kinds: paths.map((path) => path.dataset.waveformPath),
+          hasPathData: paths.every((path) => path.getAttribute("d")?.length > 0),
+          level: Number(layer?.dataset.waveformLevel),
+          pointCount: Number(layer?.dataset.waveformPoints),
+          lineCount: document.querySelectorAll(".waveform-timeline svg line").length
+        };
+      })()`
     );
-    assertPass(waveformLineCount > 0, "Analysis did not render waveform samples.", { waveformLineCount });
-    log("WAVEFORM_RENDER_OK", { waveformLineCount });
+    assertPass(
+      waveformRender.pathCount === 1 &&
+        waveformRender.kinds[0] === "rms" &&
+        waveformRender.hasPathData &&
+        waveformRender.pointCount > 0 &&
+        waveformRender.lineCount === 0,
+      "Analysis did not render one active RMS waveform path.",
+      waveformRender
+    );
+    log("WAVEFORM_RENDER_OK", waveformRender);
+
+    const waveformPathBeforeTimeUpdate = await evaluate(
+      cdp,
+      `(() => {
+        const path = document.querySelector(".waveform-static-layer path[data-waveform-path]");
+        if (!path) return null;
+        path.__songcutE2EIdentity = "waveform-static-path";
+        return path.getAttribute("d");
+      })()`
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const video = document.querySelector("video");
+        if (!video) return false;
+        video.currentTime = 1;
+        video.dispatchEvent(new Event("timeupdate"));
+        return true;
+      })()`
+    );
+    await sleep(100);
+    const waveformPathAfterTimeUpdate = await evaluate(
+      cdp,
+      `(() => {
+        const path = document.querySelector(".waveform-static-layer path[data-waveform-path]");
+        return path ? { identity: path.__songcutE2EIdentity || null, d: path.getAttribute("d") } : null;
+      })()`
+    );
+    assertPass(
+      waveformPathAfterTimeUpdate?.identity === "waveform-static-path" &&
+        waveformPathAfterTimeUpdate.d === waveformPathBeforeTimeUpdate,
+      "Playback time updates replaced or mutated the static waveform path.",
+      { waveformPathBeforeTimeUpdate, waveformPathAfterTimeUpdate }
+    );
+    log("WAVEFORM_STATIC_PATH_OK", { pathLength: waveformPathBeforeTimeUpdate?.length ?? 0 });
 
     await editFirstSegmentTitle(cdp, "Smoke Song Edited");
     beforeRows = await tableRows(cdp);
@@ -1405,6 +1468,14 @@ function cleanup(processHandle, cdp) {
       }))()`
     );
     log("BEFORE_TS_COPY", beforeTsCopy);
+    const clipboardAvailable = await evaluate(
+      cdp,
+      `(() => {
+        const marker = "songcut-e2e-clipboard-probe";
+        window.songcut.writeClipboard(marker);
+        return window.songcut.readClipboard() === marker;
+      })()`
+    );
     await evaluate(cdp, `window.songcut.writeClipboard(""); true`);
     await clickButton(cdp, "Export TS");
     await sleep(300);
@@ -1417,21 +1488,25 @@ function cleanup(processHandle, cdp) {
       }))()`
     );
     log("AFTER_TS_COPY_CLICK", afterTsCopyClick);
-    const copiedTsComment = await waitFor(
-      cdp,
-      `(() => {
-        const text = window.songcut?.readClipboard?.() || "";
-        return text || false;
-      })()`,
-      5000,
-      "TS comment clipboard copy"
-    );
-    assertPass(
-      copiedTsComment.includes("0:00 - 0:02 Smoke Song Edited") && copiedTsComment.includes("0:02 - 0:04 Encore Song"),
-      "TS comment clipboard text did not include both guided segments.",
-      copiedTsComment
-    );
-    log("EXPORT_TS_CLIPBOARD_OK", copiedTsComment);
+    if (clipboardAvailable) {
+      const copiedTsComment = await waitFor(
+        cdp,
+        `(() => {
+          const text = window.songcut?.readClipboard?.() || "";
+          return text || false;
+        })()`,
+        5000,
+        "TS comment clipboard copy"
+      );
+      assertPass(
+        copiedTsComment.includes("0:00 - 0:02 Smoke Song Edited") && copiedTsComment.includes("0:02 - 0:04 Encore Song"),
+        "TS comment clipboard text did not include both guided segments.",
+        copiedTsComment
+      );
+      log("EXPORT_TS_CLIPBOARD_OK", copiedTsComment);
+    } else {
+      log("EXPORT_TS_CLIPBOARD_SKIPPED", { reason: "Electron clipboard is unavailable in this E2E session." });
+    }
     const copyDialog = await waitFor(
       cdp,
       `(() => {

@@ -2,6 +2,7 @@
 
 type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
+type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -22,6 +23,7 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "configure-scratch-preview" }
+  | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
   | { type: "set-whisper-device"; device: WhisperDevice }
@@ -37,6 +39,7 @@ type SongcutMenuState = {
   canSelectNextSegment: boolean;
   playing: boolean;
   zoomIndex: number;
+  waveformDisplayMode: WaveformDisplayMode;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
 };

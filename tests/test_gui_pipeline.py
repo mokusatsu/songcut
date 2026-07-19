@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -5,7 +6,14 @@ from unittest import mock
 import numpy as np
 
 from songcut.ffmpeg_tools import FfmpegPaths
-from songcut.gui_pipeline import WAVEFORM_SAMPLE_RATE, analyze_for_gui
+from songcut.gui_pipeline import (
+    WAVEFORM_MAX_POINTS,
+    WAVEFORM_MIN_POINTS,
+    WAVEFORM_SAMPLE_RATE,
+    analyze_for_gui,
+    waveform_bucket_count,
+    waveform_peaks,
+)
 from songcut.hardware import BackendInfo
 from songcut.timestamps import Segment
 
@@ -33,8 +41,10 @@ class GuiPipelineTests(unittest.TestCase):
             result = analyze_for_gui(source, guide_text="0:00 Smoke Song 0:02")
 
         self.assertEqual(result["timestamp_source"], "video-metadata+guide")
+        self.assertEqual(result["schema_version"], 3)
         self.assertEqual(result["segments"][0]["source"], "guide-range")
         self.assertEqual(len(result["waveform"]), len(samples))
+        self.assertTrue(all(point["sample_count"] == 1 for point in result["waveform"]))
         read_pcm.assert_called_once_with(
             Path("ffmpeg.exe"),
             source,
@@ -43,6 +53,62 @@ class GuiPipelineTests(unittest.TestCase):
         )
         pcm_to_float.assert_called_once_with(b"pcm", channels=1)
         compute_features.assert_not_called()
+
+    def test_waveform_bucket_count_is_duration_normalized_and_bounded(self) -> None:
+        enough_frames = 1_000_000
+
+        self.assertEqual(waveform_bucket_count(600.0, enough_frames), WAVEFORM_MIN_POINTS)
+        self.assertEqual(waveform_bucket_count(2400.0, enough_frames), WAVEFORM_MIN_POINTS)
+        self.assertEqual(waveform_bucket_count(3600.0, enough_frames), 3600)
+        self.assertEqual(waveform_bucket_count(3600.1, enough_frames), 3601)
+        self.assertEqual(waveform_bucket_count(3 * 3600.0, enough_frames), 10800)
+        self.assertEqual(waveform_bucket_count(6 * 3600.0, enough_frames), WAVEFORM_MAX_POINTS)
+        self.assertEqual(waveform_bucket_count(24 * 3600.0, enough_frames), WAVEFORM_MAX_POINTS)
+        self.assertEqual(waveform_bucket_count(3600.0, 1200), 1200)
+        self.assertEqual(waveform_bucket_count(0.0, enough_frames), 0)
+        self.assertEqual(waveform_bucket_count(3600.0, 0), 0)
+
+    def test_waveform_peaks_partition_every_frame_evenly(self) -> None:
+        samples = np.linspace(-1.0, 1.0, WAVEFORM_MIN_POINTS + 5, dtype=np.float32)
+
+        points = waveform_peaks(samples, duration=600.0)
+        counts = [int(point["sample_count"]) for point in points]
+
+        self.assertEqual(len(points), WAVEFORM_MIN_POINTS)
+        self.assertEqual(sum(counts), len(samples))
+        self.assertLessEqual(max(counts) - min(counts), 1)
+        self.assertEqual(counts[-1], 2)
+        self.assertTrue(all(float(left["t"]) < float(right["t"]) for left, right in zip(points, points[1:])))
+        self.assertGreaterEqual(float(points[0]["t"]), 0.0)
+        self.assertLessEqual(float(points[-1]["t"]), 600.0)
+
+    def test_waveform_peaks_keep_min_max_rms_and_bucket_centers(self) -> None:
+        samples = np.array([[1.0, -1.0], [0.5, 0.5], [-0.25, -0.75], [0.0, 1.0]], dtype=np.float32)
+
+        points = waveform_peaks(samples, duration=8.0)
+
+        self.assertEqual(
+            points,
+            [
+                {"t": 1.0, "min": 0.0, "max": 0.0, "rms": 0.0, "sample_count": 1},
+                {"t": 3.0, "min": 0.5, "max": 0.5, "rms": 0.5, "sample_count": 1},
+                {"t": 5.0, "min": -0.5, "max": -0.5, "rms": 0.5, "sample_count": 1},
+                {"t": 7.0, "min": 0.5, "max": 0.5, "rms": 0.5, "sample_count": 1},
+            ],
+        )
+
+    def test_waveform_peaks_reject_empty_or_non_positive_duration(self) -> None:
+        self.assertEqual(waveform_peaks(np.array([], dtype=np.float32), duration=10.0), [])
+        self.assertEqual(waveform_peaks(np.ones(10, dtype=np.float32), duration=0.0), [])
+
+    def test_capped_waveform_json_stays_within_target_size(self) -> None:
+        samples = np.zeros(WAVEFORM_MAX_POINTS, dtype=np.float32)
+
+        points = waveform_peaks(samples, duration=24 * 3600.0)
+        encoded = json.dumps(points, separators=(",", ":")).encode("utf-8")
+
+        self.assertEqual(len(points), WAVEFORM_MAX_POINTS)
+        self.assertLessEqual(len(encoded), int(2.5 * 1024 * 1024))
 
 
 if __name__ == "__main__":

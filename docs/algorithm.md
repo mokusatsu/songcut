@@ -78,3 +78,16 @@ high-accuracy mode.
 OpenVINO outputs: `profile`, `timestamp_source`, `model_versions`, `backend`,
 `device_requested`, `device_used`, `available_devices`, `fallbacks`,
 `backend_note`, `ffmpeg_path`, and `ffprobe_path`.
+
+The GUI analysis endpoint uses schema version 3. Its display waveform is
+separate from the CLI `segments.json` contract and contains `t`, `min`, `max`,
+`rms`, and `sample_count` for every point. The requested point count is the
+video duration rounded up to seconds, clamped to 2400 through 21600 and then
+limited by the available PCM frame count. Proportional integer bucket
+boundaries cover every PCM frame exactly once and keep bucket sizes within one
+frame of each other.
+
+The GUI derives a peak-preserving waveform pyramid from this base level. Min
+and max values are combined as extrema, while RMS and representative time use
+`sample_count` weighting. The active zoom level is selected from timeline
+seconds per pixel, and only that level is rendered.

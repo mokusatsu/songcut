@@ -25,10 +25,12 @@ let closeRequestPending = false;
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
+const waveformDisplayModes = ["rms", "peak", "peak-rms"] as const;
 
 type InferenceDevice = (typeof inferenceDevices)[number];
 type AnalysisDevice = InferenceDevice;
 type WhisperDevice = InferenceDevice;
+type WaveformDisplayMode = (typeof waveformDisplayModes)[number];
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -49,6 +51,7 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "configure-scratch-preview" }
+  | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
   | { type: "set-whisper-device"; device: WhisperDevice }
@@ -64,6 +67,7 @@ type SongcutMenuState = {
   canSelectNextSegment: boolean;
   playing: boolean;
   zoomIndex: number;
+  waveformDisplayMode: WaveformDisplayMode;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
 };
@@ -78,6 +82,7 @@ let menuState: SongcutMenuState = {
   canSelectNextSegment: false,
   playing: false,
   zoomIndex: 0,
+  waveformDisplayMode: "rms",
   analysisDevice: "auto",
   whisperDevice: "auto"
 };
@@ -176,6 +181,7 @@ ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuS
     ...menuState,
     ...nextState,
     zoomIndex: clampMenuZoom(nextState.zoomIndex ?? menuState.zoomIndex),
+    waveformDisplayMode: normalizeWaveformDisplayMode(nextState.waveformDisplayMode ?? menuState.waveformDisplayMode),
     analysisDevice: normalizeInferenceDevice(nextState.analysisDevice ?? menuState.analysisDevice),
     whisperDevice: normalizeInferenceDevice(nextState.whisperDevice ?? menuState.whisperDevice)
   };
@@ -325,6 +331,15 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: "Settings",
       submenu: [
         { label: "Scratch Preview Duration...", click: send({ type: "configure-scratch-preview" }) },
+        {
+          label: "Waveform Display",
+          submenu: waveformDisplayModes.map((mode) => ({
+            label: waveformDisplayModeLabel(mode),
+            type: "radio",
+            checked: menuState.waveformDisplayMode === mode,
+            click: send({ type: "set-waveform-display-mode", mode })
+          }))
+        },
         { type: "separator" },
         { label: "Prepare Whisper Model", enabled: menuState.apiReady, click: send({ type: "prepare-whisper-model" }) },
         {
@@ -394,6 +409,23 @@ function normalizeInferenceDevice(value: unknown): InferenceDevice {
   return typeof value === "string" && inferenceDevices.includes(value as InferenceDevice)
     ? (value as InferenceDevice)
     : "auto";
+}
+
+function normalizeWaveformDisplayMode(value: unknown): WaveformDisplayMode {
+  return typeof value === "string" && waveformDisplayModes.includes(value as WaveformDisplayMode)
+    ? (value as WaveformDisplayMode)
+    : "rms";
+}
+
+function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
+  switch (mode) {
+    case "rms":
+      return "RMS";
+    case "peak":
+      return "Peak Envelope";
+    case "peak-rms":
+      return "Peak + RMS";
+  }
 }
 
 function inferenceDeviceLabel(device: InferenceDevice) {

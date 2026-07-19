@@ -104,7 +104,10 @@ ffmpeg discovery:
     `Play End Boundary` for the selected segment. Their shortcuts are `A` and
     `D`.
 - `Export` provides `Export Movie` and `Export TS Text`.
-- `Settings` provides `Prepare Whisper Model` and `ffmpeg Check`.
+- `Settings` provides scratch-preview duration, a `Waveform Display` radio
+  submenu (`RMS`, `Peak Envelope`, `Peak + RMS`), `Prepare Whisper Model`,
+  inference-device selectors, and `ffmpeg Check`. Waveform display defaults to
+  `RMS` and persists in renderer local storage.
 - `View` and `Window` retain standard Electron role-based items.
 - `Help` provides `About songcut`, `Open Repository`, and
   `Report Issue / Request Feature`. About uses the native Electron dialog and
@@ -213,6 +216,20 @@ ffmpeg discovery:
 - Clicking the waveform timeline seeks the video to that position.
 - The waveform timeline is fixed to the full detected waveform view, with
   detected segments shown as overlays.
+- GUI analysis waveform points use
+  `min(max(ceil(durationSeconds), 2400), 21600)`, further limited by the decoded
+  PCM frame count. This retains 2400 points for videos up to 40 minutes, targets
+  about one second per point through six hours, and caps longer videos at 21600
+  points.
+- PCM frames are divided with proportional integer boundaries so every frame is
+  included exactly once and bucket sizes differ by at most one frame. Points
+  carry `t`, `min`, `max`, `rms`, and `sample_count`.
+- The renderer builds peak-preserving 1x, 2x, 4x, ... waveform levels once per
+  analysis result. It selects the finest level whose bucket duration is at
+  least the current seconds-per-pixel value.
+- Only the selected level is mounted. RMS and peak samples are combined into
+  one SVG path each; the combined display mode mounts two paths. Playback
+  cursor updates do not rebuild or replace the static waveform path.
 - The segment timeline reflects the selected segment.
 - The selected segment start and end marks are draggable.
 - Dragging start/end only changes the segment export range in the GUI state.
