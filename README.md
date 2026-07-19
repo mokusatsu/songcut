@@ -14,6 +14,7 @@ English follows the Japanese.
 ### 特徴
 - 歌枠の切り抜き作成およびタイムスタンプ作成に特化した機能
   - 切り出しセグメントのプレビューツール、微調整ツール
+- Opus音声の高速スクラッチプレビュー
 - セグメント動画出力時のスマートレンダリング
   - GOP単位で再利用できる動画部分はそのままコピーし、それ以外の部分だけ再エンコード
 
@@ -56,6 +57,7 @@ and helps prepare timestamp comments.
 - Purpose-built tools for creating clips and timestamp comments from singing
   streams
   - Preview and fine-tuning controls for extracted segments
+- Fast scratch previews for Opus audio
 - Smart rendering for exported video segments
   - Copies reusable GOPs without re-encoding and re-encodes only the remaining
     portions
