@@ -117,7 +117,11 @@ def analyze_for_gui(
         selected_source = "acoustic-dsp"
 
     raw_segment_items = segments_to_dicts(segments)
-    segment_items, export_candidates, guide_applied = build_gui_segments_and_exports(guide_text, raw_segment_items)
+    segment_items, export_candidates, guide_applied = build_gui_segments_and_exports(
+        guide_text,
+        raw_segment_items,
+        media_duration=duration,
+    )
     result_source = f"{selected_source}+guide" if guide_applied else selected_source
 
     return {
@@ -152,11 +156,20 @@ def analyze_for_gui(
 
 
 def build_gui_segments_and_exports(
-    guide_text: str, segments: list[dict[str, Any]]
+    guide_text: str,
+    segments: list[dict[str, Any]],
+    *,
+    media_duration: float | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     guide_entries = parse_guide_text(guide_text) if guide_text.strip() else []
     if guide_entries:
-        guided = build_guided_exports(guide_entries, segments, max_distance_seconds=90.0, numbered_filenames=True)
+        guided = build_guided_exports(
+            guide_entries,
+            segments,
+            max_distance_seconds=90.0,
+            numbered_filenames=True,
+            media_duration=media_duration,
+        )
         return guided_exports_to_segment_dicts(guided), guided_exports_to_export_candidates(guided), True
     return segments, detected_segments_to_export_candidates(segments), False
 

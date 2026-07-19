@@ -1,11 +1,15 @@
 /// <reference types="vite/client" />
 
 type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
+type WhisperModelKey = "tiny" | "base" | "small";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
+  | { type: "open-project" }
+  | { type: "save-project" }
+  | { type: "relink-source" }
   | { type: "nudge-boundary-left" }
   | { type: "nudge-boundary-right" }
   | { type: "previous-segment" }
@@ -22,16 +26,11 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-ts-text" }
-  | { type: "configure-scratch-preview" }
-  | { type: "set-scratch-audio-proxy-enabled"; enabled: boolean }
-  | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
-  | { type: "prepare-whisper-model" }
-  | { type: "set-analysis-device"; device: AnalysisDevice }
-  | { type: "set-whisper-device"; device: WhisperDevice }
-  | { type: "ffmpeg-check" };
+  | { type: "open-settings" };
 
 type SongcutMenuState = {
   apiReady: boolean;
+  hasProject: boolean;
   hasVideo: boolean;
   hasSegments: boolean;
   hasSelectedSegment: boolean;
@@ -44,6 +43,7 @@ type SongcutMenuState = {
   scratchAudioProxyEnabled: boolean;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
+  whisperModel: WhisperModelKey;
 };
 
 interface Window {
@@ -55,6 +55,20 @@ interface Window {
     confirmClose(): Promise<void>;
     cancelClose(): Promise<void>;
     selectVideo(): Promise<string | null>;
+    openProject(): Promise<unknown | null>;
+    loadProject(projectPath: string): Promise<unknown>;
+    projectPathForVideo(videoPath: string): Promise<string>;
+    saveProject(projectPath: string, document: unknown): Promise<unknown>;
+    loadRecovery(): Promise<unknown | null>;
+    saveRecovery(snapshot: unknown): Promise<void>;
+    clearRecovery(): Promise<void>;
+    fingerprintSource(filePath: string): Promise<unknown>;
+    findProjectSource(projectPath: string, document: unknown): Promise<string | null>;
+    sourceIdentityMatches(document: unknown, identity: unknown): Promise<boolean>;
+    selectRelinkSource(expectedName: string): Promise<string | null>;
+    archiveRelinkedProject(projectPath: string): Promise<string | null>;
+    archiveConflict(filePath: string): Promise<string>;
+    setWindowTitle(title: string): Promise<void>;
     selectOutputDirectory(): Promise<string | null>;
     fileUrl(filePath: string): Promise<string>;
     writeClipboard(text: string): void;

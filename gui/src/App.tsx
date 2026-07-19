@@ -15,6 +15,7 @@ import {
   Plus,
   Rewind,
   Scissors,
+  Settings2,
   SkipBack,
   SkipForward,
   Wand2
@@ -27,16 +28,41 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
 import {
+  ApiError,
   cancelScratchProxy,
   checkFfmpeg,
+  getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
   startAnalysis,
   startExport,
   startScratchProxy,
+  startTranscription,
   startWhisperDownload,
   waitForJob
 } from "@/lib/api";
+import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
+import { SettingsDialog } from "@/components/SettingsDialog";
+import {
+  DEFAULT_WHISPER_SETTINGS,
+  analysisFromProject,
+  composeProjectDocument,
+  createProjectDocument,
+  exportCandidatesFromProject,
+  normalizeInterruptedOperation,
+  parseProjectOpenResult,
+  parseRecoverySnapshot,
+  parseSourceIdentity,
+  transcriptSettingsAreStale
+} from "@/lib/project";
+import type {
+  ProjectDocumentV1,
+  ProjectOpenResult,
+  ProjectOperation,
+  RecoverySnapshot,
+  SourceIdentity
+} from "@/lib/project";
+import { useProjectPersistence } from "@/lib/useProjectPersistence";
 import {
   normalizeScratchAudioProxyEnabled,
   scratchProxyStatusLabel,
@@ -44,6 +70,7 @@ import {
   shouldCreateScratchProxy
 } from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
+import { nearestBoundaryTarget } from "@/lib/boundaries";
 import {
   applyTimestampCommentToGuide,
   backToTimestampCommentSelection,
@@ -60,7 +87,6 @@ import {
   normalizeWaveformDisplayMode,
   selectWaveformLevel
 } from "@/lib/waveform";
-import type { AnalysisDevice, WhisperDevice } from "@/lib/api";
 import type { ScratchProxyState } from "@/lib/scratchProxy";
 import type {
   AnalysisResult,
@@ -80,7 +106,7 @@ const zoomLevels = [1, 2, 4, 8, 16, 32];
 const MIN_SEGMENT_SECONDS = 0.1;
 const DEFAULT_BOUNDARY_SECONDS = 5;
 const DEFAULT_BOUNDARY_NUDGE_SECONDS = 0.5;
-const DEFAULT_VIDEO_SPLIT_PERCENT = 52;
+const DEFAULT_VIDEO_SPLIT_PERCENT = 35;
 const MIN_VIDEO_SPLIT_PERCENT = 32;
 const MAX_VIDEO_SPLIT_PERCENT = 72;
 const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
@@ -95,12 +121,6 @@ const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
-type BoundaryEdge = "start" | "end";
-type BoundaryTarget = {
-  segmentId: string;
-  edge: BoundaryEdge;
-};
-
 type OutputItem = {
   id: string;
   segmentId: string;
@@ -109,6 +129,21 @@ type OutputItem = {
   start: number;
   end: number;
   checked: boolean;
+};
+
+type RelinkConflict = {
+  selectedPath: string;
+  identity: SourceIdentity;
+  videoInfo: VideoInfo;
+  destinationPath: string;
+  existing: ProjectOpenResult | null;
+  damaged: boolean;
+};
+
+type SwitchSaveFailure = {
+  target: { kind: "video" | "project"; path: string };
+  error: string;
+  recoverySaved: boolean;
 };
 
 export default function App() {
@@ -127,6 +162,8 @@ export default function App() {
   const scratchAudioProxyEnabledRef = useRef(true);
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
+  const projectDocumentRef = useRef<ProjectDocumentV1 | null>(null);
+  const recoveryCheckedRef = useRef(false);
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -145,7 +182,7 @@ export default function App() {
   const [scratchPreviewMillisecondsInput, setScratchPreviewMillisecondsInput] = useState(
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
-  const [scratchSettingsOpen, setScratchSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
@@ -168,7 +205,19 @@ export default function App() {
   const [ffmpegCheckPending, setFfmpegCheckPending] = useState(false);
   const [ffmpegCheckResult, setFfmpegCheckResult] = useState<FfmpegCheckResult | null>(null);
   const [analysisDevice, setAnalysisDevice] = useState<AnalysisDevice>("auto");
-  const [whisperDevice, setWhisperDevice] = useState<WhisperDevice>("auto");
+  const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
+  const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
+  const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
+  const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
+  const [projectPath, setProjectPath] = useState("");
+  const [projectRevision, setProjectRevision] = useState(0);
+  const [projectOperation, setProjectOperation] = useState<ProjectOperation>(null);
+  const [sourceAvailable, setSourceAvailable] = useState(false);
+  const [projectReadOnly, setProjectReadOnly] = useState(false);
+  const [recoveryCandidate, setRecoveryCandidate] = useState<RecoverySnapshot | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [relinkConflict, setRelinkConflict] = useState<RelinkConflict | null>(null);
+  const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
@@ -177,7 +226,7 @@ export default function App() {
   const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
   const canSelectPreviousSegment = selectedSegmentIndex > 0;
   const canSelectNextSegment = selectedSegmentIndex >= 0 && selectedSegmentIndex < segments.length - 1;
-  const duration = videoInfo?.duration ?? analysis?.duration ?? videoRef.current?.duration ?? 0;
+  const duration = videoInfo?.duration ?? analysis?.duration ?? projectBase?.source.duration_seconds ?? videoRef.current?.duration ?? 0;
   const zoom = zoomLevels[zoomIndex];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
   const visibleTranscriptSegment = useMemo(
@@ -191,6 +240,55 @@ export default function App() {
         ? transcriptionJob
         : job;
   const runningJob = [exportJob, transcriptionJob, job].find(isRunningJob) ?? null;
+  const projectDocument = useMemo(
+    () =>
+      projectBase
+        ? composeProjectDocument(projectBase, {
+            revision: projectRevision,
+            videoPath,
+            duration,
+            guideText,
+            analysis,
+            segments,
+            exportCandidates,
+            analysisDevice,
+            whisper: whisperSettings,
+            selectedSegmentId,
+            currentTime,
+            zoomIndex,
+            operation: projectOperation
+          })
+        : null,
+    [
+      projectBase,
+      projectRevision,
+      videoPath,
+      duration,
+      guideText,
+      analysis,
+      segments,
+      exportCandidates,
+      analysisDevice,
+      whisperSettings,
+      selectedSegmentId,
+      currentTime,
+      zoomIndex,
+      projectOperation
+    ]
+  );
+  const persistence = useProjectPersistence(projectReadOnly ? "" : projectPath, projectReadOnly ? null : projectDocument);
+  const transcriptStale = useMemo(
+    () => segments.some((segment) => transcriptSettingsAreStale(segment, whisperSettings)),
+    [segments, whisperSettings]
+  );
+  const selectedWhisperModel = whisperStatus?.models.find((model) => model.key === whisperSettings.model) ?? null;
+  const whisperBusy = Boolean([transcriptionJob, job].find(isRunningJob));
+
+  projectDocumentRef.current = projectDocument;
+
+  function markProjectChanged() {
+    if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
+  }
 
   useEffect(() => {
     selectedSegmentRef.current = selectedSegment;
@@ -254,8 +352,8 @@ export default function App() {
   }, [waveformDisplayMode]);
 
   useEffect(() => {
-    if (scratchSettingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
-  }, [scratchSettingsOpen, scratchPreviewMilliseconds]);
+    if (settingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
+  }, [settingsOpen, scratchPreviewMilliseconds]);
 
   useEffect(() => {
     runningJobRef.current = runningJob;
@@ -264,6 +362,23 @@ export default function App() {
   useEffect(() => {
     window.songcut.apiBaseUrl().then(setApiBaseUrl).catch((error) => setMessage(String(error)));
   }, []);
+
+  useEffect(() => {
+    if (!apiBaseUrl) return;
+    void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || recoveryCheckedRef.current) return;
+    recoveryCheckedRef.current = true;
+    void checkRecoveryOnStartup();
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    const sourceName = projectBase?.source.filename;
+    const readOnlySuffix = projectReadOnly ? " — Read only" : "";
+    void window.songcut.setWindowTitle(sourceName ? `songcut — ${sourceName}${readOnlySuffix}` : "songcut");
+  }, [projectBase?.source.filename, projectReadOnly]);
 
   useEffect(() => {
     if (!apiBaseUrl) return;
@@ -310,9 +425,23 @@ export default function App() {
         setQuitConfirmOpen(true);
         return;
       }
-      void window.songcut.confirmClose();
+      void (async () => {
+        try {
+          const result = await persistence.flush();
+          if (projectDocumentRef.current && !result.sidecarSaved) {
+            setMessage("The sidecar could not be saved. Recovery data is available, but normal close was cancelled.");
+            setQuitConfirmOpen(true);
+            return;
+          }
+          await persistence.clearRecovery();
+          await window.songcut.confirmClose();
+        } catch (error) {
+          setMessage(`Could not save before closing: ${String(error)}`);
+          setQuitConfirmOpen(true);
+        }
+      })();
     });
-  }, []);
+  }, [persistence.flush, persistence.clearRecovery]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -397,19 +526,158 @@ export default function App() {
     };
   }, [apiBaseUrl, analysis?.transcription_job_id]);
 
-  async function loadVideo(filePath: string) {
+  async function refreshWhisperStatus() {
+    if (!apiBaseUrl) return null;
+    const status = await getWhisperStatus(apiBaseUrl);
+    setWhisperStatus(status);
+    return status;
+  }
+
+  async function checkRecoveryOnStartup() {
+    try {
+      const raw = await window.songcut.loadRecovery();
+      if (!raw) return;
+      const snapshot = parseRecoverySnapshot(raw);
+      try {
+        const sidecar = parseProjectOpenResult(await window.songcut.loadProject(snapshot.project_path));
+        if (sidecar.document.revision >= snapshot.document.revision) {
+          await window.songcut.clearRecovery();
+          return;
+        }
+      } catch {
+        // A missing or damaged sidecar makes the independently validated recovery snapshot valuable.
+      }
+      setRecoveryCandidate(snapshot);
+      setRecoveryOpen(true);
+    } catch (error) {
+      setMessage(`Recovery snapshot could not be read: ${String(error)}`);
+    }
+  }
+
+  async function hydrateProject(nextProjectPath: string, document: ProjectDocumentV1, preferredSource?: string) {
     if (!apiBaseUrl) return;
+    const wasRunning = document.operation?.status === "running";
+    const operation = normalizeInterruptedOperation(document.operation);
+    let sourcePath = preferredSource ?? (await window.songcut.findProjectSource(nextProjectPath, document));
+    let info: VideoInfo | null = null;
+    let fileUrl = "";
+    if (sourcePath) {
+      try {
+        [info, fileUrl] = await Promise.all([probeVideo(apiBaseUrl, sourcePath), window.songcut.fileUrl(sourcePath)]);
+        if (!sourceDurationMatches(document.source.duration_seconds, info.duration)) {
+          sourcePath = null;
+          info = null;
+          fileUrl = "";
+          setMessage("The candidate source has a different duration and was not linked.");
+        }
+      } catch (error) {
+        sourcePath = null;
+        setMessage(`Source media could not be opened: ${String(error)}`);
+      }
+    }
+
+    scratchProxyConfigurationGenerationRef.current += 1;
+    void disposeScratchProxy(apiBaseUrl);
+    setProjectPath(nextProjectPath);
+    setProjectBase(document);
+    setProjectRevision(document.revision + (wasRunning ? 1 : 0));
+    setProjectOperation(operation);
+    setProjectReadOnly(false);
+    setSourceAvailable(Boolean(sourcePath));
+    setVideoPath(sourcePath ?? "");
+    setVideoUrl(fileUrl);
+    setVideoInfo(info ?? offlineVideoInfo(document));
+    setGuideText(document.guide_text);
+    setAnalysis(analysisFromProject(document));
+    setSegments(document.segments.map((segment) => ({ ...segment })));
+    setExportCandidates(exportCandidatesFromProject(document));
+    setSelectedSegmentId(document.view_state.selected_segment_id ?? document.segments[0]?.id ?? null);
+    setCurrentTime(document.view_state.current_time);
+    setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
+    setAnalysisDevice(document.settings.analysis_device);
+    setWhisperSettings({ ...document.settings.whisper });
+    setTranscriptionJob(null);
+    setTranscriptSegment(null);
+    setTimestampCommentFlow(closeTimestampCommentFlow());
+    setMessage(
+      sourcePath
+        ? wasRunning
+          ? "Project restored. The active operation was interrupted and can be resumed."
+          : "Project loaded."
+        : "Source missing — relink the original media to resume playback and processing."
+    );
+  }
+
+  async function loadVideo(filePath: string, discardCurrentChanges = false) {
+    if (!apiBaseUrl) return;
+    if (!discardCurrentChanges) {
+      try {
+        const result = await persistence.flush();
+        if (projectDocumentRef.current && !result.sidecarSaved) {
+          setSwitchSaveFailure({
+            target: { kind: "video", path: filePath },
+            error: "The sidecar could not be flushed.",
+            recoverySaved: result.recoverySaved
+          });
+          return;
+        }
+      } catch (error) {
+        setSwitchSaveFailure({
+          target: { kind: "video", path: filePath },
+          error: String(error),
+          recoverySaved: false
+        });
+        return;
+      }
+    }
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage("Loading video.");
-    const [info, fileUrl] = await Promise.all([probeVideo(apiBaseUrl, filePath), window.songcut.fileUrl(filePath)]);
+    const [info, fileUrl, identity, nextProjectPath] = await Promise.all([
+      probeVideo(apiBaseUrl, filePath),
+      window.songcut.fileUrl(filePath),
+      window.songcut.fingerprintSource(filePath).then(parseSourceIdentity),
+      window.songcut.projectPathForVideo(filePath)
+    ]);
     if (videoLoadGenerationRef.current !== generation) return;
+
+    try {
+      const existing = parseProjectOpenResult(await window.songcut.loadProject(nextProjectPath));
+      if (!(await window.songcut.sourceIdentityMatches(existing.document, identity))) {
+        throw new Error("The existing sidecar belongs to a different media file and was not overwritten.");
+      }
+      await hydrateProject(nextProjectPath, existing.document, filePath);
+      if (existing.recoveredFrom !== "target") {
+        setMessage(`Project recovered from its ${existing.recoveredFrom} copy.`);
+      }
+      return;
+    } catch (error) {
+      if (!isProjectNotFoundError(error)) {
+        if (!projectBase) setProjectReadOnly(true);
+        throw new Error(`The existing sidecar was protected: ${String(error)}`);
+      }
+    }
+
+    const document = createProjectDocument(nextProjectPath, identity, info);
+    let initialSidecarError: unknown = null;
+    try {
+      await window.songcut.saveProject(nextProjectPath, document);
+    } catch (error) {
+      initialSidecarError = error;
+    }
     scratchProxyConfigurationGenerationRef.current += 1;
     void disposeScratchProxy(apiBaseUrl);
+    setProjectPath(nextProjectPath);
+    setProjectBase(document);
+    setProjectRevision(document.revision);
+    setProjectOperation(null);
+    setProjectReadOnly(false);
+    setSourceAvailable(true);
     setVideoPath(filePath);
     setVideoUrl(fileUrl);
     setVideoInfo(info);
+    setGuideText("");
     setAnalysis(null);
     setSegments([]);
     setExportCandidates([]);
@@ -417,8 +685,148 @@ export default function App() {
     setTranscriptionJob(null);
     setTranscriptSegment(null);
     setCurrentTime(0);
+    setAnalysisDevice("auto");
+    setWhisperSettings({ ...DEFAULT_WHISPER_SETTINGS });
     setTimestampCommentFlow(beginTimestampCommentFlow(info.timestamp_comment_candidates ?? []));
-    setMessage(info.info_json_warning ? `Video loaded. ${info.info_json_warning}` : "Video loaded.");
+    setMessage(
+      initialSidecarError
+        ? `Video loaded. The sidecar could not be created; recovery storage will be used. ${String(initialSidecarError)}`
+        : info.info_json_warning
+          ? `Video loaded. ${info.info_json_warning}`
+          : "Video loaded and project created."
+    );
+  }
+
+  async function activateOpenedProject(opened: ProjectOpenResult, discardCurrentChanges = false) {
+    if (!discardCurrentChanges) {
+      try {
+        const result = await persistence.flush();
+        if (projectDocumentRef.current && !result.sidecarSaved) {
+          setSwitchSaveFailure({
+            target: { kind: "project", path: opened.projectPath },
+            error: "The sidecar could not be flushed.",
+            recoverySaved: result.recoverySaved
+          });
+          return;
+        }
+      } catch (error) {
+        setSwitchSaveFailure({
+          target: { kind: "project", path: opened.projectPath },
+          error: String(error),
+          recoverySaved: false
+        });
+        return;
+      }
+    }
+    await hydrateProject(opened.projectPath, opened.document);
+    if (opened.recoveredFrom !== "target") setMessage(`Project recovered from its ${opened.recoveredFrom} copy.`);
+  }
+
+  async function loadProjectPath(filePath: string, discardCurrentChanges = false) {
+    const opened = parseProjectOpenResult(await window.songcut.loadProject(filePath));
+    await activateOpenedProject(opened, discardCurrentChanges);
+  }
+
+  async function openProject() {
+    try {
+      const raw = await window.songcut.openProject();
+      if (!raw) return;
+      const opened = parseProjectOpenResult(raw);
+      await activateOpenedProject(opened);
+    } catch (error) {
+      if (!projectBase) setProjectReadOnly(true);
+      setMessage(`Project opened in protected read-only mode: ${String(error)}`);
+    }
+  }
+
+  async function recoverProject() {
+    if (!recoveryCandidate) return;
+    const target = recoveryCandidate.project_path || (await window.songcut.projectPathForVideo(recoveryCandidate.document.source.absolute_path));
+    const document: ProjectDocumentV1 = {
+      ...recoveryCandidate.document,
+      revision: recoveryCandidate.document.revision + 1,
+      updated_at: new Date().toISOString(),
+      operation: normalizeInterruptedOperation(recoveryCandidate.document.operation)
+    };
+    await hydrateProject(target, document);
+    await window.songcut.saveProject(target, document);
+    setRecoveryOpen(false);
+    setRecoveryCandidate(null);
+    setMessage("Recovered edits were saved to the project sidecar.");
+  }
+
+  async function discardRecovery() {
+    await window.songcut.clearRecovery();
+    setRecoveryOpen(false);
+    setRecoveryCandidate(null);
+  }
+
+  async function relinkSource() {
+    const current = projectDocumentRef.current;
+    if (!current) return;
+    const selected = await window.songcut.selectRelinkSource(current.source.filename);
+    if (!selected) return;
+    const identity = parseSourceIdentity(await window.songcut.fingerprintSource(selected));
+    if (!(await window.songcut.sourceIdentityMatches(current, identity))) {
+      setMessage("The selected file has a different fingerprint. It was not linked to this project.");
+      return;
+    }
+    if (!apiBaseUrl) return;
+    const info = await probeVideo(apiBaseUrl, selected);
+    if (!sourceDurationMatches(current.source.duration_seconds, info.duration)) {
+      setMessage("The selected file has a different duration. It was not linked to this project.");
+      return;
+    }
+    const nextProjectPath = await window.songcut.projectPathForVideo(selected);
+    const conflict: RelinkConflict = {
+      selectedPath: selected,
+      identity,
+      videoInfo: info,
+      destinationPath: nextProjectPath,
+      existing: null,
+      damaged: false
+    };
+    if (!sameWindowsPath(nextProjectPath, projectPath)) {
+      try {
+        conflict.existing = parseProjectOpenResult(await window.songcut.loadProject(nextProjectPath));
+        setRelinkConflict(conflict);
+        return;
+      } catch (error) {
+        if (!isProjectNotFoundError(error)) {
+          setRelinkConflict({ ...conflict, damaged: true });
+          return;
+        }
+      }
+    }
+    await completeRelink(conflict, false);
+  }
+
+  async function completeRelink(conflict: RelinkConflict, archiveDamagedDestination: boolean) {
+    const current = projectDocumentRef.current;
+    if (!current) return;
+    if (archiveDamagedDestination) await window.songcut.archiveConflict(conflict.destinationPath);
+    const updated: ProjectDocumentV1 = {
+      ...current,
+      revision: current.revision + 1,
+      updated_at: new Date().toISOString(),
+      source: {
+        ...current.source,
+        absolute_path: conflict.identity.path,
+        relative_path: conflict.identity.filename,
+        filename: conflict.identity.filename,
+        size_bytes: conflict.identity.size_bytes,
+        mtime_ms: conflict.identity.mtime_ms,
+        duration_seconds: conflict.videoInfo.duration,
+        fingerprint: conflict.identity.fingerprint
+      }
+    };
+    await window.songcut.saveProject(conflict.destinationPath, updated);
+    if (projectPath && !sameWindowsPath(conflict.destinationPath, projectPath)) {
+      await window.songcut.archiveRelinkedProject(projectPath);
+    }
+    await hydrateProject(conflict.destinationPath, updated, conflict.selectedPath);
+    setRelinkConflict(null);
+    setMessage("Source relinked and the project was saved beside the media.");
   }
 
   async function configureScratchProxy(generation: number) {
@@ -501,10 +909,11 @@ export default function App() {
 
   async function ensureWhisper() {
     if (!apiBaseUrl) return;
-    const started = await startWhisperDownload(apiBaseUrl);
+    const started = await startWhisperDownload(apiBaseUrl, whisperSettings.model);
     setJob(started);
     await waitForJob(apiBaseUrl, started.id, setJob);
-    setMessage("Whisper small model is ready.");
+    await refreshWhisperStatus();
+    setMessage(`Whisper ${whisperSettings.model} model is ready.`);
   }
 
   async function runFfmpegCheck(showSuccess: boolean) {
@@ -526,21 +935,107 @@ export default function App() {
   }
 
   async function analyze() {
+    if (whisperSettings.enabled && !selectedWhisperModel?.ready) {
+      setWhisperPreflightOpen(true);
+      return;
+    }
+    await runAnalysis(whisperSettings.enabled);
+  }
+
+  async function runAnalysis(transcribeAfter: boolean) {
     if (!apiBaseUrl || !videoPath) return;
     setTranscriptionJob(null);
-    const started = await startAnalysis(apiBaseUrl, videoPath, guideText, analysisDevice, whisperDevice);
+    setProjectOperation({ kind: "analysis", status: "running" });
+    markProjectChanged();
+    const started = await startAnalysis(apiBaseUrl, videoPath, guideText, analysisDevice);
     setJob(started);
-    const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, setJob);
-    const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
-    setAnalysis(result);
-    setSegments(nextSegments);
-    setExportCandidates(result.export_candidates);
-    setSelectedSegmentId(nextSegments[0]?.id ?? null);
-    setMessage(
-      result.transcription_job_id
-        ? `Detected ${nextSegments.length} segments. Transcribing in background.`
-        : `Detected ${nextSegments.length} segments.`
-    );
+    try {
+      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, setJob);
+      const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
+      setAnalysis(result);
+      setSegments(nextSegments);
+      setExportCandidates(result.export_candidates);
+      setSelectedSegmentId(nextSegments[0]?.id ?? null);
+      setProjectOperation(null);
+      markProjectChanged();
+      setMessage(`Detected ${nextSegments.length} segments.`);
+      if (transcribeAfter && nextSegments.length) await runTranscription(nextSegments, false);
+    } catch (error) {
+      setProjectOperation({ kind: "analysis", status: "interrupted" });
+      markProjectChanged();
+      throw error;
+    }
+  }
+
+  async function runTranscription(candidateSegments = segments, resumeInterrupted = true) {
+    if (!apiBaseUrl || !videoPath || !candidateSegments.length) return;
+    const sameInterruptedSettings =
+      resumeInterrupted &&
+      projectOperation?.kind === "transcription" &&
+      projectOperation.status === "interrupted" &&
+      projectOperation.settings?.model === whisperSettings.model &&
+      projectOperation.settings?.language === whisperSettings.language;
+    const pending = sameInterruptedSettings
+      ? candidateSegments.filter((segment) => projectOperation.pending_segment_ids?.includes(segment.id))
+      : candidateSegments;
+    const targets = pending.length ? pending : candidateSegments;
+    const pendingIds = targets.map((segment) => segment.id);
+    setProjectOperation({
+      kind: "transcription",
+      status: "running",
+      settings: { ...whisperSettings },
+      pending_segment_ids: pendingIds
+    });
+    markProjectChanged();
+    try {
+      const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
+      setTranscriptionJob(started);
+      const appliedTranscripts = new Map<string, string>();
+      const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
+        setTranscriptionJob(nextJob);
+        const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
+        const changed = partial.filter((transcript) => {
+          const serialized = JSON.stringify(transcript);
+          if (appliedTranscripts.get(transcript.segment_id) === serialized) return false;
+          appliedTranscripts.set(transcript.segment_id, serialized);
+          return true;
+        });
+        if (changed.length) {
+          applyTranscripts(changed);
+          const completed = new Set(changed.filter((transcript) => !transcript.error).map((transcript) => transcript.segment_id));
+          setProjectOperation((operation) =>
+            operation?.kind === "transcription"
+              ? { ...operation, pending_segment_ids: operation.pending_segment_ids?.filter((id) => !completed.has(id)) }
+              : operation
+          );
+        }
+      });
+      const finalTranscripts = result.transcripts ?? [];
+      const unapplied = finalTranscripts.filter(
+        (transcript) => appliedTranscripts.get(transcript.segment_id) !== JSON.stringify(transcript)
+      );
+      applyTranscripts(unapplied);
+      const failedIds = finalTranscripts.filter((transcript) => transcript.error).map((transcript) => transcript.segment_id);
+      setProjectOperation(
+        failedIds.length
+          ? {
+              kind: "transcription",
+              status: "interrupted",
+              settings: { ...whisperSettings },
+              pending_segment_ids: failedIds
+            }
+          : null
+      );
+      markProjectChanged();
+      setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
+    } catch (error) {
+      setProjectOperation((operation) =>
+        operation?.kind === "transcription" ? { ...operation, status: "interrupted" } : operation
+      );
+      markProjectChanged();
+      if (error instanceof ApiError && error.status === 409) await refreshWhisperStatus().catch(() => undefined);
+      setMessage(`Transcription failed: ${String(error)}`);
+    }
   }
 
   async function exportClips(outputDir: string) {
@@ -552,13 +1047,19 @@ export default function App() {
     setExportProgressOpen(true);
     setExportJob(started);
     setJob(started);
+    setProjectOperation({ kind: "export", status: "running" });
+    markProjectChanged();
     try {
       await waitForJob(apiBaseUrl, started.id, (nextJob) => {
         setJob(nextJob);
         setExportJob(nextJob);
       });
+      setProjectOperation(null);
+      markProjectChanged();
       setMessage("Export complete.");
     } catch (error) {
+      setProjectOperation({ kind: "export", status: "interrupted" });
+      markProjectChanged();
       setMessage(`Export failed: ${String(error)}`);
     }
   }
@@ -568,9 +1069,29 @@ export default function App() {
     void window.songcut.cancelClose();
   }
 
-  function confirmQuit() {
+  async function confirmQuit() {
     setQuitConfirmOpen(false);
-    void window.songcut.confirmClose();
+    const current = projectDocumentRef.current;
+    if (current) {
+      const kind = runningJobRef.current?.kind;
+      const operationKind = kind === "analysis" || kind === "transcription" || kind === "export" ? kind : current.operation?.kind;
+      const interrupted: ProjectDocumentV1 = {
+        ...current,
+        revision: current.revision + 1,
+        updated_at: new Date().toISOString(),
+        operation: operationKind
+          ? { ...(current.operation ?? {}), kind: operationKind, status: "interrupted" }
+          : current.operation
+      };
+      try {
+        await persistence.saveRecoveryNow(interrupted);
+      } catch (error) {
+        setMessage(`Recovery save failed while quitting: ${String(error)}`);
+        setQuitConfirmOpen(true);
+        return;
+      }
+    }
+    await window.songcut.confirmClose();
   }
 
   function buildOutputItems(): OutputItem[] {
@@ -607,6 +1128,7 @@ export default function App() {
 
   function updateSegment(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
+    markProjectChanged();
   }
 
   function selectSegment(segment: Segment) {
@@ -630,13 +1152,28 @@ export default function App() {
 
   function applyTranscripts(transcripts: Transcript[]) {
     if (!transcripts.length) return;
-    const transcriptMap = new Map(transcripts.map((transcript) => [transcript.segment_id, transcript]));
+    const transcriptMap = new Map(
+      transcripts.map((transcript) => [
+        transcript.segment_id,
+        {
+          ...transcript,
+          model_key: whisperSettings.model,
+          language_requested: whisperSettings.language,
+          device_requested: whisperSettings.device
+        } satisfies Transcript
+      ])
+    );
     setSegments((current) =>
       current.map((segment) => {
         const transcript = transcriptMap.get(segment.id);
-        return transcript ? { ...segment, transcript } : segment;
+        if (!transcript) return segment;
+        if (transcript.error && segment.transcript) {
+          return { ...segment, transcript: { ...segment.transcript, error: transcript.error } };
+        }
+        return { ...segment, transcript };
       })
     );
+    markProjectChanged();
   }
 
   function cancelScratchPreview(restorePosition: boolean) {
@@ -747,15 +1284,20 @@ export default function App() {
       });
   }
 
-  function saveScratchPreviewMilliseconds() {
+  function openSettings() {
+    setSettingsOpen(true);
+    if (apiBaseUrl) void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
+  }
+
+  function closeSettings() {
     const milliseconds = normalizeScratchPreviewMilliseconds(
       scratchPreviewMillisecondsInput,
       scratchPreviewMilliseconds
     );
     setScratchPreviewMilliseconds(milliseconds);
     setScratchPreviewMillisecondsInput(String(milliseconds));
-    setScratchSettingsOpen(false);
-    setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
+    setSettingsOpen(false);
+    if (milliseconds !== scratchPreviewMilliseconds) setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
   }
 
   function playStartBoundary() {
@@ -780,7 +1322,7 @@ export default function App() {
   }
 
   function nudgeNearestBoundary(direction: -1 | 1) {
-    const target = nearestBoundaryTarget(segments, currentTime);
+    const target = nearestBoundaryTarget(segments, currentTime, selectedSegment?.id);
     if (!target) return;
     const segment = segments.find((item) => item.id === target.segmentId);
     if (!segment) return;
@@ -804,9 +1346,21 @@ export default function App() {
     event.preventDefault();
     setDropActive(false);
     const files = [...event.dataTransfer.files];
+    const projectFile = files.find((file) => extensionOf(file.name) === ".songcut");
+    if (projectFile) {
+      const filePath = window.songcut.pathForFile(projectFile);
+      if (!filePath) {
+        setMessage("Could not read the dropped project path.");
+        return;
+      }
+      void (async () => {
+        await loadProjectPath(filePath);
+      })().catch((error) => setMessage(String(error)));
+      return;
+    }
     const videoFile = files.find((file) => videoExtensions.has(extensionOf(file.name)));
     if (!videoFile) {
-      setMessage("Drop a video file.");
+      setMessage("Drop a video or .songcut project file.");
       return;
     }
     const filePath = window.songcut.pathForFile(videoFile);
@@ -820,6 +1374,7 @@ export default function App() {
   useEffect(() => {
     window.songcut.updateMenuState({
       apiReady: Boolean(apiBaseUrl),
+      hasProject: Boolean(projectBase),
       hasVideo: Boolean(videoUrl),
       hasSegments: segments.length > 0,
       hasSelectedSegment: Boolean(videoUrl && selectedSegment),
@@ -831,10 +1386,12 @@ export default function App() {
       waveformDisplayMode,
       scratchAudioProxyEnabled,
       analysisDevice,
-      whisperDevice
+      whisperDevice: whisperSettings.device,
+      whisperModel: whisperSettings.model
     });
   }, [
     apiBaseUrl,
+    projectBase,
     videoUrl,
     segments.length,
     selectedSegment?.id,
@@ -846,7 +1403,8 @@ export default function App() {
     waveformDisplayMode,
     scratchAudioProxyEnabled,
     analysisDevice,
-    whisperDevice
+    whisperSettings.device,
+    whisperSettings.model
   ]);
 
   useEffect(() => {
@@ -854,6 +1412,15 @@ export default function App() {
       switch (command.type) {
         case "load-movie":
           void selectVideo();
+          break;
+        case "open-project":
+          void openProject().catch((error) => setMessage(String(error)));
+          break;
+        case "save-project":
+          void persistence.flush().catch((error) => setMessage(String(error)));
+          break;
+        case "relink-source":
+          void relinkSource().catch((error) => setMessage(String(error)));
           break;
         case "nudge-boundary-left":
           nudgeNearestBoundary(-1);
@@ -903,30 +1470,8 @@ export default function App() {
         case "export-ts-text":
           void exportTimestampComments();
           break;
-        case "configure-scratch-preview":
-          setScratchSettingsOpen(true);
-          break;
-        case "set-scratch-audio-proxy-enabled":
-          setScratchAudioProxyEnabled(command.enabled);
-          setMessage(`Scratch audio proxy ${command.enabled ? "enabled" : "disabled"}.`);
-          break;
-        case "set-waveform-display-mode":
-          setWaveformDisplayMode(command.mode);
-          setMessage(`Waveform display set to ${waveformDisplayModeLabel(command.mode)}.`);
-          break;
-        case "prepare-whisper-model":
-          void ensureWhisper().catch((error) => setMessage(String(error)));
-          break;
-        case "set-analysis-device":
-          setAnalysisDevice(command.device);
-          setMessage(`Singing analysis device set to ${deviceLabel(command.device)}.`);
-          break;
-        case "set-whisper-device":
-          setWhisperDevice(command.device);
-          setMessage(`Whisper device set to ${deviceLabel(command.device)}.`);
-          break;
-        case "ffmpeg-check":
-          void runFfmpegCheck(true);
+        case "open-settings":
+          openSettings();
           break;
       }
     });
@@ -939,7 +1484,11 @@ export default function App() {
     currentTime,
     boundarySecondsInput,
     boundaryNudgeSecondsInput,
-    zoomIndex
+    zoomIndex,
+    whisperSettings,
+    projectPath,
+    projectBase,
+    projectOperation
   ]);
 
   useEffect(() => {
@@ -1039,16 +1588,24 @@ export default function App() {
         }}
       />
       <section className="control-pane">
+        {!sourceAvailable && projectBase ? (
+          <div className="source-missing-banner">
+            <span>Source missing — saved guide, segments, waveform, and transcripts remain available.</span>
+            <Button size="sm" variant="secondary" onClick={() => void relinkSource().catch((error) => setMessage(String(error)))}>
+              Relink
+            </Button>
+          </div>
+        ) : null}
         <header className="toolbar">
           <Button onClick={selectVideo}>
             <FolderOpen size={16} />
             Load
           </Button>
-          <Button onClick={analyze} disabled={!videoPath || !apiBaseUrl}>
+          <Button onClick={() => void analyze().catch((error) => setMessage(String(error)))} disabled={!sourceAvailable || !apiBaseUrl}>
             <Wand2 size={16} />
             Analyze
           </Button>
-          <Button variant="secondary" onClick={() => setOutputOpen(true)} disabled={checkedCount === 0}>
+          <Button variant="secondary" onClick={() => setOutputOpen(true)} disabled={checkedCount === 0 || !sourceAvailable}>
             <Scissors size={16} />
             Export
           </Button>
@@ -1056,7 +1613,14 @@ export default function App() {
             <Copy size={16} />
             Export TS
           </Button>
+          <Button variant="secondary" onClick={openSettings}>
+            <Settings2 size={16} />
+            Settings
+          </Button>
           <div className="spacer" />
+          <span className={`project-save-status status-${persistence.status}`}>
+            {projectReadOnly ? "Read only" : projectSaveStatusLabel(persistence.status)}
+          </span>
           <BoundaryControls
             value={boundarySecondsInput}
             disabled={!selectedSegment || !videoUrl}
@@ -1090,7 +1654,14 @@ export default function App() {
           />
         </header>
         <div className="guide-row">
-          <Textarea value={guideText} onChange={(event) => setGuideText(event.target.value)} placeholder="Paste timestamp comment here" />
+          <Textarea
+            value={guideText}
+            onChange={(event) => {
+              setGuideText(event.target.value);
+              markProjectChanged();
+            }}
+            placeholder="Paste timestamp comment here"
+          />
           <StatusPanel job={activeJob} message={message} videoInfo={videoInfo} scratchProxyState={scratchProxyState} />
         </div>
         <TimelineStack
@@ -1124,11 +1695,23 @@ export default function App() {
         title={visibleTranscriptSegment ? segmentDialogTitle(visibleTranscriptSegment) : ""}
         onClose={() => setTranscriptSegment(null)}
       >
+        {visibleTranscriptSegment?.transcript ? (
+          <div className="transcript-run-meta">
+            <span>Model: {visibleTranscriptSegment.transcript.model_id}</span>
+            <span>
+              Language: {visibleTranscriptSegment.transcript.language_requested ?? "unknown"} → {visibleTranscriptSegment.transcript.language ?? "unknown"}
+            </span>
+            <span>
+              Device: {visibleTranscriptSegment.transcript.device_requested ?? "unknown"} → {visibleTranscriptSegment.transcript.device_used}
+            </span>
+          </div>
+        ) : null}
         <pre className="transcript-text">
-          {visibleTranscriptSegment?.transcript?.error
-            ? visibleTranscriptSegment.transcript.error
-            : visibleTranscriptSegment?.transcript?.text || "Transcript has not been generated yet."}
+          {visibleTranscriptSegment?.transcript?.text || "Transcript has not been generated yet."}
         </pre>
+        {visibleTranscriptSegment?.transcript?.error ? (
+          <p className="transcript-error">Latest transcription attempt failed: {visibleTranscriptSegment.transcript.error}</p>
+        ) : null}
       </Dialog>
       <TimestampCommentDialogs
         flow={timestampCommentFlow}
@@ -1139,6 +1722,7 @@ export default function App() {
         onBack={() => setTimestampCommentFlow((current) => backToTimestampCommentSelection(current))}
         onApply={() => {
           setGuideText((current) => applyTimestampCommentToGuide(timestampCommentFlow, current));
+          markProjectChanged();
           setTimestampCommentFlow(closeTimestampCommentFlow());
         }}
       />
@@ -1166,42 +1750,168 @@ export default function App() {
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
       />
-      <Dialog open={scratchSettingsOpen} title="Scratch Preview Duration" onClose={() => setScratchSettingsOpen(false)}>
-        <form
-          className="scratch-duration-setting"
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveScratchPreviewMilliseconds();
-          }}
-        >
-          <label htmlFor="scratch-preview-milliseconds">Playback duration in milliseconds</label>
-          <div className="scratch-duration-input-row">
-            <Input
-              id="scratch-preview-milliseconds"
-              type="number"
-              min={MIN_SCRATCH_PREVIEW_MILLISECONDS}
-              max={MAX_SCRATCH_PREVIEW_MILLISECONDS}
-              step="1"
-              inputMode="numeric"
-              value={scratchPreviewMillisecondsInput}
-              autoFocus
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => setScratchPreviewMillisecondsInput(event.currentTarget.value)}
-            />
-            <span>ms</span>
-          </div>
-          <p className="dialog-message">
-            Enter a value from {MIN_SCRATCH_PREVIEW_MILLISECONDS} to {MAX_SCRATCH_PREVIEW_MILLISECONDS} milliseconds.
-          </p>
-          <div className="dialog-actions">
-            <Button type="button" variant="secondary" onClick={() => setScratchSettingsOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Save</Button>
-          </div>
-        </form>
-      </Dialog>
+      <SettingsDialog
+        open={settingsOpen}
+        apiReady={Boolean(apiBaseUrl)}
+        scratchPreviewMillisecondsInput={scratchPreviewMillisecondsInput}
+        scratchAudioProxyEnabled={scratchAudioProxyEnabled}
+        waveformDisplayMode={waveformDisplayMode}
+        analysisDevice={analysisDevice}
+        whisperSettings={whisperSettings}
+        whisperStatus={whisperStatus}
+        whisperBusy={whisperBusy}
+        hasSegments={segments.length > 0}
+        transcriptStale={transcriptStale}
+        sourceAvailable={sourceAvailable}
+        onClose={closeSettings}
+        onScratchPreviewMillisecondsInput={setScratchPreviewMillisecondsInput}
+        onScratchAudioProxyEnabled={(enabled) => {
+          setScratchAudioProxyEnabled(enabled);
+          setMessage(`Scratch audio proxy ${enabled ? "enabled" : "disabled"}.`);
+        }}
+        onWaveformDisplayMode={(mode) => {
+          setWaveformDisplayMode(mode);
+          setMessage(`Waveform display set to ${waveformDisplayModeLabel(mode)}.`);
+        }}
+        onAnalysisDevice={(device) => {
+          setAnalysisDevice(device);
+          markProjectChanged();
+          setMessage(`Singing analysis device set to ${deviceLabel(device)}.`);
+        }}
+        onWhisperSettings={(settings) => {
+          setWhisperSettings(settings);
+          markProjectChanged();
+        }}
+        onPrepareWhisperModel={() => void ensureWhisper().catch((error) => setMessage(String(error)))}
+        onTranscribe={() => {
+          closeSettings();
+          void runTranscription().catch((error) => setMessage(String(error)));
+        }}
+        onFfmpegCheck={() => {
+          closeSettings();
+          void runFfmpegCheck(true);
+        }}
+      />
       <ExportProgressDialog open={exportProgressOpen} job={exportJob} onClose={() => setExportProgressOpen(false)} />
+      <Dialog open={whisperPreflightOpen} title="Whisper model is not ready" onClose={() => setWhisperPreflightOpen(false)}>
+        <p className="dialog-message">
+          {`The selected ${whisperSettings.model} model is not installed. Downloading is always an explicit action.`}
+        </p>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={() => setWhisperPreflightOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setWhisperPreflightOpen(false);
+              void runAnalysis(false).catch((error) => setMessage(String(error)));
+            }}
+          >
+            Analyze without transcription
+          </Button>
+          <Button
+            onClick={() => {
+              setWhisperPreflightOpen(false);
+              void ensureWhisper()
+                .then(() => runAnalysis(true))
+                .catch((error) => setMessage(String(error)));
+            }}
+          >
+            Download &amp; Analyze
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog open={recoveryOpen} title="Recover unsaved songcut edits?" onClose={() => undefined}>
+        <p className="dialog-message">
+          {recoveryCandidate
+            ? `${recoveryCandidate.document.source.filename} has a recovery snapshot from ${new Date(recoveryCandidate.saved_at).toLocaleString()} at revision ${recoveryCandidate.document.revision}.`
+            : "A recovery snapshot is available."}
+        </p>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={() => void discardRecovery().catch((error) => setMessage(String(error)))}>
+            Discard
+          </Button>
+          <Button onClick={() => void recoverProject().catch((error) => setMessage(String(error)))}>Recover</Button>
+        </div>
+      </Dialog>
+      <Dialog open={Boolean(switchSaveFailure)} title="Could not save the current project" onClose={() => setSwitchSaveFailure(null)}>
+        <p className="dialog-message">
+          {switchSaveFailure
+            ? `${switchSaveFailure.error} ${
+                switchSaveFailure.recoverySaved
+                  ? "A recovery snapshot is available, but it would be replaced after switching videos."
+                  : "The recovery snapshot could not be updated either."
+              }`
+            : "The current project could not be saved."}
+        </p>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={() => setSwitchSaveFailure(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              const target = switchSaveFailure?.target;
+              setSwitchSaveFailure(null);
+              if (!target) return;
+              const retry = target.kind === "video" ? loadVideo(target.path) : loadProjectPath(target.path);
+              void retry.catch((error) => setMessage(String(error)));
+            }}
+          >
+            Retry
+          </Button>
+          <Button
+            onClick={() => {
+              const target = switchSaveFailure?.target;
+              setSwitchSaveFailure(null);
+              void persistence.clearRecovery().finally(() => {
+                if (!target) return;
+                const discard =
+                  target.kind === "video" ? loadVideo(target.path, true) : loadProjectPath(target.path, true);
+                void discard.catch((error) => setMessage(String(error)));
+              });
+            }}
+          >
+            Discard changes
+          </Button>
+        </div>
+      </Dialog>
+      <Dialog open={Boolean(relinkConflict)} title="Project already exists at relink destination" onClose={() => setRelinkConflict(null)}>
+        <p className="dialog-message">
+          {relinkConflict?.damaged
+            ? "The destination sidecar is damaged or uses an unsupported schema. It will not be overwritten unless you explicitly archive it as a timestamped conflict."
+            : "A project already exists beside the selected source. Open it, replace it with the current project, or cancel."}
+        </p>
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={() => setRelinkConflict(null)}>
+            Cancel
+          </Button>
+          {!relinkConflict?.damaged && relinkConflict?.existing ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const conflict = relinkConflict;
+                setRelinkConflict(null);
+                void hydrateProject(conflict.existing!.projectPath, conflict.existing!.document).catch((error) =>
+                  setMessage(String(error))
+                );
+              }}
+            >
+              Open existing
+            </Button>
+          ) : null}
+          <Button
+            onClick={() => {
+              const conflict = relinkConflict;
+              if (!conflict) return;
+              void completeRelink(conflict, conflict.damaged).catch((error) => setMessage(String(error)));
+            }}
+          >
+            {relinkConflict?.damaged ? "Archive conflict & replace" : "Replace with current"}
+          </Button>
+        </div>
+      </Dialog>
       <Dialog open={quitConfirmOpen} title="Quit songcut?" onClose={cancelQuit}>
         <p className="dialog-message">
           {runningJob
@@ -1212,11 +1922,53 @@ export default function App() {
           <Button variant="secondary" onClick={cancelQuit}>
             Cancel
           </Button>
-          <Button onClick={confirmQuit}>Quit anyway</Button>
+          <Button onClick={() => void confirmQuit()}>Quit anyway</Button>
         </div>
       </Dialog>
     </main>
   );
+}
+
+function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
+  return {
+    path: document.source.absolute_path,
+    name: document.source.filename,
+    duration: document.source.duration_seconds,
+    bit_rate: 0,
+    video: {},
+    audio: {},
+    timestamp_comment_candidates: [],
+    info_json_warning: "Source media is missing."
+  };
+}
+
+function isProjectNotFoundError(error: unknown) {
+  return String(error).includes("Project not found:");
+}
+
+function sameWindowsPath(left: string, right: string) {
+  return left.replaceAll("/", "\\").toLowerCase() === right.replaceAll("/", "\\").toLowerCase();
+}
+
+function sourceDurationMatches(expected: number, actual: number) {
+  return Math.abs(expected - actual) <= Math.max(0.05, expected * 0.00001);
+}
+
+function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>["status"]) {
+  switch (status) {
+    case "idle":
+      return "Saved";
+    case "saving":
+      return "Saving…";
+    case "saved":
+      return "Saved";
+    case "recovery-only":
+      return "Recovery only";
+    case "save-failed":
+      return "Save failed";
+    case "read-only":
+      return "Read only";
+  }
 }
 
 function isRunningJob(job: JobRecord | null | undefined): job is JobRecord {
@@ -2406,20 +3158,6 @@ function normalizeBoundarySecondsInput(value: string) {
   if (Number.isFinite(parsed)) return formatBoundarySeconds(parseBoundarySeconds(value));
   const digits = value.replace(/\D/g, "");
   return digits ? formatBoundarySeconds(parseBoundarySeconds(digits)) : "";
-}
-
-function nearestBoundaryTarget(segments: Segment[], time: number): BoundaryTarget | null {
-  let nearest: (BoundaryTarget & { distance: number }) | null = null;
-  for (const segment of segments) {
-    for (const edge of ["start", "end"] as const) {
-      const boundaryTime = segment[edge];
-      const distance = Math.abs(boundaryTime - time);
-      if (!nearest || distance < nearest.distance) {
-        nearest = { segmentId: segment.id, edge, distance };
-      }
-    }
-  }
-  return nearest ? { segmentId: nearest.segmentId, edge: nearest.edge } : null;
 }
 
 function parseBoundaryNudgeSeconds(value: string) {

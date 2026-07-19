@@ -36,6 +36,9 @@ export type Transcript = {
   backend: string;
   device_used: string;
   model_id: string;
+  model_key?: "tiny" | "base" | "small";
+  language_requested?: string;
+  device_requested?: "auto" | "npu" | "gpu" | "cpu";
   error?: string | null;
 };
 
@@ -50,6 +53,10 @@ export type Segment = {
   duration: number;
   confidence: number;
   source: string;
+  match_source?: string;
+  guide_line_number?: number;
+  guide_line?: string;
+  distance_seconds?: number | null;
   flags: string[];
   user_edited: boolean;
   checked?: boolean;
@@ -72,12 +79,17 @@ export type AnalysisResult = {
   source_path: string;
   duration: number;
   timestamp_source: string;
+  profile?: string;
+  model_versions?: Record<string, string>;
   device_used: string;
+  device_requested?: string;
   backend: string;
+  elapsed_seconds?: number;
   segments: Segment[];
   raw_segments?: Segment[];
   export_candidates: ExportCandidate[];
   waveform: WaveformPoint[];
+  frame_scores?: { t: number; score: number; rms: number }[];
   transcription_job_id?: string;
 };
 

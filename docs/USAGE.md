@@ -48,6 +48,42 @@ Click **Analyze** to start detecting singing segments. When timestamp guide text
 is provided, the start time of each segment is taken from the timestamps and
 its end time is detected automatically.
 
+# Project Saving and Recovery
+
+After a video loads successfully, songcut creates a sidecar such as
+`video.mp4.songcut` beside it. Content edits are saved automatically; use
+`Ctrl+S` or **File > Save Project Now** to flush immediately. The toolbar and
+window title show `Saved`, `Saving…`, `Recovery only`, or `Save failed`.
+
+If a newer recovery snapshot remains after an abnormal exit, the next launch
+offers Recover/Discard. Use **File > Relink Source** after moving or renaming the
+media. Songcut verifies the file size and a SHA-256 fingerprint of its first and
+last MiB. Saved guides, waveforms, segments, and transcripts remain viewable
+even while the source is missing.
+
+A `.songcut` file is local UTF-8 JSON. Sharing it also shares the media's local
+absolute path, guide, edits, and transcripts. It does not embed media, scratch
+proxies, Whisper models, temporary WAV files, or backend job IDs.
+
+# Whisper Transcription
+
+Whisper defaults to OFF for new projects. Open **Settings** from the toolbar or
+**Settings > Settings...** (`Ctrl+,`), then enable **Whisper transcription** to
+choose Tiny, Base, or Small, a supported language, and Auto/NPU/GPU/CPU per
+project. Defaults are Small, Japanese, and Auto. Model files are prepared only
+after the explicit **Prepare Whisper Model** action in that dialog; it prepares
+the model currently selected in the Model field. The searchable Language list
+opens without treating the saved language code as a query, and keeps Auto,
+Japanese, English, Chinese, and Korean at the top of the unfiltered list.
+
+Singing detection and transcription run as separate jobs. Detection still works
+normally with Whisper disabled, and **Transcribe / Re-transcribe** can be run
+afterward without repeating analysis. Changing model or language preserves the
+old transcript but marks it for re-transcription. After interruption, the same
+settings resume only unfinished segments. All Whisper controls, including
+**Transcribe / Re-transcribe**, are kept in the Settings dialog instead of the
+main editing screen.
+
 # Editing Video Segments
 
 ![Edit a segment](image/edit-segment.png)
@@ -77,9 +113,10 @@ The value is restored the next time the application starts.
 
 Use the boundary nudge controls to make small adjustments to segment boundaries.
 Enter a different number of seconds to change the adjustment amount. The app
-automatically chooses which boundary to adjust based on the current playback
-position. The default is 0.5 seconds, and the value is restored the next time
-the application starts.
+chooses the nearer start or end boundary of the currently selected segment
+based on the current playback position. A closer boundary belonging to another
+segment is not adjusted. The default is 0.5 seconds, and the value is restored
+the next time the application starts.
 
 ## Timeline Zoom
 

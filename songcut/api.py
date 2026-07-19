@@ -18,11 +18,15 @@ from .smart_export import export_smart_clip
 from .transcription import (
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
+    directory_size,
     ensure_whisper_model,
+    normalize_whisper_language,
+    require_whisper_model,
+    resolve_whisper_model_dir,
     select_whisper_runtime,
     transcribe_segments,
-    whisper_model_dir,
-    whisper_model_ready,
+    whisper_language_options,
+    whisper_model_statuses,
 )
 from .youtube_metadata import load_timestamp_comment_candidates
 
@@ -44,8 +48,28 @@ class AnalyzeRequest(BaseModel):
     timestamp_source: str = "auto"
     device: str = "auto"
     transcribe: bool = True
+    whisper_model: str = "small"
     whisper_device: str = "auto"
     whisper_language: str | None = "<|ja|>"
+
+
+class WhisperDownloadRequest(BaseModel):
+    model: str = "small"
+
+
+class TranscriptionSegmentRequest(BaseModel):
+    id: str
+    start: float
+    end: float
+
+
+class TranscriptionRequest(BaseModel):
+    source_path: str
+    segments: list[TranscriptionSegmentRequest] = Field(default_factory=list)
+    model: str = "small"
+    language: str | None = "ja"
+    device: str = "auto"
+    initial_prompt: str | None = None
 
 
 class ExportItem(BaseModel):
@@ -129,19 +153,30 @@ def devices() -> dict[str, Any]:
 @app.get("/models/whisper")
 def whisper_model_status() -> dict[str, Any]:
     runtime = select_whisper_runtime("auto")
-    model_dir = whisper_model_dir()
+    models = whisper_model_statuses()
+    small = next(item for item in models if item["key"] == "small")
     return {
+        "default_model": "small",
+        "models": models,
+        "languages": whisper_language_options(),
+        "devices": devices()["whisper"],
+        # Compatibility fields retained for the one-model API.
         "model_id": WHISPER_MODEL_ID,
         "openvino_repo_id": WHISPER_OPENVINO_REPO_ID,
-        "model_dir": str(model_dir),
-        "ready": whisper_model_ready(model_dir),
+        "model_dir": small["model_dir"],
+        "ready": small["ready"],
         "runtime": asdict(runtime),
     }
 
 
 @app.post("/models/whisper/download")
-def download_whisper_model() -> JobRecord:
-    return start_job("download-whisper", lambda job_id: _download_whisper_job(job_id))
+def download_whisper_model(request: WhisperDownloadRequest | None = None) -> JobRecord:
+    model_key = (request or WhisperDownloadRequest()).model.strip().lower()
+    try:
+        require_whisper_model(model_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return start_job("download-whisper", lambda job_id: _download_whisper_job(job_id, model_key))
 
 
 @app.post("/videos/probe")
@@ -158,6 +193,42 @@ def probe(request: ProbeRequest) -> dict[str, Any]:
 @app.post("/analysis/jobs")
 def create_analysis_job(request: AnalyzeRequest) -> JobRecord:
     return start_job("analysis", lambda job_id: _analysis_job(job_id, request))
+
+
+@app.post("/transcription/jobs")
+def create_transcription_job(request: TranscriptionRequest) -> JobRecord:
+    source = require_file(request.source_path)
+    model_key = request.model.strip().lower()
+    try:
+        require_whisper_model(model_key)
+        language_code, _language_token = normalize_whisper_language(request.language)
+        select_whisper_runtime(request.device)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if resolve_whisper_model_dir(model_key) is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "WHISPER_MODEL_NOT_READY", "model": model_key},
+        )
+    segments = [segment.model_dump() for segment in request.segments]
+    if not segments:
+        raise HTTPException(status_code=400, detail="At least one transcription segment is required.")
+    for segment in segments:
+        if segment["start"] < 0 or segment["end"] <= segment["start"]:
+            raise HTTPException(status_code=400, detail=f"Invalid transcription segment: {segment['id']}")
+    return start_job(
+        "transcription",
+        lambda job_id: _transcription_job(
+            job_id,
+            source,
+            segments,
+            model_key=model_key,
+            requested_device=request.device,
+            language=language_code,
+            initial_prompt=request.initial_prompt,
+        ),
+    )
 
 
 @app.post("/export/jobs")
@@ -280,11 +351,25 @@ def _check_executable_runs(label: str, executable: Path) -> None:
         raise RuntimeError(f"{label} could not be started: {executable} ({exc})") from exc
 
 
-def _download_whisper_job(job_id: str) -> None:
+def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
     try:
-        update_job(job_id, status="running", progress=0.05, message="Downloading and converting Whisper small.")
-        model_dir = ensure_whisper_model()
-        update_job(job_id, status="completed", progress=1.0, message="Whisper model ready.", result={"model_dir": str(model_dir)})
+        spec = require_whisper_model(model_key)
+        update_job(job_id, status="running", progress=0.05, message=f"Downloading Whisper {spec.display_name}.")
+        model_dir = ensure_whisper_model(model_key=model_key)
+        resolved = resolve_whisper_model_dir(model_key)
+        source = resolved[1] if resolved is not None else "downloaded"
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message=f"Whisper {spec.display_name} model ready.",
+            result={
+                "model": model_key,
+                "model_dir": str(model_dir),
+                "source": source,
+                "installed_bytes": directory_size(model_dir),
+            },
+        )
     except Exception as exc:
         fail_job(job_id, exc)
 
@@ -307,6 +392,7 @@ def _analysis_job(job_id: str, request: AnalyzeRequest) -> None:
                     transcription_job_id,
                     source,
                     [dict(segment) for segment in payload["segments"]],
+                    model_key=request.whisper_model,
                     requested_device=request.whisper_device,
                     language=request.whisper_language,
                     initial_prompt=request.guide_text.strip() or None,
@@ -326,6 +412,7 @@ def _transcription_job(
     requested_device: str,
     language: str | None,
     initial_prompt: str | None,
+    model_key: str = "small",
 ) -> None:
     try:
         update_job(job_id, status="running", progress=0.01, message="Preparing Whisper transcription.", result={"transcripts": []})
@@ -346,6 +433,7 @@ def _transcription_job(
             ffmpeg_paths,
             source,
             segments,
+            model_key=model_key,
             requested_device=requested_device,
             language=language,
             initial_prompt=initial_prompt,
@@ -356,7 +444,14 @@ def _transcription_job(
             status="completed",
             progress=1.0,
             message="Transcription complete.",
-            result={"transcripts": transcripts},
+            result={
+                "transcripts": transcripts,
+                "settings": {
+                    "model": model_key,
+                    "language": normalize_whisper_language(language)[0],
+                    "device": requested_device,
+                },
+            },
         )
     except Exception as exc:
         fail_job(job_id, exc)

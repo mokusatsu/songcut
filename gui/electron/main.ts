@@ -4,6 +4,20 @@ import { statSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  archiveConflict,
+  archiveRelinkedProject,
+  clearRecovery,
+  findProjectSource,
+  fingerprintSource,
+  loadProject,
+  loadRecovery,
+  projectPathForVideo,
+  saveProject,
+  saveRecovery,
+  sourceIdentityMatches,
+} from "./project-store.js";
+import type { ProjectDocumentV1, RecoverySnapshot, SourceIdentity, WhisperModelKey } from "./project-schema.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +39,7 @@ let closeRequestPending = false;
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
+const whisperModels = ["tiny", "base", "small"] as const;
 const waveformDisplayModes = ["rms", "peak", "peak-rms"] as const;
 
 type InferenceDevice = (typeof inferenceDevices)[number];
@@ -34,6 +49,9 @@ type WaveformDisplayMode = (typeof waveformDisplayModes)[number];
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
+  | { type: "open-project" }
+  | { type: "save-project" }
+  | { type: "relink-source" }
   | { type: "nudge-boundary-left" }
   | { type: "nudge-boundary-right" }
   | { type: "previous-segment" }
@@ -50,16 +68,11 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-ts-text" }
-  | { type: "configure-scratch-preview" }
-  | { type: "set-scratch-audio-proxy-enabled"; enabled: boolean }
-  | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
-  | { type: "prepare-whisper-model" }
-  | { type: "set-analysis-device"; device: AnalysisDevice }
-  | { type: "set-whisper-device"; device: WhisperDevice }
-  | { type: "ffmpeg-check" };
+  | { type: "open-settings" };
 
 type SongcutMenuState = {
   apiReady: boolean;
+  hasProject: boolean;
   hasVideo: boolean;
   hasSegments: boolean;
   hasSelectedSegment: boolean;
@@ -72,10 +85,12 @@ type SongcutMenuState = {
   scratchAudioProxyEnabled: boolean;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
+  whisperModel: WhisperModelKey;
 };
 
 let menuState: SongcutMenuState = {
   apiReady: false,
+  hasProject: false,
   hasVideo: false,
   hasSegments: false,
   hasSelectedSegment: false,
@@ -87,7 +102,8 @@ let menuState: SongcutMenuState = {
   waveformDisplayMode: "rms",
   scratchAudioProxyEnabled: true,
   analysisDevice: "auto",
-  whisperDevice: "auto"
+  whisperDevice: "auto",
+  whisperModel: "small"
 };
 
 async function createWindow() {
@@ -167,6 +183,57 @@ ipcMain.handle("songcut:selectVideo", async () => {
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
+ipcMain.handle("songcut:openProject", async () => {
+  const options = {
+    title: "Open songcut project",
+    properties: ["openFile"],
+    filters: [{ name: "songcut Project", extensions: ["songcut"] }]
+  } satisfies Electron.OpenDialogOptions;
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  if (result.canceled || !result.filePaths[0]) return null;
+  return loadProject(result.filePaths[0]);
+});
+
+ipcMain.handle("songcut:loadProject", (_event, projectPath: string) => loadProject(projectPath));
+ipcMain.handle("songcut:projectPathForVideo", (_event, videoPath: string) => projectPathForVideo(videoPath));
+ipcMain.handle(
+  "songcut:saveProject",
+  (_event, projectPath: string, document: ProjectDocumentV1) => saveProject(projectPath, document)
+);
+ipcMain.handle("songcut:loadRecovery", () => loadRecovery(app.getPath("userData")));
+ipcMain.handle(
+  "songcut:saveRecovery",
+  (_event, snapshot: RecoverySnapshot) => saveRecovery(app.getPath("userData"), snapshot)
+);
+ipcMain.handle("songcut:clearRecovery", () => clearRecovery(app.getPath("userData")));
+ipcMain.handle("songcut:fingerprintSource", (_event, filePath: string) => fingerprintSource(filePath));
+ipcMain.handle(
+  "songcut:findProjectSource",
+  (_event, projectPath: string, document: ProjectDocumentV1) => findProjectSource(projectPath, document)
+);
+ipcMain.handle(
+  "songcut:sourceIdentityMatches",
+  (_event, document: ProjectDocumentV1, identity: SourceIdentity) => sourceIdentityMatches(document, identity)
+);
+ipcMain.handle("songcut:archiveRelinkedProject", (_event, projectPath: string) => archiveRelinkedProject(projectPath));
+ipcMain.handle("songcut:archiveConflict", (_event, filePath: string) => archiveConflict(filePath));
+ipcMain.handle("songcut:setWindowTitle", (_event, title: string) => {
+  mainWindow?.setTitle(title.trim() || "songcut");
+});
+
+ipcMain.handle("songcut:selectRelinkSource", async (_event, expectedName: string) => {
+  const options = {
+    title: `Relink ${expectedName}`,
+    properties: ["openFile"],
+    filters: [
+      { name: "Video", extensions: ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg"] },
+      { name: "All files", extensions: ["*"] }
+    ]
+  } satisfies Electron.OpenDialogOptions;
+  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] ?? null;
+});
+
 ipcMain.handle("songcut:selectOutputDirectory", async () => {
   if (process.env.SONGCUT_E2E_OUTPUT_DIR) return process.env.SONGCUT_E2E_OUTPUT_DIR;
   const options = {
@@ -190,7 +257,8 @@ ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuS
       menuState.scratchAudioProxyEnabled
     ),
     analysisDevice: normalizeInferenceDevice(nextState.analysisDevice ?? menuState.analysisDevice),
-    whisperDevice: normalizeInferenceDevice(nextState.whisperDevice ?? menuState.whisperDevice)
+    whisperDevice: normalizeInferenceDevice(nextState.whisperDevice ?? menuState.whisperDevice),
+    whisperModel: normalizeWhisperModel(nextState.whisperModel ?? menuState.whisperModel)
   };
   setApplicationMenu();
 });
@@ -203,7 +271,8 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
   const canUseVideo = menuState.hasVideo;
   const canUseSegments = canUseVideo && menuState.hasSegments;
   const canUseSelectedSegment = canUseVideo && menuState.hasSelectedSegment;
-  const canExport = menuState.hasCheckedSegments;
+  const canExportMovie = canUseVideo && menuState.hasCheckedSegments;
+  const canExportText = menuState.hasCheckedSegments;
   const zoomIndex = clampMenuZoom(menuState.zoomIndex);
 
   const send = (command: SongcutMenuCommand) => () => sendMenuCommand(command);
@@ -213,6 +282,9 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: "File",
       submenu: [
         { label: "Load Movie", click: send({ type: "load-movie" }) },
+        { label: "Open Project...", accelerator: "Ctrl+Shift+O", click: send({ type: "open-project" }) },
+        { label: "Save Project Now", accelerator: "Ctrl+S", enabled: menuState.hasProject, click: send({ type: "save-project" }) },
+        { label: "Relink Source...", enabled: menuState.hasProject, click: send({ type: "relink-source" }) },
         { type: "separator" },
         { role: "close" }
       ]
@@ -330,50 +402,14 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
     {
       label: "Export",
       submenu: [
-        { label: "Export Movie", enabled: canExport, click: send({ type: "export-movie" }) },
-        { label: "Export TS Text", enabled: canExport, click: send({ type: "export-ts-text" }) }
+        { label: "Export Movie", enabled: canExportMovie, click: send({ type: "export-movie" }) },
+        { label: "Export TS Text", enabled: canExportText, click: send({ type: "export-ts-text" }) }
       ]
     },
     {
       label: "Settings",
       submenu: [
-        { label: "Scratch Preview Duration...", click: send({ type: "configure-scratch-preview" }) },
-        {
-          label: "Use Scratch Audio Proxy",
-          type: "checkbox",
-          checked: menuState.scratchAudioProxyEnabled,
-          click: (item) => sendMenuCommand({ type: "set-scratch-audio-proxy-enabled", enabled: item.checked })
-        },
-        {
-          label: "Waveform Display",
-          submenu: waveformDisplayModes.map((mode) => ({
-            label: waveformDisplayModeLabel(mode),
-            type: "radio",
-            checked: menuState.waveformDisplayMode === mode,
-            click: send({ type: "set-waveform-display-mode", mode })
-          }))
-        },
-        { type: "separator" },
-        { label: "Prepare Whisper Model", enabled: menuState.apiReady, click: send({ type: "prepare-whisper-model" }) },
-        {
-          label: "Singing Analysis Device",
-          submenu: inferenceDevices.map((device) => ({
-            label: inferenceDeviceLabel(device),
-            type: "radio",
-            checked: menuState.analysisDevice === device,
-            click: send({ type: "set-analysis-device", device })
-          }))
-        },
-        {
-          label: "Whisper Device",
-          submenu: inferenceDevices.map((device) => ({
-            label: inferenceDeviceLabel(device),
-            type: "radio",
-            checked: menuState.whisperDevice === device,
-            click: send({ type: "set-whisper-device", device })
-          }))
-        },
-        { label: "ffmpeg Check", enabled: menuState.apiReady, click: send({ type: "ffmpeg-check" }) }
+        { label: "Settings...", accelerator: "CmdOrCtrl+,", click: send({ type: "open-settings" }) }
       ]
     },
     {
@@ -424,6 +460,12 @@ function normalizeInferenceDevice(value: unknown): InferenceDevice {
     : "auto";
 }
 
+function normalizeWhisperModel(value: unknown): WhisperModelKey {
+  return typeof value === "string" && whisperModels.includes(value as WhisperModelKey)
+    ? (value as WhisperModelKey)
+    : "small";
+}
+
 function normalizeWaveformDisplayMode(value: unknown): WaveformDisplayMode {
   return typeof value === "string" && waveformDisplayModes.includes(value as WaveformDisplayMode)
     ? (value as WaveformDisplayMode)
@@ -434,29 +476,6 @@ function normalizeMenuBoolean(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
-  switch (mode) {
-    case "rms":
-      return "RMS";
-    case "peak":
-      return "Peak Envelope";
-    case "peak-rms":
-      return "Peak + RMS";
-  }
-}
-
-function inferenceDeviceLabel(device: InferenceDevice) {
-  switch (device) {
-    case "auto":
-      return "Auto";
-    case "npu":
-      return "NPU";
-    case "gpu":
-      return "GPU";
-    case "cpu":
-      return "CPU";
-  }
-}
 
 function showAboutSongcut() {
   app.setAboutPanelOptions({

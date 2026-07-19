@@ -146,6 +146,11 @@ The package version is `VERSION` plus the Git commit count, for example
 copied to `models\openvino\whisper-small` in the portable package. If it is not
 present, the package is still created without a bundled Whisper model.
 
+The Full package reads its bundled Small model in place. Downloaded Tiny/Base/
+Small models plus Hugging Face and OpenVINO caches are stored under
+`%LOCALAPPDATA%\songcut`; the extracted portable package is treated as
+read-only.
+
 A minimal successful package should contain:
 
 ```text

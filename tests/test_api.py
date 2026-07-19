@@ -13,6 +13,9 @@ from songcut.api import (
     JobRecord,
     ProbeRequest,
     ScratchProxyRequest,
+    TranscriptionRequest,
+    TranscriptionSegmentRequest,
+    WhisperDownloadRequest,
     _analysis_job,
     _export_job,
     _job_cancel_events,
@@ -20,10 +23,14 @@ from songcut.api import (
     _jobs_lock,
     _scratch_proxy_job,
     cancel_scratch_proxy_job,
+    create_transcription_job,
+    download_whisper_model,
     ffmpeg_check,
     health,
     probe,
 )
+from fastapi import HTTPException
+from songcut.gui_pipeline import build_gui_segments_and_exports
 
 
 class ApiJobTests(unittest.TestCase):
@@ -66,6 +73,101 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["segments"][0]["id"], "guide-001")
         start_job.assert_called_once()
         transcribe_segments.assert_not_called()
+
+    def test_unmatched_guide_timestamp_does_not_fail_analysis_job(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["analysis-fallback"] = JobRecord(
+                id="analysis-fallback",
+                kind="analysis",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+
+        segments, candidates, _guide_applied = build_gui_segments_and_exports(
+            "0:00:10 MC\n",
+            [],
+            media_duration=60.0,
+        )
+        payload = {
+            "schema_version": 3,
+            "segments": segments,
+            "export_candidates": candidates,
+            "waveform": [],
+        }
+        with (
+            mock.patch("songcut.api.require_file", return_value="source.mp4"),
+            mock.patch("songcut.api.analyze_for_gui", return_value=payload),
+        ):
+            _analysis_job("analysis-fallback", AnalyzeRequest(path="source.mp4", transcribe=False))
+
+        with _jobs_lock:
+            completed = _jobs["analysis-fallback"]
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.result["segments"][0]["source"], "guide-timestamp-fallback")
+
+    def test_invalid_whisper_model_is_rejected_before_starting_download(self) -> None:
+        with mock.patch("songcut.api.start_job") as start_job:
+            with self.assertRaises(HTTPException) as raised:
+                download_whisper_model(WhisperDownloadRequest(model="large"))
+        self.assertEqual(raised.exception.status_code, 400)
+        start_job.assert_not_called()
+
+    def test_empty_whisper_download_body_keeps_small_compatibility(self) -> None:
+        sentinel = SimpleNamespace(id="download-001")
+        with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
+            result = download_whisper_model(None)
+        self.assertIs(result, sentinel)
+        self.assertEqual(start_job.call_args.args[0], "download-whisper")
+
+    def test_transcription_job_requires_installed_selected_model(self) -> None:
+        request = TranscriptionRequest(
+            source_path="source.mp4",
+            segments=[TranscriptionSegmentRequest(id="seg-001", start=1.0, end=2.0)],
+            model="tiny",
+        )
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.select_whisper_runtime"),
+            mock.patch("songcut.api.resolve_whisper_model_dir", return_value=None),
+            mock.patch("songcut.api.start_job") as start_job,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                create_transcription_job(request)
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(raised.exception.detail, {"code": "WHISPER_MODEL_NOT_READY", "model": "tiny"})
+        start_job.assert_not_called()
+
+    def test_transcription_job_normalizes_legacy_language_and_passes_settings(self) -> None:
+        request = TranscriptionRequest(
+            source_path="source.mp4",
+            segments=[TranscriptionSegmentRequest(id="seg-001", start=1.0, end=2.0)],
+            model="base",
+            language="<|ja|>",
+            device="gpu",
+            initial_prompt="guide",
+        )
+        sentinel = SimpleNamespace(id="transcription-001")
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.select_whisper_runtime"),
+            mock.patch("songcut.api.resolve_whisper_model_dir", return_value=(Path("model"), "downloaded")),
+            mock.patch("songcut.api.start_job", return_value=sentinel) as start_job,
+            mock.patch("songcut.api._transcription_job") as transcription_job,
+        ):
+            result = create_transcription_job(request)
+            start_job.call_args.args[1]("transcription-001")
+        self.assertIs(result, sentinel)
+        transcription_job.assert_called_once_with(
+            "transcription-001",
+            Path("source.mp4"),
+            [{"id": "seg-001", "start": 1.0, "end": 2.0}],
+            model_key="base",
+            requested_device="gpu",
+            language="ja",
+            initial_prompt="guide",
+        )
 
     def test_health_does_not_fail_when_ffmpeg_is_missing(self) -> None:
         with mock.patch("songcut.api.find_ffmpeg", side_effect=FileNotFoundError("missing ffmpeg")):

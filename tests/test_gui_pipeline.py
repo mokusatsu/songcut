@@ -54,6 +54,34 @@ class GuiPipelineTests(unittest.TestCase):
         pcm_to_float.assert_called_once_with(b"pcm", channels=1)
         compute_features.assert_not_called()
 
+    def test_unmatched_guide_timestamp_completes_analysis_with_provisional_segment(self) -> None:
+        source = Path("source.mp4")
+        samples = np.array([[0.0], [0.25], [-0.5], [0.75]], dtype=np.float32)
+
+        with (
+            mock.patch(
+                "songcut.gui_pipeline.find_ffmpeg",
+                return_value=FfmpegPaths(Path("ffmpeg.exe"), Path("ffprobe.exe")),
+            ),
+            mock.patch("songcut.gui_pipeline.select_backend", return_value=BackendInfo("numpy-dsp", "auto", "CPU")),
+            mock.patch("songcut.gui_pipeline.probe_duration", return_value=2500.0),
+            mock.patch(
+                "songcut.gui_pipeline.metadata_segments",
+                return_value=[Segment(2340.0, 2440.0, confidence=0.98, source="video-metadata")],
+            ),
+            mock.patch("songcut.gui_pipeline.read_pcm_s16le", return_value=b"pcm"),
+            mock.patch("songcut.gui_pipeline.pcm_bytes_to_float_stereo", return_value=samples),
+            mock.patch("songcut.gui_pipeline.compute_features") as compute_features,
+        ):
+            result = analyze_for_gui(source, guide_text="0:37:20 MC\n0:38:58 Next song\n")
+
+        self.assertEqual(result["timestamp_source"], "video-metadata+guide")
+        self.assertEqual(result["segments"][0]["start"], 2240.0)
+        self.assertEqual(result["segments"][0]["end"], 2338.0)
+        self.assertEqual(result["segments"][0]["source"], "guide-timestamp-fallback")
+        self.assertIn("provisional", result["segments"][0]["flags"])
+        compute_features.assert_not_called()
+
     def test_waveform_bucket_count_is_duration_normalized_and_bounded(self) -> None:
         enough_frames = 1_000_000
 

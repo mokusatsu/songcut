@@ -335,8 +335,6 @@ if (Test-Path $ModelSource) {
   Copy-Item -Path $ModelSource -Destination (Join-Path $ModelTarget "whisper-small") -Recurse
 }
 
-New-Item -ItemType Directory -Force -Path (Join-Path $PackageRoot "ov-cache") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $PackageRoot "hf-home") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $PackageRoot "logs") | Out-Null
 Copy-Item -Path (Join-Path $RepoRoot "packaging\README_DIST.txt") -Destination (Join-Path $PackageRoot "README.txt")
 

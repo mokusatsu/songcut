@@ -39,11 +39,14 @@ def configure_logging(root: Path) -> Path:
 
 
 def configure_environment(root: Path, base_url: str) -> dict[str, str]:
+    local_app_data = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    writable_root = local_app_data / "songcut"
     os.environ["SONGCUT_GUI_DIST"] = "1"
     os.environ["SONGCUT_REPO_ROOT"] = str(root)
-    os.environ.setdefault("SONGCUT_MODEL_DIR", str(root / "models"))
-    os.environ.setdefault("OV_CACHE_DIR", str(root / "ov-cache"))
-    os.environ.setdefault("HF_HOME", str(root / "hf-home"))
+    os.environ.setdefault("SONGCUT_BUNDLED_MODEL_DIR", str(root / "models"))
+    os.environ.setdefault("SONGCUT_MODEL_DIR", str(writable_root / "models"))
+    os.environ.setdefault("OV_CACHE_DIR", str(writable_root / "ov-cache"))
+    os.environ.setdefault("HF_HOME", str(writable_root / "hf-home"))
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["OV_TELEMETRY_ENABLE"] = "NO"
     os.environ["PYTHONUTF8"] = "1"

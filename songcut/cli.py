@@ -188,6 +188,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             payload["segments"],
             max_distance_seconds=args.guide_max_distance,
             numbered_filenames=not args.guide_no_prefix,
+            media_duration=duration,
         )
         guided_payload = {
             **payload,
@@ -251,6 +252,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             segments,
             max_distance_seconds=args.guide_max_distance,
             numbered_filenames=not args.guide_no_prefix,
+            media_duration=float(payload["duration"]) if "duration" in payload else None,
         )
         if args.limit is not None:
             guided_exports = guided_exports[: max(0, args.limit)]

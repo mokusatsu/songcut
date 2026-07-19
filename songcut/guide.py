@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -134,10 +135,11 @@ def build_guided_exports(
     *,
     max_distance_seconds: float = 90.0,
     numbered_filenames: bool = True,
+    media_duration: float | None = None,
 ) -> list[GuidedExport]:
     exports: list[GuidedExport] = []
     used_stems: set[str] = set()
-    for entry_position, entry in enumerate(entries):
+    for entry in entries:
         if entry.is_explicit_range:
             start = float(entry.timestamps[0])
             end = float(entry.timestamps[-1])
@@ -146,14 +148,35 @@ def build_guided_exports(
             match_source = "guide-range"
             distance = None
         else:
-            start, end, distance = find_nearby_segment(
-                float(entry.timestamps[0]), segment_items, max_distance_seconds=max_distance_seconds
-            )
-            if entry_position + 1 < len(entries):
-                next_timestamp = float(entries[entry_position + 1].timestamps[0])
-                if start < next_timestamp < end:
+            start = float(entry.timestamps[0])
+            next_timestamp = _next_guide_timestamp(entries, start)
+            try:
+                _matched_start, end, distance = find_nearby_segment(
+                    start,
+                    segment_items,
+                    max_distance_seconds=max_distance_seconds,
+                )
+                if next_timestamp is not None and start < next_timestamp < end:
                     end = next_timestamp
-            match_source = "guide-nearby-segment"
+                match_source = "guide-nearby-segment"
+            except ValueError:
+                next_detected_start = _next_detected_segment_start(segment_items, start)
+                end_candidates = [
+                    candidate
+                    for candidate in (next_timestamp, next_detected_start)
+                    if candidate is not None and candidate > start
+                ]
+                if end_candidates:
+                    end = min(end_candidates)
+                elif media_duration is not None and isfinite(media_duration):
+                    end = float(media_duration)
+                else:
+                    continue
+
+                if not isfinite(start) or not isfinite(end) or end <= start:
+                    continue
+                distance = None
+                match_source = "guide-timestamp-fallback"
 
         base = safe_filename_stem(entry.title, fallback=f"clip-{entry.index:03d}")
         if numbered_filenames:
@@ -172,7 +195,33 @@ def build_guided_exports(
                 distance_seconds=distance,
             )
         )
-    return exports
+    return sorted(exports, key=lambda item: (item.start, item.end, item.index))
+
+
+def _next_guide_timestamp(entries: list[GuideEntry], start: float) -> float | None:
+    candidates = [
+        float(entry.timestamps[0])
+        for entry in entries
+        if entry.timestamps
+        and isfinite(float(entry.timestamps[0]))
+        and float(entry.timestamps[0]) > start
+    ]
+    return min(candidates) if candidates else None
+
+
+def _next_detected_segment_start(
+    segment_items: list[dict[str, Any]],
+    start: float,
+) -> float | None:
+    candidates: list[float] = []
+    for segment in segment_items:
+        try:
+            candidate = float(segment["start"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isfinite(candidate) and candidate > start:
+            candidates.append(candidate)
+    return min(candidates) if candidates else None
 
 
 def guided_exports_to_segment_dicts(exports: list[GuidedExport]) -> list[dict[str, Any]]:
@@ -182,6 +231,8 @@ def guided_exports_to_segment_dicts(exports: list[GuidedExport]) -> list[dict[st
         flags = ["guide"]
         if item.match_source == "guide-range":
             flags.append("explicit_range")
+        elif item.match_source == "guide-timestamp-fallback":
+            flags.extend(["provisional", "no-detected-singing"])
         else:
             flags.append("nearby_segment")
         rows.append(
@@ -194,8 +245,13 @@ def guided_exports_to_segment_dicts(exports: list[GuidedExport]) -> list[dict[st
                 "start_timecode": format_timecode(item.start),
                 "end_timecode": format_timecode(item.end),
                 "duration": round(duration, 3),
-                "confidence": 1.0 if item.match_source == "guide-range" else 0.9,
+                "confidence": 1.0
+                if item.match_source == "guide-range"
+                else 0.0
+                if item.match_source == "guide-timestamp-fallback"
+                else 0.9,
                 "source": item.match_source,
+                "match_source": item.match_source,
                 "guide_line_number": item.guide_line_number,
                 "guide_line": item.guide_line,
                 "distance_seconds": None

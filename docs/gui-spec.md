@@ -39,6 +39,7 @@ Development environment variables:
 - `SONGCUT_API_BASE_URL`: existing API URL supplied by the packaged Python
   launcher.
 - `SONGCUT_MODEL_DIR`: root directory for downloaded OpenVINO Whisper models.
+- `SONGCUT_BUNDLED_MODEL_DIR`: read-only root containing a bundled Small model.
 
 ffmpeg discovery:
 
@@ -56,7 +57,7 @@ ffmpeg discovery:
 - The bottom pane is the operation pane.
 - The boundary between panes is draggable.
 - The split position is persisted in renderer local storage and restored on the
-  next launch. Its default is `52%` and its valid range is `32%` to `72%`.
+  next launch. Its default is `35%` and its valid range is `32%` to `72%`.
 - Video uses `object-fit: contain` so it always preserves aspect ratio.
 - The operation pane contains, from top to bottom:
   1. Primary toolbar.
@@ -64,6 +65,22 @@ ffmpeg discovery:
   3. Waveform timeline.
   4. Segment timeline for the selected segment.
   5. Segment list.
+
+### Typography and sizing
+
+- Before designing or compacting GUI controls, inspect the current defaults and
+  overrides in `gui/src/styles.css`. Do not infer the effective size from browser
+  defaults or from a single component screenshot.
+- The CSS typography scale is deliberate: normal body text is `16px`, controls
+  and dense primary data are at least `14px`, supporting metadata is `13px`, and
+  `12px` is reserved for compact badges or genuinely secondary status text.
+- Buttons, inputs, textareas, and selects must inherit the application font.
+  Native select defaults are not accepted because they can silently render
+  smaller than adjacent controls.
+- Do not reduce font size to make a new panel fit. Prefer moving infrequent
+  controls into a dialog, wrapping responsive field groups, or adding a bounded
+  scroll area. Verify the result at the supported minimum window size before
+  accepting a layout change.
 
 ### Scrollable table layout rule
 
@@ -104,11 +121,13 @@ ffmpeg discovery:
     `Play End Boundary` for the selected segment. Their shortcuts are `A` and
     `D`.
 - `Export` provides `Export Movie` and `Export TS Text`.
-- `Settings` provides scratch-preview duration, a checked-by-default
-  `Use Scratch Audio Proxy` toggle, a `Waveform Display` radio submenu (`RMS`,
-  `Peak Envelope`, `Peak + RMS`), `Prepare Whisper Model`, inference-device
-  selectors, and `ffmpeg Check`. Scratch proxy and waveform display settings
-  persist in renderer local storage.
+- `Settings` contains one `Settings...` command (`Ctrl+,`) that opens the same
+  Settings dialog as the toolbar Settings button.
+- The Settings dialog contains scratch-preview duration, a checked-by-default
+  `Use Scratch Audio Proxy` toggle, waveform display, singing-analysis device,
+  all Whisper controls, `Prepare Whisper Model`, and `ffmpeg
+  Check`. Scratch proxy and waveform display settings persist in renderer local
+  storage; analysis and Whisper settings are project settings.
 - `View` and `Window` retain standard Electron role-based items.
 - `Help` provides `About songcut`, `Open Repository`, and
   `Report Issue / Request Feature`. About uses the native Electron dialog and
@@ -117,8 +136,9 @@ ffmpeg discovery:
   `https://github.com/mokusatsu/songcut/issues` in the default browser.
 - Menu item enabled/checked states track the renderer state for loaded video,
   selected segment, checked export rows, play/pause state, and timeline zoom.
-- The toolbar keeps the main workflow buttons except `Prepare Whisper`, which is
-  available only from `Settings > Prepare Whisper Model`.
+- The toolbar keeps the main workflow buttons and a Settings button. Whisper
+  settings and model preparation are never resident in the main operation pane;
+  they are available only inside the Settings dialog.
 
 ## Keyboard shortcut behavior
 
@@ -140,6 +160,10 @@ ffmpeg discovery:
   is `5` seconds.
 - Boundary nudge duration is persisted in renderer local storage. The default is
   `0.5` seconds.
+- Q/E chooses the nearest start or end edge of the currently selected segment.
+  A boundary from another segment must not take priority merely because it is
+  closer to the playhead; global nearest-edge fallback is used only when the
+  selected segment id is unavailable.
 - The selected segment row uses the waveform selection red (`#f26d5b`) while
   ordinary pointer hover retains the neutral blue-gray highlight.
 
@@ -157,6 +181,9 @@ ffmpeg discovery:
 ## Guide text
 
 - v1 provides one large textarea instead of multiple independent text fields.
+- The guide textarea and its adjacent status panel split the available row
+  width equally. Content length must not cause the guide field to consume the
+  status panel's half.
 - If the textarea is empty, analysis and export candidates are built only from
   detected segments.
 - If guide text is present, songcut parses it with the same guide parser used by
@@ -186,21 +213,36 @@ ffmpeg discovery:
 
 ## Whisper
 
-- Model: `openai/whisper-small`.
-- First startup/download behavior:
-  - The default path downloads the pre-converted OpenVINO model
-    `OpenVINO/whisper-small-fp16-ov`.
-  - If `optimum-cli` is present, the backend can instead export
-    `openai/whisper-small` locally.
-  - Model files are stored under `%LOCALAPPDATA%\songcut\models` by default,
-    or under `SONGCUT_MODEL_DIR` when set.
+- Whisper ON/OFF, model, language, device, model state, preparation, and manual
+  transcription controls live in the Settings dialog. Closing the dialog leaves
+  the main editing layout free of a resident Whisper panel.
+- `Prepare Whisper Model` is inside that dialog and always acts
+  on the currently selected model. It is not duplicated in the application menu
+  or primary toolbar.
+- New projects default to disabled, with Small / Japanese / Auto retained as
+  their selected settings.
+- Selectable models are the official pre-converted OpenVINO FP16 Tiny, Base,
+  and Small repositories. Arbitrary repository IDs and local paths are not
+  accepted by the GUI or API.
+- Downloaded model files are stored under `%LOCALAPPDATA%\songcut\models` by
+  default, or under `SONGCUT_MODEL_DIR` when set. A Full distribution reads its
+  bundled Small model from `SONGCUT_BUNDLED_MODEL_DIR` without writing there.
 - Runtime: OpenVINO GenAI `WhisperPipeline`.
 - Auto device priority: `NPU -> GPU -> CPU`.
 - Strict device modes:
   - `npu`: fail if NPU is unavailable.
   - `gpu`: fail if GPU is unavailable.
   - `cpu`: force CPU.
-- Default language token for v1: `<|ja|>`.
+- Languages use stable Whisper codes in projects and are converted to token
+  form only at the inference boundary. Auto omits the language argument.
+- Language selection uses a songcut-managed ARIA combobox, not native
+  `input[list]`/`datalist`. The selected code and the user's search query are
+  separate state. With an empty query, Auto detect, Japanese, English, Chinese,
+  and Korean are pinned in that order, followed by the remaining unique
+  languages alphabetically. Search is case-insensitive across code and label,
+  ranked by code exact match, label exact match, prefix match, then substring
+  match. Mouse selection and Arrow/Enter/Escape keyboard operation must remain
+  available while Whisper is disabled.
 - If OpenVINO GenAI or the model is unavailable, the segment keeps an error field
   instead of blocking the whole analysis result.
 

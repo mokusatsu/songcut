@@ -1,7 +1,46 @@
-import type { AnalysisResult, FfmpegCheckResult, JobRecord, ScratchProxyResult, VideoInfo } from "@/types";
+import type { AnalysisResult, FfmpegCheckResult, JobRecord, ScratchProxyResult, Segment, VideoInfo } from "@/types";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
+export type WhisperModelKey = "tiny" | "base" | "small";
+export type WhisperSettings = {
+  enabled: boolean;
+  model: WhisperModelKey;
+  language: string;
+  device: WhisperDevice;
+};
+
+export type WhisperModelStatus = {
+  key: WhisperModelKey;
+  display_name: string;
+  model_id: string;
+  repo_id: string;
+  ready: boolean;
+  source: "bundled" | "downloaded" | null;
+  model_dir: string;
+  installed_bytes: number | null;
+  speed: string;
+  quality: string;
+};
+
+export type WhisperStatus = {
+  default_model: WhisperModelKey;
+  models: WhisperModelStatus[];
+  languages: { code: string; label: string }[];
+  devices: Record<WhisperDevice, { device_used?: string; error?: string }>;
+  model_id: string;
+  ready: boolean;
+};
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly detail: unknown
+  ) {
+    super(message);
+  }
+}
 
 export async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -10,8 +49,14 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
     body: JSON.stringify(body)
   });
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || response.statusText);
+    const text = await response.text();
+    let detail: unknown = text;
+    try {
+      detail = JSON.parse(text) as unknown;
+    } catch {
+      // Preserve the plain response.
+    }
+    throw new ApiError(text || response.statusText, response.status, detail);
   }
   return (await response.json()) as T;
 }
@@ -36,22 +81,40 @@ export function startAnalysis(
   baseUrl: string,
   filePath: string,
   guideText: string,
-  analysisDevice: AnalysisDevice,
-  whisperDevice: WhisperDevice
+  analysisDevice: AnalysisDevice
 ) {
   return postJson<JobRecord>(baseUrl, "/analysis/jobs", {
     path: filePath,
     guide_text: guideText,
     timestamp_source: "auto",
     device: analysisDevice,
-    transcribe: true,
-    whisper_device: whisperDevice,
-    whisper_language: "<|ja|>"
+    transcribe: false
   });
 }
 
-export function startWhisperDownload(baseUrl: string) {
-  return postJson<JobRecord>(baseUrl, "/models/whisper/download", {});
+export function getWhisperStatus(baseUrl: string) {
+  return getJson<WhisperStatus>(baseUrl, "/models/whisper");
+}
+
+export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "small") {
+  return postJson<JobRecord>(baseUrl, "/models/whisper/download", { model });
+}
+
+export function startTranscription(
+  baseUrl: string,
+  sourcePath: string,
+  segments: Pick<Segment, "id" | "start" | "end">[],
+  settings: WhisperSettings,
+  initialPrompt: string
+) {
+  return postJson<JobRecord>(baseUrl, "/transcription/jobs", {
+    source_path: sourcePath,
+    segments: segments.map(({ id, start, end }) => ({ id, start, end })),
+    model: settings.model,
+    language: settings.language,
+    device: settings.device,
+    initial_prompt: initialPrompt.trim() || null
+  });
 }
 
 export function checkFfmpeg(baseUrl: string) {

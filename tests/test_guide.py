@@ -113,8 +113,83 @@ class GuideTests(unittest.TestCase):
             max_distance_seconds=90,
         )
 
-        self.assertEqual(exports[0].start, 20.0)
-        self.assertEqual(exports[0].end, 40.0)
+        self.assertEqual([(item.start, item.end) for item in exports], [(10.0, 20.0), (20.0, 40.0)])
+
+    def test_unmatched_timestamp_uses_earlier_next_guide_timestamp(self) -> None:
+        entries = parse_guide_text("0:37:20 MC\n0:38:58 Next song\n")
+        exports = build_guided_exports(
+            entries,
+            [{"start": 2340.0, "end": 2440.0}],
+            max_distance_seconds=90,
+            media_duration=2500.0,
+        )
+
+        fallback = next(item for item in exports if item.title == "MC")
+        self.assertEqual((fallback.start, fallback.end), (2240.0, 2338.0))
+        self.assertEqual(fallback.match_source, "guide-timestamp-fallback")
+
+    def test_unmatched_timestamp_uses_earlier_detected_segment_start(self) -> None:
+        entries = parse_guide_text("0:37:20 MC\n0:40:00 Next song\n")
+        exports = build_guided_exports(
+            entries,
+            [{"start": 2340.0, "end": 2440.0}],
+            max_distance_seconds=90,
+            media_duration=2500.0,
+        )
+
+        fallback = next(item for item in exports if item.title == "MC")
+        self.assertEqual((fallback.start, fallback.end), (2240.0, 2340.0))
+
+    def test_unmatched_timestamp_uses_only_available_end_candidate(self) -> None:
+        next_guide_only = build_guided_exports(
+            parse_guide_text("0:00:10 MC\n0:00:20 Next\n"),
+            [],
+        )
+        detected_only = build_guided_exports(
+            parse_guide_text("0:00:10 MC\n"),
+            [{"start": 120.0, "end": 150.0}],
+        )
+
+        self.assertEqual([(item.start, item.end) for item in next_guide_only], [(10.0, 20.0)])
+        self.assertEqual([(item.start, item.end) for item in detected_only], [(10.0, 120.0)])
+
+    def test_unmatched_timestamp_uses_video_end_when_no_other_candidate_exists(self) -> None:
+        exports = build_guided_exports(
+            parse_guide_text("0:00:10 MC\n"),
+            [],
+            media_duration=100.0,
+        )
+
+        self.assertEqual([(item.start, item.end) for item in exports], [(10.0, 100.0)])
+
+    def test_invalid_fallback_range_is_skipped_without_raising(self) -> None:
+        exports = build_guided_exports(
+            parse_guide_text("0:01:40 At video end\n"),
+            [],
+            media_duration=100.0,
+        )
+
+        self.assertEqual(exports, [])
+
+    def test_fallback_segments_are_sorted_positive_and_keep_guide_metadata(self) -> None:
+        segments, exports, guide_applied = build_gui_segments_and_exports(
+            "0:00:40 Late\n0:00:10 Early / Artist\n",
+            [],
+            media_duration=60.0,
+        )
+
+        self.assertTrue(guide_applied)
+        self.assertEqual([(item["start"], item["end"]) for item in segments], [(10.0, 40.0), (40.0, 60.0)])
+        self.assertTrue(all(float(item["end"]) > float(item["start"]) for item in segments))
+        early = segments[0]
+        self.assertEqual(early["title"], "Early / Artist")
+        self.assertEqual(early["filename_stem"], "02_Early - Artist")
+        self.assertEqual(early["guide_line_number"], 2)
+        self.assertEqual(early["guide_line"], "0:00:10 Early / Artist")
+        self.assertEqual(early["source"], "guide-timestamp-fallback")
+        self.assertEqual(early["match_source"], "guide-timestamp-fallback")
+        self.assertEqual(early["flags"], ["guide", "provisional", "no-detected-singing"])
+        self.assertEqual(exports[0]["match_source"], "guide-timestamp-fallback")
 
     def test_safe_filename_stem_removes_windows_reserved_characters(self) -> None:
         self.assertEqual(safe_filename_stem('A/B:C*D?"E'), "A - BCDE")

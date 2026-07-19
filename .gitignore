@@ -12,6 +12,8 @@ third_party/
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/
+dist/songcut-e2e-*/
+dist/songcut-*-full/
 dist/songcut-*.zip
 out/
 testdata/

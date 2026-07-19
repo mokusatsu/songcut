@@ -40,36 +40,40 @@ function sleep(ms) {
 }
 
 function ensureTestVideo() {
-  if (fs.existsSync(input)) return;
-  execFileSync(
-    path.join(repo, "third_party", "ffmpeg", "bin", "ffmpeg.exe"),
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-y",
-      "-f",
-      "lavfi",
-      "-i",
-      "color=c=black:s=640x360:r=30",
-      "-f",
-      "lavfi",
-      "-i",
-      "sine=frequency=440:sample_rate=48000:duration=6",
-      "-t",
-      "6",
-      "-metadata",
-      "comment=0:00-0:04 Smoke Song",
-      "-c:v",
-      "libx264",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      input
-    ],
-    { cwd: repo, stdio: "inherit" }
-  );
+  if (!fs.existsSync(input)) {
+    execFileSync(
+      path.join(repo, "third_party", "ffmpeg", "bin", "ffmpeg.exe"),
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=640x360:r=30",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=48000:duration=6",
+        "-t",
+        "6",
+        "-metadata",
+        "comment=0:00-0:04 Smoke Song",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        input
+      ],
+      { cwd: repo, stdio: "inherit" }
+    );
+  }
+  for (const suffix of [".songcut", ".songcut.tmp", ".songcut.bak"]) {
+    fs.rmSync(`${input}${suffix}`, { force: true });
+  }
 }
 
 async function getPage() {
@@ -341,6 +345,24 @@ async function dispatchShortcut(cdp, code, options = {}) {
   return dispatched;
 }
 
+async function dispatchInputKey(cdp, key, code, windowsVirtualKeyCode) {
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "rawKeyDown",
+    key,
+    code,
+    windowsVirtualKeyCode,
+    nativeVirtualKeyCode: windowsVirtualKeyCode
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key,
+    code,
+    windowsVirtualKeyCode,
+    nativeVirtualKeyCode: windowsVirtualKeyCode
+  });
+  await sleep(120);
+}
+
 async function shortcutState(cdp) {
   return evaluate(
     cdp,
@@ -476,7 +498,7 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = document.querySelector(".boundary-nudge-seconds-input")?.value;
       const split = Number.parseFloat(getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split"));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "5" && nudge === "0.5" && Math.abs(split - 52) < 0.01 && waveformDisplay === "rms";
+      return preview === "5" && nudge === "0.5" && Math.abs(split - 35) < 0.01 && waveformDisplay === "rms";
     })()`,
     5000,
     "default editor settings"
@@ -498,7 +520,7 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)});
       const split = Number(localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 52) > 0.1 && waveformDisplay === "peak-rms"
+      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 35) > 0.1 && waveformDisplay === "peak-rms"
         ? { preview, nudge, split, waveformDisplay }
         : false;
     })()`,
@@ -1004,21 +1026,42 @@ async function dragWaveformPixels(cdp, deltaX) {
       const sx = Math.max(viewportRect.left + 24, Math.min(rect.left + rect.width * 0.22, viewportRect.right - ${deltaX} - 24));
       const sy = rect.top + rect.height / 2;
       const startTime = ((sx - viewportRect.left + viewport.scrollLeft) / viewport.scrollWidth) * video.duration;
-      return { sx, sy, tx: sx + ${deltaX}, ty: sy, startTime };
+      const hit = document.elementFromPoint(sx, sy);
+      return {
+        sx,
+        sy,
+        tx: sx + ${deltaX},
+        ty: sy,
+        startTime,
+        hit: hit ? { tag: hit.tagName, className: String(hit.className?.baseVal ?? hit.className ?? "") } : null,
+        waveformRect: { top: rect.top, bottom: rect.bottom },
+        segmentListRect: (() => {
+          const value = document.querySelector(".segment-list")?.getBoundingClientRect();
+          return value ? { top: value.top, bottom: value.bottom } : null;
+        })()
+      };
     })()`
   );
   if (!data) throw new Error("Waveform timeline not found for drag seek.");
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.sx, y: data.sy });
   await sleep(50);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: data.sx, y: data.sy, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: data.sx, y: data.sy, button: "left", buttons: 1, clickCount: 1 });
   await sleep(100);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.tx, y: data.ty, button: "left" });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.tx, y: data.ty, button: "left", buttons: 1 });
   await sleep(250);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: data.tx, y: data.ty, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: data.tx, y: data.ty, button: "left", buttons: 0, clickCount: 1 });
   await sleep(700);
   const state = await videoState(cdp);
   const metrics = await timelineMetrics(cdp);
-  return { ...state, startTime: data.startTime, seekDelta: state ? state.currentTime - data.startTime : null, metrics };
+  return {
+    ...state,
+    startTime: data.startTime,
+    seekDelta: state ? state.currentTime - data.startTime : null,
+    hit: data.hit,
+    waveformRect: data.waveformRect,
+    segmentListRect: data.segmentListRect,
+    metrics
+  };
 }
 
 async function dragWaveformAtRightEdge(cdp) {
@@ -1039,11 +1082,11 @@ async function dragWaveformAtRightEdge(cdp) {
   if (!data) throw new Error("Waveform timeline not found for edge drag.");
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.sx, y: data.sy });
   await sleep(50);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: data.sx, y: data.sy, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: data.sx, y: data.sy, button: "left", buttons: 1, clickCount: 1 });
   await sleep(950);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.sx, y: data.sy, button: "left" });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: data.sx, y: data.sy, button: "left", buttons: 1 });
   await sleep(150);
-  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: data.sx, y: data.sy, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: data.sx, y: data.sy, button: "left", buttons: 0, clickCount: 1 });
   await sleep(500);
   const state = await videoState(cdp);
   const metrics = await timelineMetrics(cdp);
@@ -1287,6 +1330,16 @@ function cleanup(processHandle, cdp) {
         hasBoundaryNudgeSecondsInput: !!document.querySelector(".boundary-nudge-seconds-input[aria-label='Boundary nudge seconds']"),
         timelineViewportCount: document.querySelectorAll(".timeline-scroll-area .scroll-area-viewport").length,
         hasSegmentList: !!document.querySelector(".segment-list .segment-list-body.scroll-area .scroll-area-viewport"),
+        hasResidentWhisperSettings: !!document.querySelector(".control-pane .whisper-settings"),
+        saveStatus: (() => {
+          const element = document.querySelector(".project-save-status");
+          return element ? { text: element.innerText, fontSize: getComputedStyle(element).fontSize } : null;
+        })(),
+        guideStatusWidths: (() => {
+          const guide = document.querySelector(".guide-row .textarea")?.getBoundingClientRect();
+          const status = document.querySelector(".guide-row .status-panel")?.getBoundingClientRect();
+          return guide && status ? { guide: guide.width, status: status.width } : null;
+        })(),
         text: document.body.innerText
       }))()`
     );
@@ -1297,6 +1350,12 @@ function cleanup(processHandle, cdp) {
         initial.buttons.some((label) => label.startsWith("Nudge nearest boundary left (Q)")) &&
         initial.buttons.some((label) => label.startsWith("Nudge nearest boundary right (E)")) &&
         initial.buttons.includes("Export TS") &&
+        initial.buttons.includes("Settings") &&
+        !initial.hasResidentWhisperSettings &&
+        initial.saveStatus?.text === "Saved" &&
+        parseFloat(initial.saveStatus?.fontSize || "0") >= 14 &&
+        initial.guideStatusWidths &&
+        Math.abs(initial.guideStatusWidths.guide - initial.guideStatusWidths.status) <= 2 &&
         initial.hasSegmentList &&
         initial.hasBoundarySecondsInput &&
         initial.hasBoundaryNudgeSecondsInput,
@@ -1325,11 +1384,25 @@ function cleanup(processHandle, cdp) {
     log("OUTPUT_DIRECTORY_BRIDGE_OK", e2eOutputDir);
 
     await dropVideo(cdp);
-    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Video loaded.")`, 30_000, "video load");
+    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Video loaded and project created.")`, 30_000, "video load");
     log("DND_LOAD_OK", await videoState(cdp));
+    const sidecarPath = `${input}.songcut`;
+    assertPass(fs.existsSync(sidecarPath), "Loading a video did not create its .songcut sidecar.", sidecarPath);
+    const initialProject = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
+    assertPass(
+      initialProject.format === "songcut-project" &&
+        initialProject.schema_version === 1 &&
+        initialProject.settings?.whisper?.enabled === false &&
+        initialProject.settings?.whisper?.model === "small" &&
+        initialProject.settings?.whisper?.language === "ja" &&
+        initialProject.settings?.whisper?.device === "auto",
+      "The initial sidecar did not contain the expected schema and Whisper defaults.",
+      initialProject
+    );
+    log("PROJECT_SIDECAR_CREATED_OK", { sidecarPath, revision: initialProject.revision });
 
     await clickButton(cdp, "Load");
-    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Video loaded.")`, 30_000, "video load button");
+    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Project loaded.")`, 30_000, "video load button");
     log("LOAD_BUTTON_OK", await videoState(cdp));
 
     const layout = await layoutMetrics(cdp);
@@ -1364,6 +1437,114 @@ function cleanup(processHandle, cdp) {
     const whisperReady = await prepareWhisperModel(cdp);
     assertPass(whisperReady?.ok, "Whisper preparation failed.", whisperReady);
     log("WHISPER_READY_OK", whisperReady);
+    await clickButton(cdp, "Settings");
+    const settingsDialog = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = [...document.querySelectorAll(".dialog")].find((node) => node.innerText.includes("Whisper transcription"));
+        const text = dialog?.innerText || "";
+        return dialog && text.includes("Prepare Whisper Model") && text.includes("Playback and analysis") ? text : false;
+      })()`,
+      10_000,
+      "Settings dialog with Whisper controls"
+    );
+    log("SETTINGS_DIALOG_OK", settingsDialog);
+    assertPass(
+      await evaluate(cdp, `!document.querySelector('input[list], datalist')`),
+      "Settings still uses the native language datalist."
+    );
+    await clickAt(cdp, '.language-combobox input[role="combobox"]');
+    await waitFor(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.getAttribute('aria-expanded') === 'true'`, 5000, "language combobox open");
+    const initialLanguageOptions = await evaluate(
+      cdp,
+      `(() => ({
+        codes: [...document.querySelectorAll('.language-combobox-option .language-combobox-code')].map((node) => node.innerText),
+        selected: document.querySelector('.language-combobox-option[aria-selected="true"] .language-combobox-code')?.innerText || null,
+        inputValue: document.querySelector('.language-combobox input[role="combobox"]')?.value ?? null
+      }))()`
+    );
+    assertPass(
+      JSON.stringify(initialLanguageOptions.codes.slice(0, 5)) === JSON.stringify(["auto", "ja", "en", "zh", "ko"]) &&
+        initialLanguageOptions.codes.filter((code) => code === "ja").length === 1 &&
+        initialLanguageOptions.selected === "ja" &&
+        initialLanguageOptions.inputValue === "",
+      "Language combobox did not open with the fixed primary ordering and a separate empty search query.",
+      initialLanguageOptions
+    );
+    log("WHISPER_LANGUAGE_PRIMARY_ORDER_OK", initialLanguageOptions);
+
+    await clickAt(cdp, '.language-combobox-option[data-language-code="en"]');
+    assertPass(
+      await evaluate(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.value === 'English'`),
+      "Mouse selection did not choose English."
+    );
+    await dispatchInputKey(cdp, "ArrowDown", "ArrowDown", 40);
+    await dispatchInputKey(cdp, "ArrowDown", "ArrowDown", 40);
+    await dispatchInputKey(cdp, "Enter", "Enter", 13);
+    assertPass(
+      await evaluate(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.value === 'Chinese'`),
+      "Keyboard navigation did not choose the next language."
+    );
+    await dispatchInputKey(cdp, "ArrowDown", "ArrowDown", 40);
+    await dispatchInputKey(cdp, "Escape", "Escape", 27);
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const input = document.querySelector('.language-combobox input[role="combobox"]');
+          return input?.getAttribute('aria-expanded') === 'false' && input?.value === 'Chinese';
+        })()`
+      ),
+      "Escape did not cancel the open language list without changing the selection."
+    );
+
+    await clickAt(cdp, '.language-combobox input[role="combobox"]');
+    await cdp.send("Input.insertText", { text: "ja" });
+    const searchedLanguages = await waitFor(
+      cdp,
+      `(() => {
+        const input = document.querySelector('.language-combobox input[role="combobox"]');
+        const codes = [...document.querySelectorAll('.language-combobox-option .language-combobox-code')].map((node) => node.innerText);
+        return input?.value === 'ja' && codes.length ? { codes, expanded: input.getAttribute('aria-expanded') } : false;
+      })()`,
+      5000,
+      "language code search"
+    );
+    assertPass(
+      searchedLanguages.codes[0] === "ja" && searchedLanguages.expanded === "true",
+      "Explicit ja search did not rank Japanese first.",
+      searchedLanguages
+    );
+    await dispatchInputKey(cdp, "Enter", "Enter", 13);
+    assertPass(
+      await evaluate(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.value === 'Japanese'`),
+      "Enter did not select Japanese from the search results."
+    );
+    log("WHISPER_LANGUAGE_MOUSE_KEYBOARD_OK", searchedLanguages);
+    await waitFor(
+      cdp,
+      `document.querySelector(".settings-dialog-content .model-state.ready")?.innerText || false`,
+      10_000,
+      "Settings dialog Whisper ready state"
+    );
+    const whisperEnabled = await evaluate(
+      cdp,
+      `(() => {
+        const checkbox = document.querySelector('.settings-dialog-content .whisper-settings input[type="checkbox"]');
+        if (!checkbox) return false;
+        if (!checkbox.checked) checkbox.click();
+        return checkbox.checked;
+      })()`
+    );
+    assertPass(whisperEnabled, "Whisper could not be enabled after explicit model preparation.");
+    log("WHISPER_ENABLED_OK");
+    await clickButton(cdp, "Done");
+    await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "Settings dialog close");
+    assertPass(
+      await evaluate(cdp, `!document.querySelector(".control-pane .whisper-settings")`),
+      "Whisper settings remained resident after closing Settings."
+    );
+    log("WHISPER_SETTINGS_NON_RESIDENT_OK");
 
     await setGuideText(
       cdp,
@@ -1455,6 +1636,18 @@ function cleanup(processHandle, cdp) {
     beforeRows = await tableRows(cdp);
     assertPass(beforeRows[0][1] === "Smoke Song Edited", "Editable segment title did not update the segment list.", beforeRows);
     log("TITLE_EDIT_OK", beforeRows);
+    await sleep(2000);
+    const savedProject = JSON.parse(fs.readFileSync(`${input}.songcut`, "utf8"));
+    assertPass(
+      savedProject.revision > initialProject.revision &&
+        savedProject.guide_text.includes("Smoke Song") &&
+        savedProject.segments?.[0]?.title === "Smoke Song Edited" &&
+        savedProject.analysis_snapshot?.waveform?.length > 0 &&
+        savedProject.settings?.whisper?.enabled === true,
+      "Autosave did not persist the guide, analysis, edit, and Whisper setting.",
+      savedProject
+    );
+    log("PROJECT_AUTOSAVE_OK", { revision: savedProject.revision, segmentCount: savedProject.segments.length });
 
     await runShortcutChecks(cdp);
 
@@ -1930,6 +2123,38 @@ function cleanup(processHandle, cdp) {
     const previewAfter = await videoState(cdp);
     assertPass(previewAfter && previewAfter.paused === true, "Short export preview did not stop after one pass.", { during: previewDuring, after: previewAfter });
     log("EXPORT_PREVIEW_OK", { during: previewDuring, after: previewAfter });
+
+    const transcriptionTerminal = await waitFor(
+      cdp,
+      `(async () => {
+        const baseUrl = await window.songcut.apiBaseUrl();
+        const jobs = await Promise.all(
+          ${JSON.stringify(backgroundTranscription)}.map(async (id) => {
+            const response = await fetch(baseUrl + "/jobs/" + id);
+            return response.ok ? response.json() : null;
+          })
+        );
+        const transcription = jobs.find((job) => job?.kind === "transcription");
+        return transcription && ["completed", "failed"].includes(transcription.status) ? transcription : false;
+      })()`,
+      240_000,
+      "background transcription completion"
+    );
+    assertPass(
+      transcriptionTerminal.status === "completed",
+      "Background transcription failed before export.",
+      transcriptionTerminal
+    );
+    const transcriptChunks = transcriptionTerminal.result?.transcripts?.flatMap((entry) => entry.chunks || []) || [];
+    assertPass(
+      transcriptChunks.every(
+        (chunk) => Number.isFinite(chunk.start) && Number.isFinite(chunk.end) && chunk.start >= 0 && chunk.end >= chunk.start
+      ),
+      "Background transcription returned invalid chunk bounds.",
+      transcriptChunks
+    );
+    log("BACKGROUND_TRANSCRIPTION_COMPLETED_OK", transcriptionTerminal);
+    log("BACKGROUND_TRANSCRIPTION_CHUNK_BOUNDS_OK", transcriptChunks);
 
     const exportClicked = await evaluate(
       cdp,

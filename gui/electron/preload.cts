@@ -16,6 +16,24 @@ contextBridge.exposeInMainWorld("songcut", {
   confirmClose: () => ipcRenderer.invoke("songcut:confirm-close") as Promise<void>,
   cancelClose: () => ipcRenderer.invoke("songcut:cancel-close") as Promise<void>,
   selectVideo: () => ipcRenderer.invoke("songcut:selectVideo") as Promise<string | null>,
+  openProject: () => ipcRenderer.invoke("songcut:openProject"),
+  loadProject: (projectPath: string) => ipcRenderer.invoke("songcut:loadProject", projectPath),
+  projectPathForVideo: (videoPath: string) => ipcRenderer.invoke("songcut:projectPathForVideo", videoPath) as Promise<string>,
+  saveProject: (projectPath: string, document: unknown) => ipcRenderer.invoke("songcut:saveProject", projectPath, document),
+  loadRecovery: () => ipcRenderer.invoke("songcut:loadRecovery"),
+  saveRecovery: (snapshot: unknown) => ipcRenderer.invoke("songcut:saveRecovery", snapshot) as Promise<void>,
+  clearRecovery: () => ipcRenderer.invoke("songcut:clearRecovery") as Promise<void>,
+  fingerprintSource: (filePath: string) => ipcRenderer.invoke("songcut:fingerprintSource", filePath),
+  findProjectSource: (projectPath: string, document: unknown) =>
+    ipcRenderer.invoke("songcut:findProjectSource", projectPath, document) as Promise<string | null>,
+  sourceIdentityMatches: (document: unknown, identity: unknown) =>
+    ipcRenderer.invoke("songcut:sourceIdentityMatches", document, identity) as Promise<boolean>,
+  selectRelinkSource: (expectedName: string) =>
+    ipcRenderer.invoke("songcut:selectRelinkSource", expectedName) as Promise<string | null>,
+  archiveRelinkedProject: (projectPath: string) =>
+    ipcRenderer.invoke("songcut:archiveRelinkedProject", projectPath) as Promise<string | null>,
+  archiveConflict: (filePath: string) => ipcRenderer.invoke("songcut:archiveConflict", filePath) as Promise<string>,
+  setWindowTitle: (title: string) => ipcRenderer.invoke("songcut:setWindowTitle", title) as Promise<void>,
   selectOutputDirectory: () => ipcRenderer.invoke("songcut:selectOutputDirectory") as Promise<string | null>,
   fileUrl: (filePath: string) => ipcRenderer.invoke("songcut:fileUrl", filePath) as Promise<string>,
   writeClipboard: (text: string) => clipboard.writeText(text),
