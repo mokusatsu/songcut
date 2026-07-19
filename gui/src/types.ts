@@ -73,11 +73,24 @@ export type AnalysisResult = {
 export type JobRecord = {
   id: string;
   kind: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   progress: number;
   message: string;
   result?: unknown;
   error?: string | null;
+};
+
+export type ScratchProxyResult = {
+  proxy_id: string;
+  source_path: string;
+  proxy_path: string;
+  codec: "aac";
+  profile: "LC";
+  sample_rate: number;
+  channels: number;
+  bit_rate: number;
+  encoder: "aac_mf" | "aac";
+  duration: number;
 };
 
 export type FfmpegCheckResult = {

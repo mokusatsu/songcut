@@ -51,6 +51,7 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "configure-scratch-preview" }
+  | { type: "set-scratch-audio-proxy-enabled"; enabled: boolean }
   | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
@@ -68,6 +69,7 @@ type SongcutMenuState = {
   playing: boolean;
   zoomIndex: number;
   waveformDisplayMode: WaveformDisplayMode;
+  scratchAudioProxyEnabled: boolean;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
 };
@@ -83,6 +85,7 @@ let menuState: SongcutMenuState = {
   playing: false,
   zoomIndex: 0,
   waveformDisplayMode: "rms",
+  scratchAudioProxyEnabled: true,
   analysisDevice: "auto",
   whisperDevice: "auto"
 };
@@ -182,6 +185,10 @@ ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuS
     ...nextState,
     zoomIndex: clampMenuZoom(nextState.zoomIndex ?? menuState.zoomIndex),
     waveformDisplayMode: normalizeWaveformDisplayMode(nextState.waveformDisplayMode ?? menuState.waveformDisplayMode),
+    scratchAudioProxyEnabled: normalizeMenuBoolean(
+      nextState.scratchAudioProxyEnabled,
+      menuState.scratchAudioProxyEnabled
+    ),
     analysisDevice: normalizeInferenceDevice(nextState.analysisDevice ?? menuState.analysisDevice),
     whisperDevice: normalizeInferenceDevice(nextState.whisperDevice ?? menuState.whisperDevice)
   };
@@ -332,6 +339,12 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       submenu: [
         { label: "Scratch Preview Duration...", click: send({ type: "configure-scratch-preview" }) },
         {
+          label: "Use Scratch Audio Proxy",
+          type: "checkbox",
+          checked: menuState.scratchAudioProxyEnabled,
+          click: (item) => sendMenuCommand({ type: "set-scratch-audio-proxy-enabled", enabled: item.checked })
+        },
+        {
           label: "Waveform Display",
           submenu: waveformDisplayModes.map((mode) => ({
             label: waveformDisplayModeLabel(mode),
@@ -415,6 +428,10 @@ function normalizeWaveformDisplayMode(value: unknown): WaveformDisplayMode {
   return typeof value === "string" && waveformDisplayModes.includes(value as WaveformDisplayMode)
     ? (value as WaveformDisplayMode)
     : "rms";
+}
+
+function normalizeMenuBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function waveformDisplayModeLabel(mode: WaveformDisplayMode) {

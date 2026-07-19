@@ -104,10 +104,11 @@ ffmpeg discovery:
     `Play End Boundary` for the selected segment. Their shortcuts are `A` and
     `D`.
 - `Export` provides `Export Movie` and `Export TS Text`.
-- `Settings` provides scratch-preview duration, a `Waveform Display` radio
-  submenu (`RMS`, `Peak Envelope`, `Peak + RMS`), `Prepare Whisper Model`,
-  inference-device selectors, and `ffmpeg Check`. Waveform display defaults to
-  `RMS` and persists in renderer local storage.
+- `Settings` provides scratch-preview duration, a checked-by-default
+  `Use Scratch Audio Proxy` toggle, a `Waveform Display` radio submenu (`RMS`,
+  `Peak Envelope`, `Peak + RMS`), `Prepare Whisper Model`, inference-device
+  selectors, and `ffmpeg Check`. Scratch proxy and waveform display settings
+  persist in renderer local storage.
 - `View` and `Window` retain standard Electron role-based items.
 - `Help` provides `About songcut`, `Open Repository`, and
   `Report Issue / Request Feature`. About uses the native Electron dialog and
@@ -235,6 +236,30 @@ ffmpeg discovery:
 - Dragging start/end only changes the segment export range in the GUI state.
 - Transcription text is not recalculated when the user edits start/end.
 
+## Scratch preview audio proxy
+
+- After loading an Opus movie, the API creates a scratch-only proxy in the
+  background. AAC and other source codecs continue to use their original media.
+- The proxy is M4A containing AAC-LC at 48 kHz, mono, and 64 kbit/s. FFmpeg uses
+  `aac_mf` when available and falls back to the native fast AAC encoder. The
+  process has below-normal Windows priority; the native fallback uses one
+  encoder thread.
+- While the proxy is queued, encoding, loading, or has failed, scratch preview
+  plays the original video audio. Once the proxy has loaded and completed an
+  initial seek, the next scratch request uses the proxy `<audio>` element. A
+  preview already in progress is never switched mid-sound.
+- Every new drag position stops the preceding scratch media before seeking and
+  starting the selected media. The visible video time remains the source of the
+  playback cursor even while proxy audio is active.
+- Turning `Settings > Use Scratch Audio Proxy` off cancels an unfinished job,
+  unloads and releases a completed proxy, and immediately restores original
+  audio for subsequent scratch requests. The setting defaults to on and is
+  stored as `songcut:scratch-audio-proxy-enabled`.
+- Loading another movie performs the same cancellation and release. Proxy files
+  live in a per-process temporary directory; normal API shutdown removes the
+  directory, and startup prunes abandoned session directories older than 24
+  hours.
+
 ## Playback controls
 
 Toolbar controls:
@@ -305,6 +330,13 @@ Current implementation state:
   - Starts first-run Whisper OpenVINO export/download.
 - `POST /videos/probe`
   - Returns duration, bitrate, and stream metadata.
+- `POST /scratch-proxy/jobs`
+  - Starts cancellable AAC scratch-proxy generation for one source path.
+- `DELETE /scratch-proxy/jobs/{job_id}`
+  - Cancels an unfinished scratch-proxy process and marks its job cancelled.
+- `DELETE /scratch-proxies/{proxy_id}`
+  - Releases a completed proxy and deletes its temporary file. Repeated or
+    unknown releases return `released: false`.
 - `POST /analysis/jobs`
   - Starts singing detection and optionally starts a background transcription
     job. The analysis result may include `transcription_job_id`.

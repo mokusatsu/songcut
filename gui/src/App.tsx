@@ -26,7 +26,23 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
-import { checkFfmpeg, probeVideo, startAnalysis, startExport, startWhisperDownload, waitForJob } from "@/lib/api";
+import {
+  cancelScratchProxy,
+  checkFfmpeg,
+  probeVideo,
+  releaseScratchProxy,
+  startAnalysis,
+  startExport,
+  startScratchProxy,
+  startWhisperDownload,
+  waitForJob
+} from "@/lib/api";
+import {
+  normalizeScratchAudioProxyEnabled,
+  scratchProxyStatusLabel,
+  selectScratchPreviewSource,
+  shouldCreateScratchProxy
+} from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
 import {
   buildWaveformPathSpecs,
@@ -35,11 +51,13 @@ import {
   selectWaveformLevel
 } from "@/lib/waveform";
 import type { AnalysisDevice, WhisperDevice } from "@/lib/api";
+import type { ScratchProxyState } from "@/lib/scratchProxy";
 import type {
   AnalysisResult,
   ExportCandidate,
   FfmpegCheckResult,
   JobRecord,
+  ScratchProxyResult,
   Segment,
   Transcript,
   VideoInfo,
@@ -58,6 +76,7 @@ const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
 const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
 const MAX_SCRATCH_PREVIEW_MILLISECONDS = 5000;
 const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
+const SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY = "songcut:scratch-audio-proxy-enabled";
 const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
 const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
 const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
@@ -83,10 +102,18 @@ type OutputItem = {
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const scratchProxyAudioRef = useRef<HTMLAudioElement>(null);
   const playbackStopAtRef = useRef<number | null>(null);
   const scratchPreviewTimeRef = useRef<number | null>(null);
   const scratchPreviewTimerRef = useRef<number | null>(null);
   const scratchPreviewGenerationRef = useRef(0);
+  const scratchPreviewMediaRef = useRef<HTMLMediaElement | null>(null);
+  const scratchProxyReadyRef = useRef(false);
+  const scratchProxyJobIdRef = useRef<string | null>(null);
+  const scratchProxyIdRef = useRef<string | null>(null);
+  const scratchProxyConfigurationGenerationRef = useRef(0);
+  const videoLoadGenerationRef = useRef(0);
+  const scratchAudioProxyEnabledRef = useRef(true);
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -107,6 +134,8 @@ export default function App() {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [scratchSettingsOpen, setScratchSettingsOpen] = useState(false);
+  const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
+  const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
   const [waveformDisplayMode, setWaveformDisplayMode] = useState<WaveformDisplayMode>(readWaveformDisplayMode);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
@@ -162,6 +191,15 @@ export default function App() {
       // Keep the setting for this session when persistent storage is unavailable.
     }
   }, [scratchPreviewMilliseconds]);
+
+  useEffect(() => {
+    scratchAudioProxyEnabledRef.current = scratchAudioProxyEnabled;
+    try {
+      window.localStorage.setItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY, String(scratchAudioProxyEnabled));
+    } catch {
+      // Keep the setting for this session when persistent storage is unavailable.
+    }
+  }, [scratchAudioProxyEnabled]);
 
   useEffect(() => {
     if (!boundarySecondsInput.trim()) return;
@@ -243,6 +281,18 @@ export default function App() {
   }, [apiBaseUrl]);
 
   useEffect(() => {
+    const generation = scratchProxyConfigurationGenerationRef.current + 1;
+    scratchProxyConfigurationGenerationRef.current = generation;
+    void configureScratchProxy(generation);
+    return () => {
+      if (scratchProxyConfigurationGenerationRef.current === generation) {
+        scratchProxyConfigurationGenerationRef.current += 1;
+      }
+      void disposeScratchProxy(apiBaseUrl);
+    };
+  }, [apiBaseUrl, videoPath, videoInfo?.audio.codec, scratchAudioProxyEnabled]);
+
+  useEffect(() => {
     return window.songcut.onCloseRequested(() => {
       if (runningJobRef.current) {
         setQuitConfirmOpen(true);
@@ -306,6 +356,8 @@ export default function App() {
       }
       scratchPreviewGenerationRef.current += 1;
       scratchPreviewTimeRef.current = null;
+      scratchPreviewMediaRef.current?.pause();
+      scratchPreviewMediaRef.current = null;
     };
   }, [videoUrl]);
 
@@ -335,8 +387,13 @@ export default function App() {
 
   async function loadVideo(filePath: string) {
     if (!apiBaseUrl) return;
+    const generation = videoLoadGenerationRef.current + 1;
+    videoLoadGenerationRef.current = generation;
     setMessage("Loading video.");
     const [info, fileUrl] = await Promise.all([probeVideo(apiBaseUrl, filePath), window.songcut.fileUrl(filePath)]);
+    if (videoLoadGenerationRef.current !== generation) return;
+    scratchProxyConfigurationGenerationRef.current += 1;
+    void disposeScratchProxy(apiBaseUrl);
     setVideoPath(filePath);
     setVideoUrl(fileUrl);
     setVideoInfo(info);
@@ -348,6 +405,78 @@ export default function App() {
     setTranscriptSegment(null);
     setCurrentTime(0);
     setMessage("Video loaded.");
+  }
+
+  async function configureScratchProxy(generation: number) {
+    await disposeScratchProxy(apiBaseUrl);
+    if (scratchProxyConfigurationGenerationRef.current !== generation) return;
+
+    if (!apiBaseUrl || !videoPath || !videoInfo) {
+      setScratchProxyState("idle");
+      return;
+    }
+    if (!scratchAudioProxyEnabled) {
+      setScratchProxyState("disabled");
+      return;
+    }
+    if (!shouldCreateScratchProxy(true, videoInfo.audio.codec)) {
+      setScratchProxyState("original");
+      return;
+    }
+
+    setScratchProxyState("preparing");
+    try {
+      const started = await startScratchProxy(apiBaseUrl, videoPath);
+      if (scratchProxyConfigurationGenerationRef.current !== generation) {
+        await cancelScratchProxy(apiBaseUrl, started.id).catch(() => undefined);
+        return;
+      }
+      scratchProxyJobIdRef.current = started.id;
+      const result = await waitForJob<ScratchProxyResult>(apiBaseUrl, started.id, () => undefined, 250);
+      if (scratchProxyJobIdRef.current === started.id) scratchProxyJobIdRef.current = null;
+      if (scratchProxyConfigurationGenerationRef.current !== generation) {
+        await releaseScratchProxy(apiBaseUrl, result.proxy_id).catch(() => undefined);
+        return;
+      }
+
+      scratchProxyIdRef.current = result.proxy_id;
+      setScratchProxyState("loading");
+      const proxyUrl = await window.songcut.fileUrl(result.proxy_path);
+      const proxyAudio = scratchProxyAudioRef.current;
+      if (!proxyAudio) throw new Error("Scratch proxy audio element is unavailable.");
+      await loadScratchProxyAudio(proxyAudio, proxyUrl);
+      if (scratchProxyConfigurationGenerationRef.current !== generation) {
+        await disposeScratchProxy(apiBaseUrl);
+        return;
+      }
+      scratchProxyReadyRef.current = true;
+      setScratchProxyState("ready");
+    } catch (error) {
+      if (scratchProxyConfigurationGenerationRef.current !== generation) return;
+      await disposeScratchProxy(apiBaseUrl);
+      if (scratchProxyConfigurationGenerationRef.current !== generation) return;
+      setScratchProxyState("failed");
+      setMessage(`Scratch proxy failed; using original audio: ${String(error)}`);
+    }
+  }
+
+  async function disposeScratchProxy(baseUrl: string) {
+    const proxyAudio = scratchProxyAudioRef.current;
+    if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
+    scratchProxyReadyRef.current = false;
+    if (proxyAudio) {
+      proxyAudio.pause();
+      proxyAudio.removeAttribute("src");
+      proxyAudio.load();
+    }
+
+    const jobId = scratchProxyJobIdRef.current;
+    const proxyId = scratchProxyIdRef.current;
+    scratchProxyJobIdRef.current = null;
+    scratchProxyIdRef.current = null;
+    if (!baseUrl) return;
+    if (jobId) await cancelScratchProxy(baseUrl, jobId).catch(() => undefined);
+    if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
   }
 
   async function selectVideo() {
@@ -504,10 +633,14 @@ export default function App() {
     }
     const target = scratchPreviewTimeRef.current;
     scratchPreviewTimeRef.current = null;
+    const activeMedia = scratchPreviewMediaRef.current;
+    scratchPreviewMediaRef.current = null;
+    activeMedia?.pause();
+    if (activeMedia) activeMedia.dataset.scratchPreviewActive = "false";
+    if (activeMedia !== scratchProxyAudioRef.current) scratchProxyAudioRef.current?.pause();
     if (target === null) return;
     const video = videoRef.current;
     if (!video) return;
-    video.pause();
     if (restorePosition) {
       video.currentTime = target;
       setCurrentTime(target);
@@ -571,7 +704,23 @@ export default function App() {
     scratchPreviewTimeRef.current = target;
     video.currentTime = target;
     setCurrentTime(target);
-    void video
+    const proxyAudio = scratchProxyAudioRef.current;
+    const previewSource = selectScratchPreviewSource(
+      scratchAudioProxyEnabledRef.current,
+      scratchProxyReadyRef.current,
+      Boolean(proxyAudio)
+    );
+    const media = previewSource === "proxy" && proxyAudio ? proxyAudio : video;
+    scratchPreviewMediaRef.current = media;
+    video.dataset.scratchPreviewActive = media === video ? "true" : "false";
+    if (proxyAudio) proxyAudio.dataset.scratchPreviewActive = media === proxyAudio ? "true" : "false";
+    if (proxyAudio && media === proxyAudio) {
+      proxyAudio.volume = video.volume;
+      proxyAudio.muted = video.muted;
+      proxyAudio.playbackRate = video.playbackRate;
+      proxyAudio.currentTime = clampMediaTime(proxyAudio, target);
+    }
+    void media
       .play()
       .then(() => {
         if (scratchPreviewGenerationRef.current !== generation || scratchPreviewTimeRef.current === null) return;
@@ -666,6 +815,7 @@ export default function App() {
       playing,
       zoomIndex,
       waveformDisplayMode,
+      scratchAudioProxyEnabled,
       analysisDevice,
       whisperDevice
     });
@@ -680,6 +830,7 @@ export default function App() {
     playing,
     zoomIndex,
     waveformDisplayMode,
+    scratchAudioProxyEnabled,
     analysisDevice,
     whisperDevice
   ]);
@@ -741,6 +892,10 @@ export default function App() {
         case "configure-scratch-preview":
           setScratchSettingsOpen(true);
           break;
+        case "set-scratch-audio-proxy-enabled":
+          setScratchAudioProxyEnabled(command.enabled);
+          setMessage(`Scratch audio proxy ${command.enabled ? "enabled" : "disabled"}.`);
+          break;
         case "set-waveform-display-mode":
           setWaveformDisplayMode(command.mode);
           setMessage(`Waveform display set to ${waveformDisplayModeLabel(command.mode)}.`);
@@ -761,7 +916,17 @@ export default function App() {
           break;
       }
     });
-  }, [apiBaseUrl, videoUrl, selectedSegment?.id, segments, checkedCount, currentTime, boundarySecondsInput, boundaryNudgeSecondsInput, zoomIndex]);
+  }, [
+    apiBaseUrl,
+    videoUrl,
+    selectedSegment?.id,
+    segments,
+    checkedCount,
+    currentTime,
+    boundarySecondsInput,
+    boundaryNudgeSecondsInput,
+    zoomIndex
+  ]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -828,6 +993,7 @@ export default function App() {
       onDragLeave={() => setDropActive(false)}
       onDrop={onDrop}
     >
+      <audio ref={scratchProxyAudioRef} preload="auto" hidden data-scratch-proxy-state={scratchProxyState} />
       <section className="video-pane">
         {videoUrl ? (
           <video ref={videoRef} src={videoUrl} className="video" controls={false} />
@@ -911,7 +1077,7 @@ export default function App() {
         </header>
         <div className="guide-row">
           <Textarea value={guideText} onChange={(event) => setGuideText(event.target.value)} placeholder="Paste timestamp comment here" />
-          <StatusPanel job={activeJob} message={message} videoInfo={videoInfo} />
+          <StatusPanel job={activeJob} message={message} videoInfo={videoInfo} scratchProxyState={scratchProxyState} />
         </div>
         <TimelineStack
           duration={duration}
@@ -1170,7 +1336,17 @@ function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void
   );
 }
 
-function StatusPanel({ job, message, videoInfo }: { job: JobRecord | null; message: string; videoInfo: VideoInfo | null }) {
+function StatusPanel({
+  job,
+  message,
+  videoInfo,
+  scratchProxyState
+}: {
+  job: JobRecord | null;
+  message: string;
+  videoInfo: VideoInfo | null;
+  scratchProxyState: ScratchProxyState;
+}) {
   return (
     <aside className="status-panel">
       <div className="status-main">
@@ -1179,9 +1355,14 @@ function StatusPanel({ job, message, videoInfo }: { job: JobRecord | null; messa
       </div>
       {job ? <progress value={job.progress} max={1} /> : null}
       {videoInfo ? (
-        <div className="meta-line">
-          {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
-        </div>
+        <>
+          <div className="meta-line">
+            {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
+          </div>
+          <div className="meta-line" data-scratch-proxy-status={scratchProxyState}>
+            {scratchProxyStatusLabel(scratchProxyState)}
+          </div>
+        </>
       ) : null}
     </aside>
   );
@@ -1954,6 +2135,67 @@ function readScratchPreviewMilliseconds() {
   } catch {
     return DEFAULT_SCRATCH_PREVIEW_MILLISECONDS;
   }
+}
+
+function readScratchAudioProxyEnabled() {
+  try {
+    return normalizeScratchAudioProxyEnabled(window.localStorage.getItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY));
+  } catch {
+    return true;
+  }
+}
+
+function clampMediaTime(media: HTMLMediaElement, time: number) {
+  const maximum = Number.isFinite(media.duration) && media.duration > 0 ? Math.max(0, media.duration - 0.001) : time;
+  return clamp(time, 0, maximum);
+}
+
+async function loadScratchProxyAudio(audio: HTMLAudioElement, url: string) {
+  audio.pause();
+  audio.preload = "auto";
+  audio.src = url;
+  audio.load();
+  await waitForMediaReady(audio, 10_000);
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+    throw new Error("Scratch proxy has an invalid duration.");
+  }
+
+  const warmPosition = Math.min(0.01, audio.duration / 2);
+  if (warmPosition > 0) {
+    const seeked = waitForMediaEvent(audio, "seeked", 5_000);
+    audio.currentTime = warmPosition;
+    await seeked;
+    audio.currentTime = 0;
+  }
+}
+
+function waitForMediaReady(media: HTMLMediaElement, timeoutMilliseconds: number) {
+  if (media.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
+  return waitForMediaEvent(media, "loadedmetadata", timeoutMilliseconds);
+}
+
+function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" | "seeked", timeoutMilliseconds: number) {
+  return new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      media.removeEventListener(eventName, onEvent);
+      media.removeEventListener("error", onError);
+    };
+    const onEvent = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(media.error?.message || "Scratch proxy audio could not be loaded."));
+    };
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for scratch proxy ${eventName}.`));
+    }, timeoutMilliseconds);
+    media.addEventListener(eventName, onEvent, { once: true });
+    media.addEventListener("error", onError, { once: true });
+  });
 }
 
 function readBoundarySecondsInput() {

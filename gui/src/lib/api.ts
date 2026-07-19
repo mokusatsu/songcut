@@ -1,4 +1,4 @@
-import type { AnalysisResult, FfmpegCheckResult, JobRecord, VideoInfo } from "@/types";
+import type { AnalysisResult, FfmpegCheckResult, JobRecord, ScratchProxyResult, VideoInfo } from "@/types";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -18,6 +18,12 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
 
 export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`);
+  if (!response.ok) throw new Error(await response.text());
+  return (await response.json()) as T;
+}
+
+export async function deleteJson<T>(baseUrl: string, path: string): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, { method: "DELETE" });
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
 }
@@ -61,19 +67,35 @@ export function startExport(baseUrl: string, sourcePath: string, outputDir: stri
   });
 }
 
+export function startScratchProxy(baseUrl: string, sourcePath: string) {
+  return postJson<JobRecord>(baseUrl, "/scratch-proxy/jobs", { path: sourcePath });
+}
+
+export function cancelScratchProxy(baseUrl: string, jobId: string) {
+  return deleteJson<JobRecord>(baseUrl, `/scratch-proxy/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function releaseScratchProxy(baseUrl: string, proxyId: string) {
+  return deleteJson<{ released: boolean }>(baseUrl, `/scratch-proxies/${encodeURIComponent(proxyId)}`);
+}
+
 export async function waitForJob<T = unknown>(
   baseUrl: string,
   id: string,
-  onUpdate: (job: JobRecord) => void
+  onUpdate: (job: JobRecord) => void,
+  pollIntervalMilliseconds = 800
 ): Promise<T> {
   for (;;) {
     const job = await getJson<JobRecord>(baseUrl, `/jobs/${id}`);
     onUpdate(job);
     if (job.status === "completed") return job.result as T;
     if (job.status === "failed") throw new Error(job.error || "job failed");
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (job.status === "cancelled") throw new Error("job cancelled");
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));
   }
 }
+
+export type { ScratchProxyResult };
 
 export function isAnalysisResult(value: unknown): value is AnalysisResult {
   return Boolean(value && typeof value === "object" && Array.isArray((value as AnalysisResult).segments));

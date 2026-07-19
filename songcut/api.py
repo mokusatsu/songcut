@@ -13,6 +13,7 @@ from typing import Any
 
 from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg
 from .gui_pipeline import analyze_for_gui, probe_video
+from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
 from .smart_export import export_smart_clip
 from .transcription import (
     WHISPER_MODEL_ID,
@@ -61,6 +62,10 @@ class ExportRequest(BaseModel):
     timestamp_comment_text: str = ""
 
 
+class ScratchProxyRequest(BaseModel):
+    path: str
+
+
 class JobRecord(BaseModel):
     id: str
     kind: str
@@ -84,6 +89,8 @@ app.add_middleware(
 
 _jobs: dict[str, JobRecord] = {}
 _jobs_lock = threading.Lock()
+_job_cancel_events: dict[str, threading.Event] = {}
+_scratch_proxy_manager = ScratchProxyManager()
 FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html"
 
 
@@ -153,6 +160,38 @@ def create_export_job(request: ExportRequest) -> JobRecord:
     return start_job("export", lambda job_id: _export_job(job_id, request))
 
 
+@app.post("/scratch-proxy/jobs")
+def create_scratch_proxy_job(request: ScratchProxyRequest) -> JobRecord:
+    require_file(request.path)
+    cancel_event = threading.Event()
+    return start_job(
+        "scratch-proxy",
+        lambda job_id: _scratch_proxy_job(job_id, request, cancel_event),
+        cancel_event=cancel_event,
+    )
+
+
+@app.delete("/scratch-proxy/jobs/{job_id}")
+def cancel_scratch_proxy_job(job_id: str) -> JobRecord:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        cancel_event = _job_cancel_events.get(job_id)
+    if not job or job.kind != "scratch-proxy":
+        raise HTTPException(status_code=404, detail="scratch proxy job not found")
+    if job.status in {"completed", "failed", "cancelled"}:
+        return job
+    if cancel_event is not None:
+        cancel_event.set()
+    _scratch_proxy_manager.cancel(job_id)
+    update_job(job_id, status="cancelled", progress=1.0, message="Scratch proxy generation cancelled.")
+    return get_job(job_id)
+
+
+@app.delete("/scratch-proxies/{proxy_id}")
+def release_scratch_proxy(proxy_id: str) -> dict[str, bool]:
+    return {"released": _scratch_proxy_manager.release(proxy_id)}
+
+
 @app.get("/jobs/{job_id}")
 def get_job(job_id: str) -> JobRecord:
     with _jobs_lock:
@@ -162,12 +201,14 @@ def get_job(job_id: str) -> JobRecord:
     return job
 
 
-def start_job(kind: str, target) -> JobRecord:
+def start_job(kind: str, target, *, cancel_event: threading.Event | None = None) -> JobRecord:
     job_id = str(uuid.uuid4())
     now = time.time()
     record = JobRecord(id=job_id, kind=kind, status="queued", created_at=now, updated_at=now)
     with _jobs_lock:
         _jobs[job_id] = record
+        if cancel_event is not None:
+            _job_cancel_events[job_id] = cancel_event
     thread = threading.Thread(target=target, args=(job_id,), daemon=True)
     thread.start()
     return record
@@ -180,6 +221,18 @@ def update_job(job_id: str, **changes: Any) -> None:
         data.update(changes)
         data["updated_at"] = time.time()
         _jobs[job_id] = JobRecord(**data)
+
+
+def update_job_unless_cancelled(job_id: str, cancel_event: threading.Event, **changes: Any) -> bool:
+    with _jobs_lock:
+        current = _jobs[job_id]
+        if cancel_event.is_set() or current.status == "cancelled":
+            return False
+        data = current.model_dump()
+        data.update(changes)
+        data["updated_at"] = time.time()
+        _jobs[job_id] = JobRecord(**data)
+        return True
 
 
 def fail_job(job_id: str, exc: Exception) -> None:
@@ -333,6 +386,59 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
         update_job(job_id, status="completed", progress=1.0, message="Export complete.", result=result)
     except Exception as exc:
         fail_job(job_id, exc)
+
+
+def _scratch_proxy_job(job_id: str, request: ScratchProxyRequest, cancel_event: threading.Event) -> None:
+    try:
+        if not update_job_unless_cancelled(
+            job_id,
+            cancel_event,
+            status="running",
+            progress=0.01,
+            message="Preparing AAC scratch proxy.",
+        ):
+            raise ScratchProxyCancelled("scratch proxy generation cancelled")
+        source = require_file(request.path)
+        ffmpeg = find_ffmpeg()
+        duration = probe_video(ffmpeg.ffprobe, source)["duration"]
+
+        def on_progress(progress: float, message: str) -> None:
+            update_job_unless_cancelled(
+                job_id,
+                cancel_event,
+                status="running",
+                progress=max(0.01, progress),
+                message=message,
+            )
+
+        result = _scratch_proxy_manager.create(
+            job_id,
+            ffmpeg,
+            source,
+            source_duration=float(duration),
+            cancel_event=cancel_event,
+            on_progress=on_progress,
+        )
+        if not update_job_unless_cancelled(
+            job_id,
+            cancel_event,
+            status="completed",
+            progress=1.0,
+            message="AAC scratch proxy ready.",
+            result=result,
+        ):
+            _scratch_proxy_manager.release(str(result["proxy_id"]))
+            raise ScratchProxyCancelled("scratch proxy generation cancelled")
+    except ScratchProxyCancelled:
+        update_job(job_id, status="cancelled", progress=1.0, message="Scratch proxy generation cancelled.")
+    except Exception as exc:
+        if cancel_event.is_set():
+            update_job(job_id, status="cancelled", progress=1.0, message="Scratch proxy generation cancelled.")
+        else:
+            fail_job(job_id, exc)
+    finally:
+        with _jobs_lock:
+            _job_cancel_events.pop(job_id, None)
 
 
 def require_file(path: str) -> Path:

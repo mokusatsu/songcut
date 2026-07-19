@@ -23,6 +23,7 @@ type SongcutMenuCommand =
   | { type: "export-movie" }
   | { type: "export-ts-text" }
   | { type: "configure-scratch-preview" }
+  | { type: "set-scratch-audio-proxy-enabled"; enabled: boolean }
   | { type: "set-waveform-display-mode"; mode: WaveformDisplayMode }
   | { type: "prepare-whisper-model" }
   | { type: "set-analysis-device"; device: AnalysisDevice }
@@ -40,6 +41,7 @@ type SongcutMenuState = {
   playing: boolean;
   zoomIndex: number;
   waveformDisplayMode: WaveformDisplayMode;
+  scratchAudioProxyEnabled: boolean;
   analysisDevice: AnalysisDevice;
   whisperDevice: WhisperDevice;
 };

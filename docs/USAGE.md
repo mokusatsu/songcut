@@ -71,6 +71,17 @@ the application starts.
 
 Use the zoom controls to zoom the timeline in or out.
 
+## Scratch Audio Proxy
+
+For movies with Opus audio, songcut prepares a fast-seeking AAC scratch proxy
+in the background after **Load**. Scratch preview continues to use the original
+audio until the proxy is ready, then uses the proxy from the next drag position.
+Normal playback and exported clips always use the loaded movie.
+
+The proxy is enabled by default. Disable **Settings > Use Scratch Audio Proxy**
+when scratch preview must use the source audio without lossy conversion. The
+choice is restored the next time the application starts.
+
 ## Playback Controls
 
 Use the standard video playback controls to play, pause, or return to the start.
