@@ -110,7 +110,9 @@ python -m songcut.cli export out\segments.json --source path\to\input.mp4 --out 
 
 Guide lines may use either `80:45 Title` or `1:20:45 Title`. A line with one
 timestamp starts exactly at the guide timestamp and uses the end of the nearby
-detected segment. A line with multiple timestamps, such as
+detected segment. If that detected end is later than the first timestamp on the
+next guide line, the next timestamp is used as the end instead. A line with
+multiple timestamps, such as
 `0:10:00 Title 0:13:30`, is treated as the explicit export range. Output
 filenames are derived from the guide title text after removing timestamp tags.
 

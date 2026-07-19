@@ -137,7 +137,7 @@ def build_guided_exports(
 ) -> list[GuidedExport]:
     exports: list[GuidedExport] = []
     used_stems: set[str] = set()
-    for entry in entries:
+    for entry_position, entry in enumerate(entries):
         if entry.is_explicit_range:
             start = float(entry.timestamps[0])
             end = float(entry.timestamps[-1])
@@ -149,6 +149,10 @@ def build_guided_exports(
             start, end, distance = find_nearby_segment(
                 float(entry.timestamps[0]), segment_items, max_distance_seconds=max_distance_seconds
             )
+            if entry_position + 1 < len(entries):
+                next_timestamp = float(entries[entry_position + 1].timestamps[0])
+                if start < next_timestamp < end:
+                    end = next_timestamp
             match_source = "guide-nearby-segment"
 
         base = safe_filename_stem(entry.title, fallback=f"clip-{entry.index:03d}")

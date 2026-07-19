@@ -65,6 +65,57 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(exports[0].end, 181.5)
         self.assertEqual(exports[0].distance_seconds, 67.5)
 
+    def test_single_timestamp_end_is_capped_at_next_guide_timestamp(self) -> None:
+        entries = parse_guide_text("0:00:10 Song A\n0:00:20 Song B\n")
+        exports = build_guided_exports(
+            entries,
+            [{"start": 5.0, "end": 40.0}],
+            max_distance_seconds=90,
+        )
+
+        self.assertEqual(exports[0].start, 10.0)
+        self.assertEqual(exports[0].end, 20.0)
+        self.assertEqual(exports[0].match_source, "guide-nearby-segment")
+        self.assertEqual(exports[1].start, 20.0)
+        self.assertEqual(exports[1].end, 40.0)
+
+    def test_single_timestamp_end_at_next_guide_timestamp_is_not_shortened(self) -> None:
+        entries = parse_guide_text("0:00:10 Song A\n0:00:20 Song B\n")
+        exports = build_guided_exports(
+            entries,
+            [
+                {"start": 5.0, "end": 20.0},
+                {"start": 20.0, "end": 40.0},
+            ],
+            max_distance_seconds=90,
+        )
+
+        self.assertEqual(exports[0].end, 20.0)
+        self.assertEqual(exports[1].end, 40.0)
+
+    def test_explicit_range_is_not_capped_at_next_guide_timestamp(self) -> None:
+        entries = parse_guide_text("0:00:10 Song A 0:00:30\n0:00:20 Song B\n")
+        exports = build_guided_exports(
+            entries,
+            [{"start": 20.0, "end": 40.0}],
+            max_distance_seconds=90,
+        )
+
+        self.assertEqual(exports[0].start, 10.0)
+        self.assertEqual(exports[0].end, 30.0)
+        self.assertEqual(exports[0].match_source, "guide-range")
+
+    def test_non_increasing_next_guide_timestamp_does_not_create_invalid_range(self) -> None:
+        entries = parse_guide_text("0:00:20 Song A\n0:00:10 Song B\n")
+        exports = build_guided_exports(
+            entries,
+            [{"start": 5.0, "end": 40.0}],
+            max_distance_seconds=90,
+        )
+
+        self.assertEqual(exports[0].start, 20.0)
+        self.assertEqual(exports[0].end, 40.0)
+
     def test_safe_filename_stem_removes_windows_reserved_characters(self) -> None:
         self.assertEqual(safe_filename_stem('A/B:C*D?"E'), "A - BCDE")
 
@@ -117,6 +168,29 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(exports[0]["filename_stem"], "01_Smoke Song")
         self.assertEqual(exports[0]["start"], segments[0]["start"])
         self.assertEqual(exports[0]["end"], segments[0]["end"])
+
+    def test_gui_segments_and_exports_share_next_guide_timestamp_cap(self) -> None:
+        detected = [
+            {
+                "id": "seg-001",
+                "start": 5.0,
+                "end": 40.0,
+                "start_timecode": "0:05",
+                "end_timecode": "0:40",
+                "duration": 35.0,
+            }
+        ]
+
+        segments, exports, guide_applied = build_gui_segments_and_exports(
+            "0:00:10 Song A\n0:00:20 Song B\n",
+            detected,
+        )
+
+        self.assertTrue(guide_applied)
+        self.assertEqual(segments[0]["end"], 20.0)
+        self.assertEqual(exports[0]["end"], 20.0)
+        self.assertEqual(segments[1]["end"], 40.0)
+        self.assertEqual(exports[1]["end"], 40.0)
 
 
 if __name__ == "__main__":
