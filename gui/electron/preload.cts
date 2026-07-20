@@ -2,6 +2,8 @@ import { clipboard, contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("songcut", {
   apiBaseUrl: () => ipcRenderer.invoke("songcut:apiBaseUrl") as Promise<string>,
+  getLocaleSettings: () => ipcRenderer.invoke("songcut:get-locale-settings"),
+  setLocalePreference: (preference: unknown) => ipcRenderer.invoke("songcut:set-locale-preference", preference),
   onCloseRequested: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("songcut:close-requested", listener);
@@ -15,7 +17,8 @@ contextBridge.exposeInMainWorld("songcut", {
   ...(process.env.SONGCUT_E2E_USER_DATA_DIR
     ? {
         sendMenuCommandForTest: (command: unknown) => ipcRenderer.send("songcut:e2e-menu-command", command),
-        getSegmentMenuStructureForTest: () => ipcRenderer.invoke("songcut:e2e-menu-structure")
+        getSegmentMenuStructureForTest: () => ipcRenderer.invoke("songcut:e2e-menu-structure"),
+        getMenuItemForTest: (id: string) => ipcRenderer.invoke("songcut:e2e-menu-item", id)
       }
     : {}),
   updateMenuState: (state: unknown) => ipcRenderer.send("songcut:update-menu-state", state),

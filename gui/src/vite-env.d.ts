@@ -4,6 +4,8 @@ type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
 type WhisperModelKey = "tiny" | "base" | "small";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
+type UiLanguage = "en" | "ja";
+type UiLanguagePreference = "system" | UiLanguage;
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -55,15 +57,26 @@ type SongcutMenuState = {
   whisperModel: WhisperModelKey;
 };
 
-interface Window {
-  songcut: {
-    apiBaseUrl(): Promise<string>;
+  interface Window {
+    songcut: {
+      apiBaseUrl(): Promise<string>;
+      getLocaleSettings(): Promise<{ language: UiLanguage; preference: UiLanguagePreference }>;
+      setLocalePreference(preference: UiLanguagePreference): Promise<{
+        preference: UiLanguagePreference;
+        restartRequired: boolean;
+      }>;
     onCloseRequested(callback: () => void): () => void;
     onMenuCommand(callback: (command: SongcutMenuCommand) => void): () => void;
     sendMenuCommandForTest?(command: SongcutMenuCommand): void;
     getSegmentMenuStructureForTest?(): Promise<
-      Array<{ label: string; type: string; enabled: boolean; hasSubmenu: boolean }> | null
+      Array<{ id: string; label: string; type: string; enabled: boolean; hasSubmenu: boolean }> | null
     >;
+    getMenuItemForTest?(id: string): Promise<{
+      id: string;
+      label: string;
+      accelerator: string | null;
+      enabled: boolean;
+    } | null>;
     updateMenuState(state: SongcutMenuState): void;
     confirmClose(): Promise<void>;
     cancelClose(): Promise<void>;

@@ -152,8 +152,9 @@ ffmpeg discovery:
   and `After` review panes displayed side by side. Each comparison pane uses its
   own Shadcn/Radix `ScrollArea`.
 - `Export` provides `Export Movie` and `Export TS Text`.
-- `Settings` contains one `Settings...` command with a literal `Ctrl+,` label
-  that opens the same
+- `Settings` contains one `Settings...` command with Electron's native
+  `CommandOrControl+,` accelerator. Electron formats the displayed shortcut for
+  the active application locale and opens the same
   Settings dialog as the toolbar Settings button.
 - The Settings dialog contains scratch-preview duration, a checked-by-default
   `Use Scratch Audio Proxy` toggle, waveform display, singing-analysis device,
@@ -162,6 +163,11 @@ ffmpeg discovery:
   storage; analysis, export filename, and Whisper settings are project settings.
   The settings body uses the shared Shadcn/Radix `ScrollArea`, while its header
   and action row remain fixed outside the scrolling viewport.
+- Display language is an application-wide preference with `System default`,
+  `English`, and `Japanese` choices. It is stored outside `.songcut` projects
+  and applies on the next launch so Electron native UI and the renderer use the
+  same locale. Japanese UI shows the complete language-settings block
+  bilingually with English first; English UI shows it in English only.
 - `View` and `Window` retain standard Electron role-based items.
 - `Help` provides `About songcut`, `Open Repository`, and
   `Report Issue / Request Feature`. About uses the native Electron dialog and
@@ -465,7 +471,6 @@ Current implementation state:
 
 ## Open questions for later UX polish
 
-- Whether GUI labels should be Japanese, English, or switchable.
 - Whether guide-derived export candidates should be editable separately from
   detected segment rows.
 - Whether the output dialog should allow final per-item checkbox changes.

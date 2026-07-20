@@ -28,6 +28,7 @@ fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(outputDir, { recursive: true });
 fs.rmSync(e2eUserDataDir, { recursive: true, force: true });
 fs.mkdirSync(e2eUserDataDir, { recursive: true });
+fs.writeFileSync(path.join(e2eUserDataDir, "app-preferences.json"), `${JSON.stringify({ uiLanguage: "en" }, null, 2)}\n`);
 fs.writeFileSync(logPath, "");
 
 function log(message, value) {
@@ -77,10 +78,10 @@ function ensureTestVideo() {
   }
 }
 
-async function getPage() {
+async function getPage(debugPort = port) {
   for (let index = 0; index < 80; index += 1) {
     try {
-      const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+      const pages = await fetch(`http://127.0.0.1:${debugPort}/json/list`).then((response) => response.json());
       const page = pages.find((item) => item.type === "page");
       if (page) return page;
     } catch {
@@ -1334,6 +1335,10 @@ function cleanup(processHandle, cdp) {
 
 (async () => {
   ensureTestVideo();
+  for (const localeFile of ["en-US.pak", "ja.pak"]) {
+    const localePath = path.join(root, "electron", "locales", localeFile);
+    if (!fs.existsSync(localePath)) throw new Error(`Electron locale is missing: ${localePath}`);
+  }
   const env = {
     ...process.env,
     SONGCUT_E2E_VIDEO: input,
@@ -1403,28 +1408,28 @@ function cleanup(processHandle, cdp) {
       initial
     );
     const segmentMenuStructure = await getSegmentMenuStructureForTest(cdp);
-    const expectedSegmentMenuLabels = [
-      "-- Segment Selection --",
-      "Previous Segment",
-      "Next Segment",
-      "-- Segment Management --",
-      "New Segment",
-      "Remove Segment...",
-      "Remove All Unchecked Segments...",
-      "Sort Segments...",
-      "-- Export Selection --",
-      "Check All",
-      "Uncheck All",
-      "Invert Selection"
+    const expectedSegmentMenuIds = [
+      "segment.selection-heading",
+      "segment.previous",
+      "segment.next",
+      "segment.management-heading",
+      "segment.new",
+      "segment.remove",
+      "segment.remove-unchecked",
+      "segment.sort",
+      "segment.export-heading",
+      "segment.check-all",
+      "segment.uncheck-all",
+      "segment.invert"
     ];
     assertPass(
       Array.isArray(segmentMenuStructure) &&
-        JSON.stringify(segmentMenuStructure.filter((item) => item.type !== "separator").map((item) => item.label)) ===
-          JSON.stringify(expectedSegmentMenuLabels) &&
+        JSON.stringify(segmentMenuStructure.filter((item) => item.type !== "separator").map((item) => item.id)) ===
+          JSON.stringify(expectedSegmentMenuIds) &&
         segmentMenuStructure.filter((item) => item.type === "separator").length === 2 &&
         segmentMenuStructure.every((item) => !item.hasSubmenu) &&
         segmentMenuStructure
-          .filter((item) => item.label?.startsWith("-- "))
+          .filter((item) => item.id?.endsWith("heading"))
           .every((item) => item.enabled === false),
       "The Segment menu is not a flat, headed menu like Edit.",
       segmentMenuStructure
@@ -1671,14 +1676,20 @@ function cleanup(processHandle, cdp) {
       "Whisper settings remained resident after closing Settings."
     );
     log("WHISPER_SETTINGS_NON_RESIDENT_OK");
-    await dispatchInputKey(cdp, ",", "Comma", 188, { modifiers: 2 });
+    const settingsMenuItem = await evaluate(cdp, `window.songcut.getMenuItemForTest("settings.open")`);
+    assertPass(
+      settingsMenuItem?.accelerator === "CommandOrControl+,",
+      "Settings does not use Electron's native CommandOrControl+, accelerator.",
+      settingsMenuItem
+    );
+    await evaluate(cdp, `window.songcut.sendMenuCommandForTest({ type: "open-settings" }); true`);
     await waitFor(
       cdp,
       `document.querySelector('.dialog[aria-label="Settings"]') ? true : false`,
       5000,
       "Ctrl+, Settings shortcut"
     );
-    log("SETTINGS_CTRL_COMMA_SHORTCUT_OK");
+    log("SETTINGS_CTRL_COMMA_SHORTCUT_OK", settingsMenuItem);
     await clickButton(cdp, "Done");
     await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "Settings shortcut dialog close");
 
@@ -2509,6 +2520,13 @@ function cleanup(processHandle, cdp) {
     log("BACKGROUND_TRANSCRIPTION_COMPLETED_OK", transcriptionTerminal);
     log("BACKGROUND_TRANSCRIPTION_CHUNK_BOUNDS_OK", transcriptChunks);
 
+    await waitFor(
+      cdp,
+      `document.body.innerText.includes("Transcription complete.")`,
+      10_000,
+      "renderer transcription completion"
+    );
+
     const exportClicked = await evaluate(
       cdp,
       `(() => {
@@ -2527,7 +2545,7 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const text = document.querySelector(".dialog")?.innerText || "";
-        return text.includes("Export Progress") && text.includes("Smart rendering") ? text : false;
+        return text.includes("Export Progress") && text.includes("Smart-render clips") ? text : false;
       })()`,
       15_000,
       "export progress dialog"
@@ -2596,6 +2614,47 @@ function cleanup(processHandle, cdp) {
     log("E2E_OK");
   } finally {
     cleanup(processHandle, cdp);
+  }
+
+  await sleep(750);
+  fs.writeFileSync(path.join(e2eUserDataDir, "app-preferences.json"), `${JSON.stringify({ uiLanguage: "ja" }, null, 2)}\n`);
+  const japanesePort = port + 1;
+  const japaneseProcess = spawn(
+    path.join(root, "songcut.exe"),
+    [`--remote-debugging-port=${japanesePort}`],
+    { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }
+  );
+  let japaneseCdp;
+  try {
+    const japanesePage = await getPage(japanesePort);
+    japaneseCdp = await connect(japanesePage.webSocketDebuggerUrl);
+    await japaneseCdp.send("Runtime.enable");
+    await waitFor(
+      japaneseCdp,
+      `document.body.innerText.includes("読み込む") && document.body.innerText.includes("設定")`,
+      30_000,
+      "Japanese initial render"
+    );
+    await clickButton(japaneseCdp, "設定");
+    const languageSettings = await waitFor(
+      japaneseCdp,
+      `(() => {
+        const dialog = document.querySelector('.dialog[aria-label="設定"]');
+        if (!dialog) return false;
+        const options = [...dialog.querySelectorAll('#ui-language option')].map((option) => option.textContent.trim());
+        const text = dialog.innerText;
+        return text.includes("Language / 言語") &&
+          text.includes("Changes apply the next time songcut starts. / 変更は次回の songcut 起動時に適用されます。") &&
+          JSON.stringify(options) === JSON.stringify(["System default / システムの設定", "English / 英語", "Japanese / 日本語"])
+          ? { text, options }
+          : false;
+      })()`,
+      10_000,
+      "Japanese bilingual language settings"
+    );
+    log("JAPANESE_LOCALE_OK", languageSettings);
+  } finally {
+    cleanup(japaneseProcess, japaneseCdp);
   }
 })().catch((error) => {
   log("E2E_FAIL", { message: error.message, stack: error.stack });

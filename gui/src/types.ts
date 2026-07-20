@@ -40,6 +40,8 @@ export type WaveformUpdate = {
   status: JobRecord["status"];
   progress: number;
   message: string;
+  message_code?: string;
+  message_args?: Record<string, string | number>;
   error: string | null;
   cursor: number;
   points: WaveformPoint[];
@@ -120,6 +122,8 @@ export type JobRecord = {
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   progress: number;
   message: string;
+  message_code?: string;
+  message_args?: Record<string, string | number>;
   result?: unknown;
   error?: string | null;
   created_at: number;

@@ -317,6 +317,16 @@ $AppTarget = Join-Path $PackageRoot "app"
 New-Item -ItemType Directory -Force -Path $AppTarget | Out-Null
 Copy-Item -Path (Join-Path $GuiRoot "dist") -Destination (Join-Path $AppTarget "dist") -Recurse
 Copy-Item -Path (Join-Path $GuiRoot "dist-electron") -Destination (Join-Path $AppTarget "dist-electron") -Recurse
+$AppNodeModules = Join-Path $AppTarget "node_modules"
+foreach ($RuntimePackageName in @("i18next")) {
+  $RuntimePackageSource = Join-Path $GuiRoot "node_modules\$RuntimePackageName"
+  if (-not (Test-Path $RuntimePackageSource)) {
+    throw "Electron main-process runtime package was not found: $RuntimePackageSource"
+  }
+  $RuntimePackageTarget = Join-Path $AppNodeModules $RuntimePackageName
+  New-Item -ItemType Directory -Force -Path $RuntimePackageTarget | Out-Null
+  Copy-Item -Path (Join-Path $RuntimePackageSource "*") -Destination $RuntimePackageTarget -Recurse
+}
 $PackageJsonTarget = Join-Path $AppTarget "package.json"
 Copy-Item -Path (Join-Path $GuiRoot "package.json") -Destination $PackageJsonTarget
 $PackageJson = Get-Content -Raw -Path $PackageJsonTarget | ConvertFrom-Json

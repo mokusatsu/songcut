@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { WhisperLanguageCombobox } from "@/components/WhisperLanguageCombobox";
 import type { WhisperSettings, WhisperStatus } from "@/lib/api";
+import { tr } from "@/i18n";
 
 export function WhisperSettingsPanel(props: {
   settings: WhisperSettings;
@@ -20,7 +21,7 @@ export function WhisperSettingsPanel(props: {
   ];
 
   return (
-    <section className="whisper-settings" aria-label="Whisper transcription settings">
+    <section className="whisper-settings" aria-label={tr("whisper.aria")}>
       <div className="whisper-settings-heading">
         <label>
           <input
@@ -28,15 +29,15 @@ export function WhisperSettingsPanel(props: {
             checked={props.settings.enabled}
             onChange={(event) => props.onChange({ ...props.settings, enabled: event.currentTarget.checked })}
           />
-          Enable Whisper transcription
+          {tr("whisper.enable")}
         </label>
         <span className={`model-state ${model ? (model.ready ? "ready" : "missing") : "unknown"}`}>
-          {model ? (model.ready ? (model.source === "bundled" ? "Bundled" : "Ready") : "Not downloaded") : "Checking…"}
+          {model ? (model.ready ? (model.source === "bundled" ? tr("whisper.bundled") : tr("whisper.ready")) : tr("whisper.missing")) : tr("whisper.checking")}
         </span>
       </div>
       <div className="whisper-setting-fields">
         <label>
-          Model
+          {tr("whisper.model")}
           <select
             value={props.settings.model}
             onChange={(event) =>
@@ -45,13 +46,13 @@ export function WhisperSettingsPanel(props: {
           >
             {(props.status?.models ?? fallbackModels).map((item) => (
               <option key={item.key} value={item.key}>
-                {item.display_name} — {item.speed}/{item.quality}
+                {item.display_name} — {modelRatingLabel(item.speed)}/{modelRatingLabel(item.quality)}
               </option>
             ))}
           </select>
         </label>
         <div className="whisper-setting-field">
-          <span>Language</span>
+          <span>{tr("whisper.language")}</span>
           <WhisperLanguageCombobox
             value={props.settings.language}
             languages={languages}
@@ -59,7 +60,7 @@ export function WhisperSettingsPanel(props: {
           />
         </div>
         <label>
-          Device
+          {tr("whisper.device")}
           <select
             value={props.settings.device}
             onChange={(event) =>
@@ -68,7 +69,7 @@ export function WhisperSettingsPanel(props: {
           >
             {(["auto", "npu", "gpu", "cpu"] as const).map((device) => (
               <option key={device} value={device} disabled={Boolean(props.status?.devices[device]?.error)}>
-                {device === "auto" ? "Auto" : device.toUpperCase()}
+                {device === "auto" ? tr("common.auto") : device.toUpperCase()}
               </option>
             ))}
           </select>
@@ -76,7 +77,7 @@ export function WhisperSettingsPanel(props: {
       </div>
       <div className="whisper-settings-actions">
         <Button size="sm" variant="secondary" onClick={props.onDownload} disabled={props.busy}>
-          Prepare Whisper Model
+          {tr("whisper.prepare")}
         </Button>
         <Button
           size="sm"
@@ -84,11 +85,11 @@ export function WhisperSettingsPanel(props: {
           onClick={props.onTranscribe}
           disabled={!props.hasSegments || !props.sourceAvailable || !model?.ready || props.busy}
         >
-          {props.hasSegments ? "Transcribe / Re-transcribe" : "Transcribe"}
+          {props.hasSegments ? tr("whisper.retranscribe") : tr("whisper.transcribe")}
         </Button>
-        {props.transcriptStale ? <span className="transcript-stale">Settings changed — re-transcription required</span> : null}
+        {props.transcriptStale ? <span className="transcript-stale">{tr("whisper.stale")}</span> : null}
       </div>
-      {model?.installed_bytes ? <small>{formatBytes(model.installed_bytes)} installed</small> : null}
+      {model?.installed_bytes ? <small>{tr("whisper.installed", { size: formatBytes(model.installed_bytes) })}</small> : null}
     </section>
   );
 }
@@ -102,4 +103,11 @@ const fallbackModels = [
 function formatBytes(value: number) {
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KiB`;
   return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function modelRatingLabel(value: string) {
+  const key = value.toLowerCase();
+  return ["fastest", "basic", "balanced", "good", "slower", "best"].includes(key)
+    ? tr(`whisper.${key}`)
+    : value;
 }

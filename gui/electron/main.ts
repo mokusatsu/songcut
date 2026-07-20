@@ -18,6 +18,15 @@ import {
   sourceIdentityMatches,
 } from "./project-store.js";
 import type { ProjectDocumentV1, RecoverySnapshot, SourceIdentity, WhisperModelKey } from "./project-schema.js";
+import { initializeMainI18n, mainI18n } from "./i18n.js";
+import {
+  loadLocalePreference,
+  normalizeUiLanguage,
+  normalizeUiLanguagePreference,
+  saveLocalePreference,
+  type UiLanguage,
+  type UiLanguagePreference,
+} from "./locale.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,6 +38,13 @@ const issuesUrl = "https://github.com/mokusatsu/songcut/issues";
 
 if (process.env.SONGCUT_E2E_USER_DATA_DIR) {
   app.setPath("userData", process.env.SONGCUT_E2E_USER_DATA_DIR);
+}
+
+const startupLocalePreference = loadLocalePreference(app.getPath("userData"));
+let localePreference: UiLanguagePreference = startupLocalePreference;
+let uiLanguage: UiLanguage = "en";
+if (startupLocalePreference !== "system") {
+  app.commandLine.appendSwitch("lang", startupLocalePreference);
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -49,6 +65,7 @@ const e2eMenuCommandTypes = new Set([
   "check-all-segments",
   "uncheck-all-segments",
   "invert-segment-selection",
+  "open-settings",
 ]);
 
 type InferenceDevice = (typeof inferenceDevices)[number];
@@ -154,20 +171,6 @@ async function createWindow() {
     }
     return { action: "deny" };
   });
-  mainWindow.webContents.on("before-input-event", (event, input) => {
-    if (
-      input.type === "keyDown" &&
-      !input.isAutoRepeat &&
-      input.control &&
-      !input.alt &&
-      !input.shift &&
-      !input.meta &&
-      input.key === ","
-    ) {
-      event.preventDefault();
-      sendMenuCommand({ type: "open-settings" });
-    }
-  });
   setApplicationMenu();
 
   const devUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
@@ -180,7 +183,11 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  uiLanguage = normalizeUiLanguage(app.getLocale());
+  await initializeMainI18n(uiLanguage);
+  await createWindow();
+});
 
 app.on("window-all-closed", () => {
   stopPythonApi();
@@ -193,6 +200,12 @@ app.on("before-quit", () => {
 });
 
 ipcMain.handle("songcut:apiBaseUrl", () => apiBaseUrl);
+ipcMain.handle("songcut:get-locale-settings", () => ({ language: uiLanguage, preference: localePreference }));
+ipcMain.handle("songcut:set-locale-preference", async (_event, value: unknown) => {
+  localePreference = normalizeUiLanguagePreference(value);
+  await saveLocalePreference(app.getPath("userData"), localePreference);
+  return { preference: localePreference, restartRequired: localePreference !== startupLocalePreference };
+});
 
 ipcMain.handle("songcut:confirm-close", () => {
   allowClose = true;
@@ -206,11 +219,11 @@ ipcMain.handle("songcut:cancel-close", () => {
 ipcMain.handle("songcut:selectVideo", async () => {
   if (process.env.SONGCUT_E2E_VIDEO) return process.env.SONGCUT_E2E_VIDEO;
   const options = {
-    title: "Open video",
+    title: mainI18n.t("dialog.openVideo"),
     properties: ["openFile"],
     filters: [
-      { name: "Video", extensions: ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg"] },
-      { name: "All files", extensions: ["*"] }
+      { name: mainI18n.t("dialog.video"), extensions: ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg"] },
+      { name: mainI18n.t("dialog.allFiles"), extensions: ["*"] }
     ]
   } satisfies Electron.OpenDialogOptions;
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
@@ -219,9 +232,9 @@ ipcMain.handle("songcut:selectVideo", async () => {
 
 ipcMain.handle("songcut:openProject", async () => {
   const options = {
-    title: "Open songcut project",
+    title: mainI18n.t("dialog.openProject"),
     properties: ["openFile"],
-    filters: [{ name: "songcut Project", extensions: ["songcut"] }]
+    filters: [{ name: mainI18n.t("dialog.project"), extensions: ["songcut"] }]
   } satisfies Electron.OpenDialogOptions;
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
   if (result.canceled || !result.filePaths[0]) return null;
@@ -257,11 +270,11 @@ ipcMain.handle("songcut:setWindowTitle", (_event, title: string) => {
 
 ipcMain.handle("songcut:selectRelinkSource", async (_event, expectedName: string) => {
   const options = {
-    title: `Relink ${expectedName}`,
+    title: mainI18n.t("dialog.relinkSource", { name: expectedName }),
     properties: ["openFile"],
     filters: [
-      { name: "Video", extensions: ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg"] },
-      { name: "All files", extensions: ["*"] }
+      { name: mainI18n.t("dialog.video"), extensions: ["mp4", "mkv", "mov", "webm", "avi", "m4v", "mpg", "mpeg"] },
+      { name: mainI18n.t("dialog.allFiles"), extensions: ["*"] }
     ]
   } satisfies Electron.OpenDialogOptions;
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
@@ -271,7 +284,7 @@ ipcMain.handle("songcut:selectRelinkSource", async (_event, expectedName: string
 ipcMain.handle("songcut:selectOutputDirectory", async () => {
   if (process.env.SONGCUT_E2E_OUTPUT_DIR) return process.env.SONGCUT_E2E_OUTPUT_DIR;
   const options = {
-    title: "Select output folder",
+    title: mainI18n.t("dialog.outputFolder"),
     properties: ["openDirectory", "createDirectory"]
   } satisfies Electron.OpenDialogOptions;
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
@@ -307,15 +320,22 @@ ipcMain.on("songcut:e2e-menu-command", (_event, command: unknown) => {
 
 ipcMain.handle("songcut:e2e-menu-structure", () => {
   if (!process.env.SONGCUT_E2E_USER_DATA_DIR) return null;
-  const segmentMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "Segment");
+  const segmentMenu = Menu.getApplicationMenu()?.getMenuItemById("menu.segment");
   return (
     segmentMenu?.submenu?.items.map((item) => ({
+      id: item.id,
       label: item.label,
       type: item.type,
       enabled: item.enabled,
       hasSubmenu: Boolean(item.submenu)
     })) ?? null
   );
+});
+
+ipcMain.handle("songcut:e2e-menu-item", (_event, id: unknown) => {
+  if (!process.env.SONGCUT_E2E_USER_DATA_DIR || typeof id !== "string") return null;
+  const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+  return item ? { id: item.id, label: item.label, accelerator: item.accelerator, enabled: item.enabled } : null;
 });
 
 function setApplicationMenu() {
@@ -334,52 +354,59 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
 
   return [
     {
-      label: "File",
+      id: "menu.file",
+      label: mainI18n.t("menu.file"),
       submenu: [
-        { label: "Load Movie", click: send({ type: "load-movie" }) },
-        { label: "Open Project...", accelerator: "Ctrl+Shift+O", click: send({ type: "open-project" }) },
-        { label: "Save Project Now", accelerator: "Ctrl+S", enabled: menuState.hasProject, click: send({ type: "save-project" }) },
-        { label: "Relink Source...", enabled: menuState.hasProject, click: send({ type: "relink-source" }) },
+        { id: "file.load-movie", label: mainI18n.t("menu.loadMovie"), click: send({ type: "load-movie" }) },
+        { id: "file.open-project", label: mainI18n.t("menu.openProject"), accelerator: "CommandOrControl+Shift+O", click: send({ type: "open-project" }) },
+        { id: "file.save-project", label: mainI18n.t("menu.saveProject"), accelerator: "CommandOrControl+S", enabled: menuState.hasProject, click: send({ type: "save-project" }) },
+        { id: "file.relink-source", label: mainI18n.t("menu.relinkSource"), enabled: menuState.hasProject, click: send({ type: "relink-source" }) },
         { type: "separator" },
         { role: "close" }
       ]
     },
     {
-      label: "Edit",
+      id: "menu.edit",
+      label: mainI18n.t("menu.edit"),
       submenu: [
-        { label: "-- Nudge Adjust Boundary --", enabled: false },
+        { id: "edit.nudge-heading", label: mainI18n.t("menu.nudgeHeading"), enabled: false },
         {
-          label: "Nudge Boundary Left",
+          id: "edit.nudge-left",
+          label: mainI18n.t("menu.nudgeLeft"),
           accelerator: "Q",
           registerAccelerator: false,
           enabled: canUseSegments,
           click: send({ type: "nudge-boundary-left" })
         },
         {
-          label: "Nudge Boundary Right",
+          id: "edit.nudge-right",
+          label: mainI18n.t("menu.nudgeRight"),
           accelerator: "E",
           registerAccelerator: false,
           enabled: canUseSegments,
           click: send({ type: "nudge-boundary-right" })
         },
         { type: "separator" },
-        { label: "-- Timeline --", enabled: false },
+        { id: "edit.timeline-heading", label: mainI18n.t("menu.timelineHeading"), enabled: false },
         {
-          label: "Zoom +",
+          id: "edit.zoom-in",
+          label: mainI18n.t("menu.zoomIn"),
           accelerator: "C",
           registerAccelerator: false,
           enabled: zoomIndex < zoomLevels.length - 1,
           click: send({ type: "zoom-in" })
         },
         {
-          label: "Zoom -",
+          id: "edit.zoom-out",
+          label: mainI18n.t("menu.zoomOut"),
           accelerator: "Z",
           registerAccelerator: false,
           enabled: zoomIndex > 0,
           click: send({ type: "zoom-out" })
         },
         {
-          label: "Zoom Level",
+          id: "edit.zoom-level",
+          label: mainI18n.t("menu.zoomLevel"),
           submenu: zoomLevels.map((level, index) => ({
             label: `${level * 100}%`,
             type: "radio",
@@ -389,48 +416,54 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
           }))
         },
         { type: "separator" },
-        { label: "Cut", role: "cut" },
-        { label: "Copy", role: "copy" },
-        { label: "Paste", role: "paste" }
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" }
       ]
     },
     {
-      label: "Play",
+      id: "menu.play",
+      label: mainI18n.t("menu.play"),
       submenu: [
-        { label: "-- Movie Control --", enabled: false },
-        { label: "Start", enabled: canUseVideo, click: send({ type: "start" }) },
+        { id: "play.movie-heading", label: mainI18n.t("menu.movieControlHeading"), enabled: false },
+        { id: "play.start", label: mainI18n.t("menu.start"), enabled: canUseVideo, click: send({ type: "start" }) },
         {
-          label: "Previous Boundary",
+          id: "play.previous-boundary",
+          label: mainI18n.t("menu.previousBoundary"),
           accelerator: "Ctrl+A",
           registerAccelerator: false,
           enabled: canUseSegments,
           click: send({ type: "previous-boundary" })
         },
         {
-          label: menuState.playing ? "Pause" : "Play",
+          id: "play.toggle",
+          label: mainI18n.t(menuState.playing ? "menu.pause" : "menu.play"),
           accelerator: "Space",
           registerAccelerator: false,
           enabled: canUseVideo,
           click: send(menuState.playing ? { type: "pause" } : { type: "play" })
         },
         {
-          label: "Next Boundary",
+          id: "play.next-boundary",
+          label: mainI18n.t("menu.nextBoundary"),
           accelerator: "Ctrl+D",
           registerAccelerator: false,
           enabled: canUseSegments,
           click: send({ type: "next-boundary" })
         },
         { type: "separator" },
-        { label: "-- Play Boundary --", enabled: false },
+        { id: "play.boundary-heading", label: mainI18n.t("menu.playBoundaryHeading"), enabled: false },
         {
-          label: "Play Start Boundary",
+          id: "play.start-boundary",
+          label: mainI18n.t("menu.playStartBoundary"),
           accelerator: "A",
           registerAccelerator: false,
           enabled: canUseSelectedSegment,
           click: send({ type: "play-start-boundary" })
         },
         {
-          label: "Play End Boundary",
+          id: "play.end-boundary",
+          label: mainI18n.t("menu.playEndBoundary"),
           accelerator: "D",
           registerAccelerator: false,
           enabled: canUseSelectedSegment,
@@ -439,75 +472,87 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       ]
     },
     {
-      label: "Segment",
+      id: "menu.segment",
+      label: mainI18n.t("menu.segment"),
       submenu: [
-        { label: "-- Segment Selection --", enabled: false },
+        { id: "segment.selection-heading", label: mainI18n.t("menu.segmentSelectionHeading"), enabled: false },
         {
-          label: "Previous Segment",
+          id: "segment.previous",
+          label: mainI18n.t("menu.previousSegment"),
           accelerator: "W",
           registerAccelerator: false,
           enabled: canUseSegments && menuState.canSelectPreviousSegment,
           click: send({ type: "previous-segment" })
         },
         {
-          label: "Next Segment",
+          id: "segment.next",
+          label: mainI18n.t("menu.nextSegment"),
           accelerator: "S",
           registerAccelerator: false,
           enabled: canUseSegments && menuState.canSelectNextSegment,
           click: send({ type: "next-segment" })
         },
         { type: "separator" },
-        { label: "-- Segment Management --", enabled: false },
-        { label: "New Segment", enabled: menuState.hasProject, click: send({ type: "new-segment" }) },
+        { id: "segment.management-heading", label: mainI18n.t("menu.segmentManagementHeading"), enabled: false },
+        { id: "segment.new", label: mainI18n.t("menu.newSegment"), enabled: menuState.hasProject, click: send({ type: "new-segment" }) },
         {
-          label: "Remove Segment...",
+          id: "segment.remove",
+          label: mainI18n.t("menu.removeSegment"),
           enabled: menuState.hasProject && menuState.hasSelectedSegment,
           click: send({ type: "remove-segment" })
         },
         {
-          label: "Remove All Unchecked Segments...",
+          id: "segment.remove-unchecked",
+          label: mainI18n.t("menu.removeUnchecked"),
           enabled: menuState.hasProject && menuState.hasUncheckedSegments,
           click: send({ type: "remove-unchecked-segments" })
         },
         {
-          label: "Sort Segments...",
+          id: "segment.sort",
+          label: mainI18n.t("menu.sortSegments"),
           enabled: menuState.hasProject && menuState.hasMultipleSegments,
           click: send({ type: "sort-segments" })
         },
         { type: "separator" },
-        { label: "-- Export Selection --", enabled: false },
+        { id: "segment.export-heading", label: mainI18n.t("menu.exportSelectionHeading"), enabled: false },
         {
-          label: "Check All",
+          id: "segment.check-all",
+          label: mainI18n.t("menu.checkAll"),
           enabled: menuState.hasProject && menuState.hasUncheckedSegments,
           click: send({ type: "check-all-segments" })
         },
         {
-          label: "Uncheck All",
+          id: "segment.uncheck-all",
+          label: mainI18n.t("menu.uncheckAll"),
           enabled: menuState.hasProject && menuState.hasCheckedSegments,
           click: send({ type: "uncheck-all-segments" })
         },
         {
-          label: "Invert Selection",
+          id: "segment.invert",
+          label: mainI18n.t("menu.invertSelection"),
           enabled: menuState.hasProject && menuState.hasSegments,
           click: send({ type: "invert-segment-selection" })
         }
       ]
     },
     {
-      label: "Export",
+      id: "menu.export",
+      label: mainI18n.t("menu.export"),
       submenu: [
-        { label: "Export Movie", enabled: canExportMovie, click: send({ type: "export-movie" }) },
-        { label: "Export TS Text", enabled: canExportText, click: send({ type: "export-ts-text" }) }
+        { id: "export.movie", label: mainI18n.t("menu.exportMovie"), enabled: canExportMovie, click: send({ type: "export-movie" }) },
+        { id: "export.ts", label: mainI18n.t("menu.exportTs"), enabled: canExportText, click: send({ type: "export-ts-text" }) }
       ]
     },
     {
-      label: "Settings",
+      id: "menu.settings",
+      label: mainI18n.t("menu.settings"),
       submenu: [
-        { label: "Settings...\tCtrl+,", click: send({ type: "open-settings" }) }
+        { id: "settings.open", label: mainI18n.t("menu.settingsItem"), accelerator: "CommandOrControl+,", click: send({ type: "open-settings" }) }
       ]
     },
     {
-      label: "View",
+      id: "menu.view",
+      label: mainI18n.t("menu.view"),
       submenu: [
         { role: "reload" },
         { role: "forceReload" },
@@ -521,20 +566,22 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       ]
     },
     {
-      label: "Window",
+      id: "menu.window",
+      label: mainI18n.t("menu.window"),
       submenu: [{ role: "minimize" }, { role: "zoom" }, { type: "separator" }, { role: "close" }]
     },
     {
-      label: "Help",
+      id: "menu.help",
+      label: mainI18n.t("menu.help"),
       submenu: [
-        { label: "About songcut", click: showAboutSongcut },
+        { id: "help.about", label: mainI18n.t("menu.about"), click: showAboutSongcut },
         { type: "separator" },
-        { label: "User Guide (English)", click: () => void shell.openExternal(usageEnglishUrl) },
-        { label: "User Guide (Japanese)", click: () => void shell.openExternal(usageJapaneseUrl) },
-        { label: "Keyboard Shortcuts", click: () => void shell.openExternal(keyboardShortcutsUrl) },
+        { id: "help.guide-en", label: mainI18n.t("menu.guideEnglish"), click: () => void shell.openExternal(usageEnglishUrl) },
+        { id: "help.guide-ja", label: mainI18n.t("menu.guideJapanese"), click: () => void shell.openExternal(usageJapaneseUrl) },
+        { id: "help.shortcuts", label: mainI18n.t("menu.keyboardShortcuts"), click: () => void shell.openExternal(keyboardShortcutsUrl) },
         { type: "separator" },
-        { label: "Open Repository", click: () => void shell.openExternal(repositoryUrl) },
-        { label: "Report Issue / Request Feature", click: () => void shell.openExternal(issuesUrl) }
+        { id: "help.repository", label: mainI18n.t("menu.repository"), click: () => void shell.openExternal(repositoryUrl) },
+        { id: "help.issues", label: mainI18n.t("menu.reportIssue"), click: () => void shell.openExternal(issuesUrl) }
       ]
     }
   ];
@@ -575,16 +622,16 @@ function showAboutSongcut() {
   app.setAboutPanelOptions({
     applicationName: "songcut",
     applicationVersion: app.getVersion(),
-    credits: `Build time: ${formatBuildTime()}\nElectron: ${process.versions.electron}`
+    credits: `${mainI18n.t("about.buildTime", { value: formatBuildTime() })}\n${mainI18n.t("about.electron", { value: process.versions.electron })}`
   });
   app.showAboutPanel();
 }
 
 function formatBuildTime() {
   try {
-    return statSync(__filename).mtime.toLocaleString();
+    return statSync(__filename).mtime.toLocaleString(uiLanguage === "ja" ? "ja-JP" : "en-US");
   } catch {
-    return "Unknown";
+    return mainI18n.t("about.unknown");
   }
 }
 

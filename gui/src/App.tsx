@@ -71,7 +71,6 @@ import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { useTaskRegistry } from "@/lib/useTaskRegistry";
 import {
   normalizeScratchAudioProxyEnabled,
-  scratchProxyStatusLabel,
   selectScratchPreviewSource,
   shouldCreateScratchProxy
 } from "@/lib/scratchProxy";
@@ -118,6 +117,7 @@ import type {
   WaveformDisplayMode,
   WaveformPoint
 } from "@/types";
+import { currentUiLanguage, localizeFilenameTemplateError, localizeJobMessage, localizeUiMessage, tr, type UiLanguage, type UiLanguagePreference } from "@/i18n";
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const MIN_SEGMENT_SECONDS = 0.1;
@@ -186,8 +186,12 @@ type SwitchSaveFailure = {
   recoverySaved: boolean;
 };
 
-export default function App() {
+export default function App(props: {
+  initialLocaleSettings: { language: UiLanguage; preference: UiLanguagePreference };
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [localePreference, setLocalePreference] = useState<UiLanguagePreference>(props.initialLocaleSettings.preference);
+  const [localeRestartRequired, setLocaleRestartRequired] = useState(false);
   const scratchProxyAudioRef = useRef<HTMLAudioElement>(null);
   const playbackStopAtRef = useRef<number | null>(null);
   const scratchPreviewTimeRef = useRef<number | null>(null);
@@ -1169,7 +1173,7 @@ export default function App() {
   async function exportClips(outputDir: string, createVideoFolder: boolean) {
     if (!apiBaseUrl || !videoPath) return;
     if (outputPlan.error) {
-      setMessage(outputPlan.error);
+      setMessage(localizeFilenameTemplateError(outputPlan.error) ?? outputPlan.error);
       return;
     }
     const outputItems = buildOutputItems();
@@ -1290,7 +1294,7 @@ export default function App() {
 
   function addNewSegment() {
     if (!projectBase) return;
-    const pair = createManualSegment(segments, currentTime, duration);
+    const pair = createManualSegment(segments, currentTime, duration, tr("segments.newTitle"));
     const next = insertSegmentPair({ segments, exportCandidates }, pair, selectedSegmentId);
     setSegments(next.segments);
     setExportCandidates(next.exportCandidates);
@@ -1298,7 +1302,7 @@ export default function App() {
     setSegmentFocusRequest((request) => request + 1);
     seek(pair.segment.start);
     markProjectChanged();
-    setMessage(`Added ${pair.segment.id}.`);
+    setMessage(tr("messages.added", { id: pair.segment.id }));
   }
 
   function requestRemoveSelectedSegment() {
@@ -1307,9 +1311,9 @@ export default function App() {
     if (!segment) return;
     setSegmentManagementReview({
       kind: "remove",
-      title: "Remove Segment?",
-      message: "The following segment will be permanently removed from this project.",
-      confirmLabel: "Remove Segment",
+      title: tr("segments.removeTitle"),
+      message: tr("segments.removeMessage"),
+      confirmLabel: tr("segments.remove"),
       segmentIds: [segment.id],
       items: buildSegmentReviewItems([segment]),
     });
@@ -1320,9 +1324,9 @@ export default function App() {
     if (!targets.length) return;
     setSegmentManagementReview({
       kind: "remove",
-      title: "Remove All Unchecked Segments?",
-      message: `The following ${targets.length} unchecked ${targets.length === 1 ? "segment" : "segments"} will be permanently removed from this project.`,
-      confirmLabel: targets.length === 1 ? "Remove Segment" : "Remove Segments",
+      title: tr("segments.removeUncheckedTitle"),
+      message: tr("segments.removeUncheckedMessage", { count: targets.length }),
+      confirmLabel: tr(targets.length === 1 ? "segments.remove" : "segments.removeMany"),
       segmentIds: targets.map((segment) => segment.id),
       items: buildSegmentReviewItems(targets),
     });
@@ -1333,8 +1337,8 @@ export default function App() {
     const sorted = sortSegmentsByStart({ segments, exportCandidates });
     setSegmentManagementReview({
       kind: "sort",
-      title: "Sort Segments?",
-      message: "Segments will be reordered by start time. Review the current and resulting order before continuing.",
+      title: tr("segments.sortTitle"),
+      message: tr("segments.sortMessage"),
       before: buildSegmentReviewItems(segments),
       after: buildSegmentReviewItems(sorted.segments),
     });
@@ -1347,10 +1351,10 @@ export default function App() {
       const removedIds = new Set(review.segmentIds);
       const next = removeSegments({ segments, exportCandidates }, removedIds);
       applySegmentCollection(next, removedIds);
-      setMessage(`Removed ${review.segmentIds.length} ${review.segmentIds.length === 1 ? "segment" : "segments"}.`);
+      setMessage(tr("messages.removed", { count: review.segmentIds.length }));
     } else {
       applySegmentCollection(sortSegmentsByStart({ segments, exportCandidates }));
-      setMessage("Sorted segments by start time.");
+      setMessage(tr("messages.sorted"));
     }
     setSegmentManagementReview(null);
   }
@@ -1380,21 +1384,21 @@ export default function App() {
     if (!uncheckedCount) return;
     setSegments(setAllSegmentsChecked(segments, true));
     markProjectChanged();
-    setMessage("Checked all segments for export.");
+    setMessage(tr("messages.checkedAll"));
   }
 
   function uncheckAllSegments() {
     if (!checkedCount) return;
     setSegments(setAllSegmentsChecked(segments, false));
     markProjectChanged();
-    setMessage("Unchecked all segments for export.");
+    setMessage(tr("messages.uncheckedAll"));
   }
 
   function invertExportSelection() {
     if (!segments.length) return;
     setSegments(invertSegmentChecks(segments));
     markProjectChanged();
-    setMessage("Inverted the export selection.");
+    setMessage(tr("messages.inverted"));
   }
 
   function selectSegment(segment: Segment) {
@@ -1863,7 +1867,7 @@ export default function App() {
             <FileVideo2 size={42} />
             <Button onClick={selectVideo}>
               <FolderOpen size={16} />
-              Load
+              {tr("common.load")}
             </Button>
           </div>
         )}
@@ -1888,36 +1892,36 @@ export default function App() {
       <section className="control-pane">
         {!sourceAvailable && projectBase ? (
           <div className="source-missing-banner">
-            <span>Source missing — saved guide, segments, waveform, and transcripts remain available.</span>
+            <span>{tr("app.sourceMissingBanner")}</span>
             <Button size="sm" variant="secondary" onClick={() => void relinkSource().catch((error) => setMessage(String(error)))}>
-              Relink
+              {tr("app.relink")}
             </Button>
           </div>
         ) : null}
         <header className="toolbar">
           <Button onClick={selectVideo}>
             <FolderOpen size={16} />
-            Load
+            {tr("common.load")}
           </Button>
           <Button onClick={() => void analyze().catch((error) => setMessage(String(error)))} disabled={!sourceAvailable || !apiBaseUrl}>
             <Wand2 size={16} />
-            Analyze
+            {tr("common.analyze")}
           </Button>
           <Button variant="secondary" onClick={() => setOutputOpen(true)} disabled={checkedCount === 0 || !sourceAvailable}>
             <Scissors size={16} />
-            Export
+            {tr("common.export")}
           </Button>
           <Button variant="secondary" onClick={exportTimestampComments} disabled={checkedCount === 0}>
             <Copy size={16} />
-            Export TS
+            {tr("common.exportTs")}
           </Button>
           <Button variant="secondary" onClick={openSettings}>
             <Settings2 size={16} />
-            Settings
+            {tr("common.settings")}
           </Button>
           <div className="spacer" />
           <span className={`project-save-status status-${persistence.status}`}>
-            {projectReadOnly ? "Read only" : projectSaveStatusLabel(persistence.status)}
+            {projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
           </span>
           <BoundaryControls
             value={boundarySecondsInput}
@@ -1958,7 +1962,7 @@ export default function App() {
               setGuideText(event.target.value);
               markProjectChanged();
             }}
-            placeholder="Paste timestamp comment here"
+            placeholder={tr("app.guidePlaceholder")}
           />
           <StatusPanel
             job={activeJob}
@@ -2010,20 +2014,20 @@ export default function App() {
       >
         {visibleTranscriptSegment?.transcript ? (
           <div className="transcript-run-meta">
-            <span>Model: {visibleTranscriptSegment.transcript.model_id}</span>
+            <span>{tr("app.model")}: {visibleTranscriptSegment.transcript.model_id}</span>
             <span>
-              Language: {visibleTranscriptSegment.transcript.language_requested ?? "unknown"} → {visibleTranscriptSegment.transcript.language ?? "unknown"}
+              {tr("app.language")}: {visibleTranscriptSegment.transcript.language_requested ?? tr("common.unknown")} → {visibleTranscriptSegment.transcript.language ?? tr("common.unknown")}
             </span>
             <span>
-              Device: {visibleTranscriptSegment.transcript.device_requested ?? "unknown"} → {visibleTranscriptSegment.transcript.device_used}
+              {tr("app.device")}: {visibleTranscriptSegment.transcript.device_requested ?? tr("common.unknown")} → {visibleTranscriptSegment.transcript.device_used}
             </span>
           </div>
         ) : null}
         <pre className="transcript-text">
-          {visibleTranscriptSegment?.transcript?.text || "Transcript has not been generated yet."}
+          {visibleTranscriptSegment?.transcript?.text || tr("app.transcriptMissing")}
         </pre>
         {visibleTranscriptSegment?.transcript?.error ? (
-          <p className="transcript-error">Latest transcription attempt failed: {visibleTranscriptSegment.transcript.error}</p>
+          <p className="transcript-error">{tr("app.transcriptFailed", { error: visibleTranscriptSegment.transcript.error })}</p>
         ) : null}
       </Dialog>
       <TimestampCommentDialogs
@@ -2043,7 +2047,7 @@ export default function App() {
         open={outputOpen}
         items={outputPlan.items}
         renderPlanState={exportPlanState}
-        error={outputPlan.error}
+        error={localizeFilenameTemplateError(outputPlan.error)}
         filenameTemplate={filenameTemplate}
         createSourceFolder={createSourceFolder}
         sourceFolderName={videoInfo ? filenameWithoutExtension(videoInfo.name) : "video"}
@@ -2063,12 +2067,12 @@ export default function App() {
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
         onConfirm={confirmSegmentManagement}
       />
-      <Dialog open={timestampCopyCount !== null} title="Export TS" onClose={() => setTimestampCopyCount(null)}>
+      <Dialog open={timestampCopyCount !== null} title={tr("app.exportTsTitle")} onClose={() => setTimestampCopyCount(null)}>
         <p className="dialog-message">
-          {`Copied ${timestampCopyCount ?? 0} timestamp ${timestampCopyCount === 1 ? "line" : "lines"} to the clipboard.`}
+          {tr("app.copiedLines", { count: timestampCopyCount ?? 0 })}
         </p>
         <div className="dialog-actions">
-          <Button onClick={() => setTimestampCopyCount(null)}>OK</Button>
+          <Button onClick={() => setTimestampCopyCount(null)}>{tr("common.ok")}</Button>
         </div>
       </Dialog>
       <FfmpegCheckDialog
@@ -2085,27 +2089,29 @@ export default function App() {
         waveformDisplayMode={waveformDisplayMode}
         analysisDevice={analysisDevice}
         filenameTemplate={filenameTemplate}
-        filenameTemplateError={outputPlan.error}
+        filenameTemplateError={localizeFilenameTemplateError(outputPlan.error)}
         whisperSettings={whisperSettings}
         whisperStatus={whisperStatus}
         whisperBusy={whisperBusy}
         hasSegments={segments.length > 0}
         transcriptStale={transcriptStale}
         sourceAvailable={sourceAvailable}
+        localePreference={localePreference}
+        localeRestartRequired={localeRestartRequired}
         onClose={closeSettings}
         onScratchPreviewMillisecondsInput={setScratchPreviewMillisecondsInput}
         onScratchAudioProxyEnabled={(enabled) => {
           setScratchAudioProxyEnabled(enabled);
-          setMessage(`Scratch audio proxy ${enabled ? "enabled" : "disabled"}.`);
+          setMessage(tr(enabled ? "app.proxyEnabled" : "app.proxyDisabled"));
         }}
         onWaveformDisplayMode={(mode) => {
           setWaveformDisplayMode(mode);
-          setMessage(`Waveform display set to ${waveformDisplayModeLabel(mode)}.`);
+          setMessage(tr("app.waveformSet", { mode: waveformDisplayModeLabel(mode) }));
         }}
         onAnalysisDevice={(device) => {
           setAnalysisDevice(device);
           markProjectChanged();
-          setMessage(`Singing analysis device set to ${deviceLabel(device)}.`);
+          setMessage(tr("app.analysisDeviceSet", { device: deviceLabel(device) }));
         }}
         onFilenameTemplate={updateFilenameTemplate}
         onWhisperSettings={(settings) => {
@@ -2121,6 +2127,17 @@ export default function App() {
           closeSettings();
           void runFfmpegCheck(true);
         }}
+        onLocalePreference={(preference) => {
+          const previousPreference = localePreference;
+          setLocalePreference(preference);
+          void window.songcut.setLocalePreference(preference).then((result) => {
+            setLocalePreference(result.preference);
+            setLocaleRestartRequired(result.restartRequired);
+          }).catch((error) => {
+            setLocalePreference(previousPreference);
+            setMessage(localizedError(error));
+          });
+        }}
       />
       <ExportProgressDialog
         open={exportProgressOpen}
@@ -2128,13 +2145,13 @@ export default function App() {
         renderPlanState={exportPlanState}
         onClose={() => setExportProgressOpen(false)}
       />
-      <Dialog open={whisperPreflightOpen} title="Whisper model is not ready" onClose={() => setWhisperPreflightOpen(false)}>
+      <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
-          {`The selected ${whisperSettings.model} model is not installed. Downloading is always an explicit action.`}
+          {tr("dialogs.whisperMissing", { model: whisperSettings.model })}
         </p>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={() => setWhisperPreflightOpen(false)}>
-            Cancel
+            {tr("common.cancel")}
           </Button>
           <Button
             variant="secondary"
@@ -2143,7 +2160,7 @@ export default function App() {
               void runAnalysis(false).catch((error) => setMessage(String(error)));
             }}
           >
-            Analyze without transcription
+            {tr("dialogs.analyzeWithout")}
           </Button>
           <Button
             onClick={() => {
@@ -2153,36 +2170,36 @@ export default function App() {
                 .catch((error) => setMessage(String(error)));
             }}
           >
-            Download &amp; Analyze
+            {tr("dialogs.downloadAnalyze")}
           </Button>
         </div>
       </Dialog>
-      <Dialog open={recoveryOpen} title="Recover unsaved songcut edits?" onClose={() => undefined}>
+      <Dialog open={recoveryOpen} title={tr("dialogs.recoveryTitle")} onClose={() => undefined}>
         <p className="dialog-message">
           {recoveryCandidate
-            ? `${recoveryCandidate.document.source.filename} has a recovery snapshot from ${new Date(recoveryCandidate.saved_at).toLocaleString()} at revision ${recoveryCandidate.document.revision}.`
-            : "A recovery snapshot is available."}
+            ? tr("dialogs.recoveryDetail", { filename: recoveryCandidate.document.source.filename, date: new Date(recoveryCandidate.saved_at).toLocaleString(currentUiLanguage() === "ja" ? "ja-JP" : "en-US"), revision: recoveryCandidate.document.revision })
+            : tr("dialogs.recoveryAvailable")}
         </p>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={() => void discardRecovery().catch((error) => setMessage(String(error)))}>
-            Discard
+            {tr("common.discard")}
           </Button>
-          <Button onClick={() => void recoverProject().catch((error) => setMessage(String(error)))}>Recover</Button>
+          <Button onClick={() => void recoverProject().catch((error) => setMessage(localizedError(error)))}>{tr("common.recover")}</Button>
         </div>
       </Dialog>
-      <Dialog open={Boolean(switchSaveFailure)} title="Could not save the current project" onClose={() => setSwitchSaveFailure(null)}>
+      <Dialog open={Boolean(switchSaveFailure)} title={tr("dialogs.saveFailedTitle")} onClose={() => setSwitchSaveFailure(null)}>
         <p className="dialog-message">
           {switchSaveFailure
             ? `${switchSaveFailure.error} ${
                 switchSaveFailure.recoverySaved
-                  ? "A recovery snapshot is available, but it would be replaced after switching videos."
-                  : "The recovery snapshot could not be updated either."
+                  ? tr("dialogs.recoveryWouldReplace")
+                  : tr("dialogs.recoveryUpdateFailed")
               }`
-            : "The current project could not be saved."}
+            : tr("dialogs.saveFailed")}
         </p>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={() => setSwitchSaveFailure(null)}>
-            Cancel
+            {tr("common.cancel")}
           </Button>
           <Button
             variant="secondary"
@@ -2194,7 +2211,7 @@ export default function App() {
               void retry.catch((error) => setMessage(String(error)));
             }}
           >
-            Retry
+            {tr("common.retry")}
           </Button>
           <Button
             onClick={() => {
@@ -2208,19 +2225,19 @@ export default function App() {
               });
             }}
           >
-            Discard changes
+            {tr("dialogs.discardChanges")}
           </Button>
         </div>
       </Dialog>
-      <Dialog open={Boolean(relinkConflict)} title="Project already exists at relink destination" onClose={() => setRelinkConflict(null)}>
+      <Dialog open={Boolean(relinkConflict)} title={tr("dialogs.relinkConflictTitle")} onClose={() => setRelinkConflict(null)}>
         <p className="dialog-message">
           {relinkConflict?.damaged
-            ? "The destination sidecar is damaged or uses an unsupported schema. It will not be overwritten unless you explicitly archive it as a timestamped conflict."
-            : "A project already exists beside the selected source. Open it, replace it with the current project, or cancel."}
+            ? tr("dialogs.relinkDamaged")
+            : tr("dialogs.relinkExists")}
         </p>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={() => setRelinkConflict(null)}>
-            Cancel
+            {tr("common.cancel")}
           </Button>
           {!relinkConflict?.damaged && relinkConflict?.existing ? (
             <Button
@@ -2233,7 +2250,7 @@ export default function App() {
                 );
               }}
             >
-              Open existing
+              {tr("dialogs.openExisting")}
             </Button>
           ) : null}
           <Button
@@ -2243,21 +2260,21 @@ export default function App() {
               void completeRelink(conflict, conflict.damaged).catch((error) => setMessage(String(error)));
             }}
           >
-            {relinkConflict?.damaged ? "Archive conflict & replace" : "Replace with current"}
+            {tr(relinkConflict?.damaged ? "dialogs.archiveReplace" : "dialogs.replaceCurrent")}
           </Button>
         </div>
       </Dialog>
-      <Dialog open={quitConfirmOpen} title="Quit songcut?" onClose={cancelQuit}>
+      <Dialog open={quitConfirmOpen} title={tr("dialogs.quitTitle")} onClose={cancelQuit}>
         <p className="dialog-message">
           {runningJob
-            ? `${jobKindLabel(runningJob.kind)} is still running. Quitting now will stop the task and any external processes it started.`
-            : "A task is still running. Quitting now will stop it."}
+            ? tr("dialogs.taskRunningNamed", { task: jobKindLabel(runningJob.kind) })
+            : tr("dialogs.taskRunning")}
         </p>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={cancelQuit}>
-            Cancel
+            {tr("common.cancel")}
           </Button>
-          <Button onClick={() => void confirmQuit()}>Quit anyway</Button>
+          <Button onClick={() => void confirmQuit()}>{tr("dialogs.quitAnyway")}</Button>
         </div>
       </Dialog>
     </main>
@@ -2292,43 +2309,59 @@ function sourceDurationMatches(expected: number, actual: number) {
 function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>["status"]) {
   switch (status) {
     case "idle":
-      return "Saved";
+      return tr("app.saved");
     case "saving":
-      return "Saving…";
+      return tr("app.saving");
     case "saved":
-      return "Saved";
+      return tr("app.saved");
     case "recovery-only":
-      return "Recovery only";
+      return tr("app.recoveryOnly");
     case "save-failed":
-      return "Save failed";
+      return tr("app.saveFailed");
     case "read-only":
-      return "Read only";
+      return tr("app.readOnly");
   }
 }
 
 function jobKindLabel(kind: string) {
-  if (kind === "analysis") return "Analysis";
-  if (kind === "transcription") return "Transcription";
-  if (kind === "export") return "Export";
-  if (kind === "download-whisper") return "Whisper model download";
-  if (kind === "waveform") return "Waveform generation";
-  if (kind === "scratch-proxy") return "Scratch audio preparation";
-  return "A task";
+  if (kind === "analysis") return tr("tasks.analysis");
+  if (kind === "transcription") return tr("tasks.transcription");
+  if (kind === "export") return tr("tasks.export");
+  if (kind === "download-whisper") return tr("tasks.download");
+  if (kind === "waveform") return tr("tasks.waveform");
+  if (kind === "scratch-proxy") return tr("tasks.proxy");
+  return tr("tasks.generic");
 }
 
 function waveformStatusLabel(phase: ReturnType<typeof useProgressiveWaveform>["phase"], progress: number) {
   switch (phase) {
     case "streaming":
-      return `Waveform: ${Math.round(clamp(progress, 0, 1) * 100)}%`;
+      return tr("app.waveformProgress", { progress: Math.round(clamp(progress, 0, 1) * 100) });
     case "finalizing":
-      return "Waveform: Finalizing";
+      return tr("app.waveformFinalizing");
     case "ready":
-      return "Waveform: Ready";
+      return tr("app.waveformReady");
     case "failed":
-      return "Waveform: Unavailable";
+      return tr("app.waveformUnavailable");
     case "idle":
-      return "Waveform: Waiting";
+      return tr("app.waveformWaiting");
   }
+}
+
+function localizedScratchProxyStatusLabel(state: ScratchProxyState) {
+  switch (state) {
+    case "disabled": return tr("app.scratchDisabled");
+    case "preparing":
+    case "loading": return tr("app.scratchPreparing");
+    case "ready": return tr("app.scratchReady");
+    case "failed": return tr("app.scratchFailed");
+    case "idle":
+    case "original": return tr("app.scratchOriginal");
+  }
+}
+
+function localizedError(error: unknown) {
+  return localizeUiMessage(String(error));
 }
 
 function BoundaryControls(props: {
@@ -2346,7 +2379,7 @@ function BoundaryControls(props: {
         variant="ghost"
         onClick={props.onStart}
         disabled={props.disabled}
-        title="Play start boundary (A)"
+        title={tr("controls.playStart")}
         aria-keyshortcuts="A"
       >
         <SkipBack size={17} />
@@ -2356,7 +2389,7 @@ function BoundaryControls(props: {
         variant="ghost"
         onClick={props.onEnd}
         disabled={props.disabled}
-        title="Play end boundary (D)"
+        title={tr("controls.playEnd")}
         aria-keyshortcuts="D"
       >
         <SkipForward size={17} />
@@ -2369,7 +2402,7 @@ function BoundaryControls(props: {
         step="1"
         inputMode="numeric"
         pattern="[0-9]*"
-        aria-label="Boundary seconds"
+        aria-label={tr("controls.boundarySeconds")}
         value={props.value}
         onChange={(event) => props.onChange(event.currentTarget.value)}
         onBlur={props.onBlur}
@@ -2393,7 +2426,7 @@ function BoundaryNudgeControls(props: {
         variant="ghost"
         onClick={props.onLeft}
         disabled={props.disabled}
-        title="Nudge nearest boundary left (Q)"
+        title={tr("controls.nudgeLeft")}
         aria-keyshortcuts="Q"
       >
         <ArrowLeft size={17} />
@@ -2403,7 +2436,7 @@ function BoundaryNudgeControls(props: {
         variant="ghost"
         onClick={props.onRight}
         disabled={props.disabled}
-        title="Nudge nearest boundary right (E)"
+        title={tr("controls.nudgeRight")}
         aria-keyshortcuts="E"
       >
         <ArrowRight size={17} />
@@ -2415,7 +2448,7 @@ function BoundaryNudgeControls(props: {
         max="60"
         step="0.1"
         inputMode="decimal"
-        aria-label="Boundary nudge seconds"
+        aria-label={tr("controls.nudgeSeconds")}
         value={props.value}
         onChange={(event) => props.onChange(event.currentTarget.value)}
         onBlur={props.onBlur}
@@ -2427,19 +2460,19 @@ function BoundaryNudgeControls(props: {
 function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onStart: () => void; onPrev: () => void; onNext: () => void }) {
   return (
     <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onStart} title="Start">
+      <Button size="icon" variant="ghost" onClick={props.onStart} title={tr("controls.start")}>
         <Rewind size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPrev} title="Previous boundary (Ctrl+A)" aria-keyshortcuts="Control+A">
+      <Button size="icon" variant="ghost" onClick={props.onPrev} title={tr("controls.previous")} aria-keyshortcuts="Control+A">
         <ChevronsLeft size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPlay} title="Play (Space)" aria-keyshortcuts="Space">
+      <Button size="icon" variant="ghost" onClick={props.onPlay} title={tr("controls.play")} aria-keyshortcuts="Space">
         <Play size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPause} title="Pause (Space)" aria-keyshortcuts="Space">
+      <Button size="icon" variant="ghost" onClick={props.onPause} title={tr("controls.pause")} aria-keyshortcuts="Space">
         <Pause size={17} />
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onNext} title="Next boundary (Ctrl+D)" aria-keyshortcuts="Control+D">
+      <Button size="icon" variant="ghost" onClick={props.onNext} title={tr("controls.next")} aria-keyshortcuts="Control+D">
         <ChevronsRight size={17} />
       </Button>
     </div>
@@ -2449,13 +2482,13 @@ function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onSt
 function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void; onReset: () => void }) {
   return (
     <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onOut} title="Zoom out (Z)" aria-keyshortcuts="Z">
+      <Button size="icon" variant="ghost" onClick={props.onOut} title={tr("controls.zoomOut")} aria-keyshortcuts="Z">
         <Minus size={17} />
       </Button>
-      <Button variant="ghost" size="sm" onClick={props.onReset} title="100% zoom (X)" aria-keyshortcuts="X">
+      <Button variant="ghost" size="sm" onClick={props.onReset} title={tr("controls.zoomReset")} aria-keyshortcuts="X">
         {props.zoom * 100}%
       </Button>
-      <Button size="icon" variant="ghost" onClick={props.onIn} title="Zoom in (C)" aria-keyshortcuts="C">
+      <Button size="icon" variant="ghost" onClick={props.onIn} title={tr("controls.zoomIn")} aria-keyshortcuts="C">
         <Plus size={17} />
       </Button>
     </div>
@@ -2483,7 +2516,7 @@ function StatusPanel({
     <aside className="status-panel">
       <div className="status-main">
         {job?.status === "completed" ? <CheckCircle2 size={16} /> : null}
-        <span>{job?.message || message || "Idle"}</span>
+        <span>{localizeJobMessage(job) || localizeUiMessage(message) || tr("app.idle")}</span>
       </div>
       {job ? <progress value={job.progress} max={1} /> : null}
       {videoInfo ? (
@@ -2492,12 +2525,12 @@ function StatusPanel({
             {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
           </div>
           <div className="meta-line" data-scratch-proxy-status={scratchProxyState}>
-            {scratchProxyStatusLabel(scratchProxyState)}
+            {localizedScratchProxyStatusLabel(scratchProxyState)}
           </div>
           <div className="meta-line waveform-status-line" data-waveform-status={waveformPhase}>
             <span>{waveformStatusLabel(waveformPhase, waveformProgress)}</span>
             {onWaveformRetry ? (
-              <button type="button" className="waveform-retry" onClick={onWaveformRetry}>Retry</button>
+              <button type="button" className="waveform-retry" onClick={onWaveformRetry}>{tr("controls.retryWaveform")}</button>
             ) : null}
           </div>
         </>
@@ -3080,14 +3113,14 @@ function SegmentList(props: {
         <SegmentColumnGroup />
         <thead>
           <tr>
-            <th>Export</th>
-            <th>Title</th>
+            <th>{tr("segments.export")}</th>
+            <th>{tr("segments.title")}</th>
             <th>ID</th>
-            <th>Start</th>
-            <th>End</th>
-            <th>Duration</th>
-            <th>Confidence</th>
-            <th>Text</th>
+            <th>{tr("segments.start")}</th>
+            <th>{tr("segments.end")}</th>
+            <th>{tr("segments.duration")}</th>
+            <th>{tr("segments.confidence")}</th>
+            <th>{tr("segments.text")}</th>
           </tr>
         </thead>
       </table>
@@ -3126,7 +3159,7 @@ function SegmentList(props: {
                       props.onTranscript(segment);
                     }}
                   >
-                    View
+                    {tr("common.view")}
                   </Button>
                 </td>
               </tr>
@@ -3195,7 +3228,7 @@ function EditableTitleCell(props: { segment: Segment; onChange: (title: string) 
     <button
       type="button"
       className="title-edit-button"
-      title="Edit title"
+      title={tr("segments.editTitle")}
       onClick={(event) => {
         event.stopPropagation();
         setDraft(props.segment.title?.trim() ?? "");
@@ -3221,11 +3254,11 @@ function TimestampCommentDialogs(props: {
   if (props.flow.mode === "select") {
     const selectionFlow = props.flow;
     return (
-      <Dialog open title="Choose timestamp guide" onClose={props.onClose}>
+      <Dialog open title={tr("timestamp.choose")} onClose={props.onClose}>
         <p className="dialog-message">
-          Timestamp guides were found in the yt-dlp metadata. Choose the version you want to review and edit.
+          {tr("timestamp.found")}
         </p>
-        <div className="timestamp-comment-candidates" role="radiogroup" aria-label="Timestamp guide candidates">
+        <div className="timestamp-comment-candidates" role="radiogroup" aria-label={tr("timestamp.candidates")}>
           {selectionFlow.candidates.map((candidate) => {
             const selected = candidate.id === selectionFlow.selectedId;
             return (
@@ -3244,8 +3277,8 @@ function TimestampCommentDialogs(props: {
                   <div className="timestamp-comment-candidate-header">
                     <strong>{timestampCommentSourceLabel(candidate)}</strong>
                     <span>{candidate.author}</span>
-                    <span>{candidate.timestamp_count} timestamps</span>
-                    {candidate.like_count !== null ? <span>{candidate.like_count} likes</span> : null}
+                    <span>{tr("timestamp.timestamps", { count: candidate.timestamp_count })}</span>
+                    {candidate.like_count !== null ? <span>{tr("timestamp.likes", { count: candidate.like_count })}</span> : null}
                   </div>
                   <ScrollArea
                     className="timestamp-comment-preview"
@@ -3261,9 +3294,9 @@ function TimestampCommentDialogs(props: {
         </div>
         <div className="dialog-actions">
           <Button variant="secondary" onClick={props.onClose}>
-            Skip
+            {tr("common.skip")}
           </Button>
-          <Button onClick={props.onEditSelected}>Edit selected</Button>
+          <Button onClick={props.onEditSelected}>{tr("timestamp.editSelected")}</Button>
         </div>
       </Dialog>
     );
@@ -3273,7 +3306,7 @@ function TimestampCommentDialogs(props: {
   const candidate = editFlow.candidates.find((item) => item.id === editFlow.candidateId);
   if (!candidate) return null;
   return (
-    <Dialog open title={`Edit ${timestampCommentSourceLabel(candidate).toLowerCase()}`} onClose={props.onClose}>
+    <Dialog open title={tr("timestamp.edit", { source: timestampCommentSourceLabel(candidate) })} onClose={props.onClose}>
       <form
         className="timestamp-comment-edit-form"
         onSubmit={(event) => {
@@ -3282,7 +3315,7 @@ function TimestampCommentDialogs(props: {
         }}
       >
         <p className="dialog-message">
-          Remove timestamps that do not mark songs, such as the stream start, MC, promotions, chat, or announcements.
+          {tr("timestamp.removeNonSongs")}
         </p>
         <Textarea
           className="timestamp-comment-editor"
@@ -3294,15 +3327,15 @@ function TimestampCommentDialogs(props: {
           <div>
             {editFlow.canGoBack ? (
               <Button type="button" variant="secondary" onClick={props.onBack}>
-                Back
+                {tr("common.back")}
               </Button>
             ) : null}
           </div>
           <div className="dialog-action-group">
             <Button type="button" variant="secondary" onClick={props.onClose}>
-              Cancel
+              {tr("common.cancel")}
             </Button>
-            <Button type="submit">Apply to guide</Button>
+            <Button type="submit">{tr("timestamp.apply")}</Button>
           </div>
         </div>
       </form>
@@ -3311,7 +3344,7 @@ function TimestampCommentDialogs(props: {
 }
 
 function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
-  return candidate.source === "description" ? "Video description" : "Comment";
+  return tr(candidate.source === "description" ? "timestamp.description" : "timestamp.comment");
 }
 
 function OutputDialog(props: {
@@ -3330,11 +3363,11 @@ function OutputDialog(props: {
 }) {
   const renderPlans = new Map(props.renderPlanState.plan?.items.map((item) => [item.id, item]));
   return (
-    <Dialog open={props.open} title="Export Review" onClose={props.onClose}>
+    <Dialog open={props.open} title={tr("output.review")} onClose={props.onClose}>
       <ExportRenderSummary state={props.renderPlanState} />
       <div className="output-options">
         <label className="output-template-field">
-          <span>Filename template</span>
+          <span>{tr("settings.filenameTemplate")}</span>
           <Input
             value={props.filenameTemplate}
             onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
@@ -3343,7 +3376,7 @@ function OutputDialog(props: {
           />
         </label>
         <div className="output-template-help">
-          {`Placeholders: ${FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ")}`}
+          {tr("output.placeholders", { placeholders: FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ") })}
         </div>
         {props.error ? <div className="output-template-error">{props.error}</div> : null}
         <label className="output-folder-option">
@@ -3351,7 +3384,7 @@ function OutputDialog(props: {
             checked={props.createSourceFolder}
             onChange={(event) => props.onCreateSourceFolder(event.currentTarget.checked)}
           />
-          <span>{`Create a “${props.sourceFolderName}” folder inside the selected output folder`}</span>
+          <span>{tr("output.createFolder", { name: props.sourceFolderName })}</span>
         </label>
       </div>
       <ScrollArea className="output-list" scrollbars={["vertical"]}>
@@ -3364,13 +3397,13 @@ function OutputDialog(props: {
       </ScrollArea>
       <div className="dialog-actions">
         <Button variant="secondary" onClick={props.onClose}>
-          Back
+          {tr("common.back")}
         </Button>
         <Button
           onClick={props.onExport}
           disabled={Boolean(props.error) || props.items.length === 0 || props.renderPlanState.status !== "ready"}
         >
-          Export
+          {tr("common.export")}
         </Button>
       </div>
     </Dialog>
@@ -3386,14 +3419,14 @@ function SegmentManagementDialog(props: {
 }) {
   const review = props.review;
   return (
-    <Dialog open={Boolean(review)} title={review?.title ?? "Segment Management"} onClose={props.onClose}>
+    <Dialog open={Boolean(review)} title={review?.title ?? tr("segments.management")} onClose={props.onClose}>
       {review ? (
         <>
           <p className="dialog-message">{review.message}</p>
           {review.kind === "sort" ? (
             <div className="segment-sort-comparison">
-              <SegmentReviewPane label="Before" items={review.before} canPreview={props.canPreview} onPreview={props.onPreview} />
-              <SegmentReviewPane label="After" items={review.after} canPreview={props.canPreview} onPreview={props.onPreview} />
+              <SegmentReviewPane label={tr("common.before")} items={review.before} canPreview={props.canPreview} onPreview={props.onPreview} />
+              <SegmentReviewPane label={tr("common.after")} items={review.after} canPreview={props.canPreview} onPreview={props.onPreview} />
             </div>
           ) : (
             <ScrollArea className="output-list segment-management-list" scrollbars={["vertical"]}>
@@ -3401,9 +3434,9 @@ function SegmentManagementDialog(props: {
             </ScrollArea>
           )}
           <div className="dialog-actions">
-            <Button variant="secondary" onClick={props.onClose}>Cancel</Button>
+            <Button variant="secondary" onClick={props.onClose}>{tr("common.cancel")}</Button>
             <Button variant={review.kind === "remove" ? "danger" : "default"} onClick={props.onConfirm}>
-              {review.kind === "remove" ? review.confirmLabel : "Sort Segments"}
+              {review.kind === "remove" ? review.confirmLabel : tr("segments.sort")}
             </Button>
           </div>
         </>
@@ -3454,7 +3487,7 @@ function SegmentReviewRows(props: {
                 ) : null}
               </span>
               <span className="output-meta">
-                ID: {item.segmentId || item.id} / File: {item.filename_stem}{suffix}
+                ID: {item.segmentId || item.id} / {tr("output.file")}: {item.filename_stem}{suffix}
               </span>
               {renderPlan ? <span className="output-render-detail">{exportRenderDetail(renderPlan)}</span> : null}
             </span>
@@ -3469,11 +3502,11 @@ function SegmentReviewRows(props: {
 }
 
 function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportPlanState["status"] }) {
-  if (props.status === "loading") return <span className="render-badge render-badge-checking">Checking</span>;
-  if (!props.plan) return <span className="render-badge render-badge-unknown">Unknown</span>;
+  if (props.status === "loading") return <span className="render-badge render-badge-checking">{tr("output.checking")}</span>;
+  if (!props.plan) return <span className="render-badge render-badge-unknown">{tr("common.unknownTitle")}</span>;
   return (
     <span className={`render-badge ${props.plan.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
-      {props.plan.smart_render ? "Smart render" : "Full re-encode"}
+      {tr(props.plan.smart_render ? "output.smart" : "output.full")}
     </span>
   );
 }
@@ -3481,13 +3514,13 @@ function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportP
 function ExportRenderSummary(props: { state: ExportPlanState }) {
   const state = props.state;
   if (state.status === "loading" || state.status === "idle") {
-    return <div className="export-render-summary"><ExportRenderBadge status="loading" /><span>Checking source format and keyframes for each clip.</span></div>;
+    return <div className="export-render-summary"><ExportRenderBadge status="loading" /><span>{tr("output.checkingSummary")}</span></div>;
   }
   if (state.status === "error") {
     return (
       <div className="export-render-summary export-render-summary-error">
         <ExportRenderBadge status="error" />
-        <span>Render mode could not be checked: {state.error}</span>
+        <span>{tr("output.checkFailed", { error: state.error })}</span>
       </div>
     );
   }
@@ -3496,24 +3529,24 @@ function ExportRenderSummary(props: { state: ExportPlanState }) {
   const reencodeCount = state.plan.items.length - smartCount;
   return (
     <div className="export-render-summary">
-      {smartCount > 0 ? <span className="render-badge render-badge-smart">Smart render {smartCount}</span> : null}
-      {reencodeCount > 0 ? <span className="render-badge render-badge-reencode">Full re-encode {reencodeCount}</span> : null}
-      <span>{reencodeCount === 0 ? "All clips can copy their keyframe-aligned GOPs." : "Render mode is determined separately for each clip."}</span>
+      {smartCount > 0 ? <span className="render-badge render-badge-smart">{tr("output.smartCount", { count: smartCount })}</span> : null}
+      {reencodeCount > 0 ? <span className="render-badge render-badge-reencode">{tr("output.fullCount", { count: reencodeCount })}</span> : null}
+      <span>{tr(reencodeCount === 0 ? "output.allSmart" : "output.mixed")}</span>
     </div>
   );
 }
 
 function exportRenderDetail(plan: ExportRenderPlanItem) {
   if (plan.smart_render) {
-    return `${plan.video_codec.toUpperCase()} / copies ${formatDuration(plan.copied_seconds)}; re-encodes ${formatDuration(plan.encoded_seconds)} at the boundaries`;
+    return tr("output.smartDetail", { codec: plan.video_codec.toUpperCase(), copied: formatDuration(plan.copied_seconds), encoded: formatDuration(plan.encoded_seconds) });
   }
   if (plan.fallback_reason?.startsWith("no keyframe-aligned GOP")) {
-    return "No complete keyframe-aligned GOP is inside this range; the entire clip will be re-encoded.";
+    return tr("output.noGop");
   }
   if (plan.fallback_reason?.startsWith("unsupported smart-render codec/container")) {
-    return `${plan.video_codec.toUpperCase() || "Unknown codec"} in ${plan.container_family.toUpperCase()} is not eligible for smart rendering.`;
+    return tr("output.unsupported", { codec: plan.video_codec.toUpperCase() || tr("common.unknownTitle"), container: plan.container_family.toUpperCase() });
   }
-  return plan.fallback_reason || "The entire clip will be re-encoded.";
+  return plan.fallback_reason || tr("output.fullDetail");
 }
 
 function formatDuration(seconds: number) {
@@ -3532,25 +3565,25 @@ function ExportProgressDialog(props: {
   const failed = status === "failed";
   const renderPlanState = actualExportPlanState(props.job) ?? props.renderPlanState;
   return (
-    <Dialog open={props.open} title="Export Progress" onClose={props.onClose}>
+    <Dialog open={props.open} title={tr("output.progress")} onClose={props.onClose}>
       <div className="export-progress">
         <ExportRenderSummary state={renderPlanState} />
         <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>{props.job?.message || "Preparing export."}</span>
+          <span>{localizeJobMessage(props.job) || tr("output.preparing")}</span>
           <strong>{Math.round(progress * 100)}%</strong>
         </div>
         <progress value={progress} max={1} />
         <div className="export-progress-note">
           {failed
-            ? props.job?.error || "Export failed."
+            ? props.job?.error || tr("output.failed")
             : complete
-              ? "Export complete."
-              : "Smart-render clips copy eligible GOPs and re-encode their boundaries; other clips are fully re-encoded."}
+              ? tr("output.complete")
+              : tr("output.progressNote")}
         </div>
       </div>
       <div className="dialog-actions">
         <Button variant="secondary" onClick={props.onClose}>
-          {complete || failed ? "Close" : "Hide"}
+          {tr(complete || failed ? "common.close" : "common.hide")}
         </Button>
       </div>
     </Dialog>
@@ -3600,13 +3633,13 @@ function FfmpegCheckDialog(props: {
 }) {
   const downloadUrl = props.result?.download_url || FFMPEG_DOWNLOAD_URL;
   return (
-    <Dialog open={props.open} title="ffmpeg Check" onClose={props.onClose}>
+    <Dialog open={props.open} title={tr("ffmpeg.title")} onClose={props.onClose}>
       <div className="ffmpeg-check">
         {props.pending ? (
-          <p className="dialog-message">Checking ffmpeg.exe and ffprobe.exe.</p>
+          <p className="dialog-message">{tr("ffmpeg.checking")}</p>
         ) : props.result?.ok ? (
           <>
-            <p className="dialog-message">ffmpeg.exe and ffprobe.exe are available.</p>
+            <p className="dialog-message">{tr("ffmpeg.available")}</p>
             <div className="ffmpeg-check-paths">
               <span>ffmpeg</span>
               <code>{props.result.ffmpeg}</code>
@@ -3616,16 +3649,16 @@ function FfmpegCheckDialog(props: {
           </>
         ) : (
           <>
-            <p className="dialog-message">ffmpeg.exe and ffprobe.exe were not found.</p>
-            <pre className="ffmpeg-check-error">{props.result?.error || "ffmpeg check failed."}</pre>
+            <p className="dialog-message">{tr("ffmpeg.missing")}</p>
+            <pre className="ffmpeg-check-error">{props.result?.error || tr("ffmpeg.failed")}</pre>
             <a className="external-link" href={downloadUrl} target="_blank" rel="noreferrer">
-              Open ffmpeg download page
+              {tr("ffmpeg.download")}
             </a>
           </>
         )}
       </div>
       <div className="dialog-actions">
-        <Button onClick={props.onClose}>OK</Button>
+        <Button onClick={props.onClose}>{tr("common.ok")}</Button>
       </div>
     </Dialog>
   );
@@ -3791,9 +3824,9 @@ function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
     case "rms":
       return "RMS";
     case "peak":
-      return "Peak Envelope";
+      return tr("settings.peak");
     case "peak-rms":
-      return "Peak + RMS";
+      return tr("settings.peakRms");
   }
 }
 
@@ -3884,7 +3917,7 @@ function filenameWithoutExtension(name: string) {
 function deviceLabel(device: AnalysisDevice | WhisperDevice) {
   switch (device) {
     case "auto":
-      return "Auto";
+      return tr("common.auto");
     case "npu":
       return "NPU";
     case "gpu":

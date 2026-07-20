@@ -91,6 +91,16 @@ settings resume only unfinished segments. All Whisper controls, including
 **Transcribe / Re-transcribe**, are kept in the Settings dialog instead of the
 main editing screen.
 
+## Display Language
+
+songcut follows the Electron/system application language by default. In
+**Settings > Language**, choose **System default**, **English**, or **Japanese**.
+The selection applies the next time songcut starts, which keeps the application
+menu, native dialogs, shortcut labels, and editor UI in the same language. The
+language preference is application-wide and is not stored in `.songcut`
+projects. In Japanese, this settings block displays English and Japanese side
+by side; in English it uses English labels only.
+
 # Editing Video Segments
 
 ![Edit a segment](image/edit-segment.png)

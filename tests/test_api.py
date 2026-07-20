@@ -32,6 +32,7 @@ from songcut.api import (
     ffmpeg_check,
     health,
     probe,
+    update_job,
     waveform_job_updates,
 )
 from fastapi import HTTPException
@@ -80,6 +81,25 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["segments"][0]["id"], "guide-001")
         start_job.assert_called_once()
         transcribe_segments.assert_not_called()
+
+    def test_job_messages_keep_english_and_add_localization_metadata(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["job-001"] = JobRecord(
+                id="job-001",
+                kind="transcription",
+                status="running",
+                created_at=now,
+                updated_at=now,
+            )
+
+        update_job("job-001", message="Transcribed 2/5 segments.")
+
+        with _jobs_lock:
+            updated = _jobs["job-001"]
+        self.assertEqual(updated.message, "Transcribed 2/5 segments.")
+        self.assertEqual(updated.message_code, "transcriptionProgress")
+        self.assertEqual(updated.message_args, {"current": 2, "total": 5})
 
     def test_waveform_updates_return_only_points_after_the_cursor(self) -> None:
         now = time.time()

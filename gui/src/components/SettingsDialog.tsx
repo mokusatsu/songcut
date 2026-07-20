@@ -6,6 +6,7 @@ import { WhisperSettingsPanel } from "@/components/WhisperSettingsPanel";
 import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import type { WaveformDisplayMode } from "@/types";
+import { tr, type UiLanguagePreference } from "@/i18n";
 
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
 
@@ -24,6 +25,8 @@ export function SettingsDialog(props: {
   hasSegments: boolean;
   transcriptStale: boolean;
   sourceAvailable: boolean;
+  localePreference: UiLanguagePreference;
+  localeRestartRequired: boolean;
   onClose: () => void;
   onScratchPreviewMillisecondsInput: (value: string) => void;
   onScratchAudioProxyEnabled: (enabled: boolean) => void;
@@ -34,16 +37,17 @@ export function SettingsDialog(props: {
   onPrepareWhisperModel: () => void;
   onTranscribe: () => void;
   onFfmpegCheck: () => void;
+  onLocalePreference: (preference: UiLanguagePreference) => void;
 }) {
   return (
-    <Dialog open={props.open} title="Settings" onClose={props.onClose}>
+    <Dialog open={props.open} title={tr("settings.title")} onClose={props.onClose}>
       <ScrollArea className="settings-dialog-scroll" viewportClassName="settings-dialog-viewport">
         <div className="settings-dialog-content">
         <section className="settings-section" aria-labelledby="playback-settings-heading">
-          <h3 id="playback-settings-heading">Playback and analysis</h3>
+          <h3 id="playback-settings-heading">{tr("settings.playback")}</h3>
           <div className="settings-grid">
             <label className="settings-field" htmlFor="scratch-preview-milliseconds">
-              <span>Scratch preview duration</span>
+              <span>{tr("settings.scratchDuration")}</span>
               <span className="settings-inline-control">
                 <Input
                   id="scratch-preview-milliseconds"
@@ -65,28 +69,28 @@ export function SettingsDialog(props: {
                 checked={props.scratchAudioProxyEnabled}
                 onChange={(event) => props.onScratchAudioProxyEnabled(event.currentTarget.checked)}
               />
-              Use scratch audio proxy
+              {tr("settings.useProxy")}
             </label>
             <label className="settings-field">
-              <span>Waveform display</span>
+              <span>{tr("settings.waveform")}</span>
               <select
                 value={props.waveformDisplayMode}
                 onChange={(event) => props.onWaveformDisplayMode(event.currentTarget.value as WaveformDisplayMode)}
               >
                 <option value="rms">RMS</option>
-                <option value="peak">Peak Envelope</option>
-                <option value="peak-rms">Peak + RMS</option>
+                <option value="peak">{tr("settings.peak")}</option>
+                <option value="peak-rms">{tr("settings.peakRms")}</option>
               </select>
             </label>
             <label className="settings-field">
-              <span>Singing analysis device</span>
+              <span>{tr("settings.analysisDevice")}</span>
               <select
                 value={props.analysisDevice}
                 onChange={(event) => props.onAnalysisDevice(event.currentTarget.value as AnalysisDevice)}
               >
                 {inferenceDevices.map((device) => (
                   <option key={device} value={device}>
-                    {device === "auto" ? "Auto" : device.toUpperCase()}
+                    {device === "auto" ? tr("common.auto") : device.toUpperCase()}
                   </option>
                 ))}
               </select>
@@ -95,7 +99,7 @@ export function SettingsDialog(props: {
         </section>
 
         <section className="settings-section" aria-labelledby="whisper-settings-heading">
-          <h3 id="whisper-settings-heading">Whisper transcription</h3>
+          <h3 id="whisper-settings-heading">{tr("settings.whisper")}</h3>
           <WhisperSettingsPanel
             settings={props.whisperSettings}
             status={props.whisperStatus}
@@ -110,9 +114,9 @@ export function SettingsDialog(props: {
         </section>
 
         <section className="settings-section" aria-labelledby="export-settings-heading">
-          <h3 id="export-settings-heading">Export</h3>
+          <h3 id="export-settings-heading">{tr("settings.export")}</h3>
           <label className="settings-field" htmlFor="export-filename-template">
-            <span>Filename template</span>
+            <span>{tr("settings.filenameTemplate")}</span>
             <Input
               id="export-filename-template"
               value={props.filenameTemplate}
@@ -123,30 +127,48 @@ export function SettingsDialog(props: {
             />
           </label>
           <span className="settings-field-help">
-            {`Available placeholders: ${FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ")}`}
+            {tr("settings.placeholders", { placeholders: FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ") })}
           </span>
           {props.filenameTemplateError ? (
             <span className="settings-field-error" role="alert">
               {props.filenameTemplateError}
             </span>
           ) : null}
-          <span className="settings-field-help">This setting is saved separately for each .songcut project.</span>
+          <span className="settings-field-help">{tr("settings.projectOnly")}</span>
+        </section>
+
+        <section className="settings-section" aria-labelledby="language-settings-heading">
+          <h3 id="language-settings-heading">{tr("settings.languageHeading")}</h3>
+          <label className="settings-field" htmlFor="ui-language">
+            <select
+              id="ui-language"
+              value={props.localePreference}
+              onChange={(event) => props.onLocalePreference(event.currentTarget.value as UiLanguagePreference)}
+            >
+              <option value="system">{tr("settings.system")}</option>
+              <option value="en">{tr("settings.english")}</option>
+              <option value="ja">{tr("settings.japanese")}</option>
+            </select>
+          </label>
+          <span className="settings-field-help" data-locale-restart-required={props.localeRestartRequired || undefined}>
+            {tr("settings.languageNextStart")}
+          </span>
         </section>
 
         <section className="settings-section settings-tools" aria-labelledby="tools-settings-heading">
           <div>
-            <h3 id="tools-settings-heading">Tools</h3>
-            <p>Check the ffmpeg and ffprobe executables used by analysis and export.</p>
+            <h3 id="tools-settings-heading">{tr("settings.tools")}</h3>
+            <p>{tr("settings.toolsHelp")}</p>
           </div>
           <Button variant="secondary" onClick={props.onFfmpegCheck} disabled={!props.apiReady}>
-            ffmpeg Check
+            {tr("settings.ffmpegCheck")}
           </Button>
         </section>
         </div>
       </ScrollArea>
       <div className="dialog-actions settings-dialog-actions">
-        <span>Changes are applied immediately and project settings are autosaved.</span>
-        <Button onClick={props.onClose}>Done</Button>
+        <span>{tr("settings.applied")}</span>
+        <Button onClick={props.onClose}>{tr("common.done")}</Button>
       </div>
     </Dialog>
   );

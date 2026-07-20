@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cancelOrReleaseWaveform, getWaveformUpdates, startWaveform } from "@/lib/api";
 import type { JobRecord, WaveformMetadata, WaveformPoint, WaveformUpdate } from "@/types";
+import { tr } from "@/i18n";
 
 export type WaveformPhase = "idle" | "streaming" | "finalizing" | "ready" | "failed";
 
@@ -64,7 +65,7 @@ export function useProgressiveWaveform(
         waveform: points.map((point) => ({ ...point })),
         chunks: [],
         progress: points.length ? 1 : 0,
-        message: points.length ? "Waveform ready." : "",
+        message: points.length ? tr("messages.waveformReady") : "",
         error: null,
         metadata,
         generated: false
@@ -84,7 +85,7 @@ export function useProgressiveWaveform(
         waveform: [],
         chunks: [],
         progress: 0,
-        message: "Preparing waveform.",
+        message: tr("messages.waveformPreparing"),
         error: null,
         metadata: null,
         generated: true
@@ -138,7 +139,7 @@ export function useProgressiveWaveform(
                     phase: "finalizing",
                     waveform: allPoints,
                     progress: 1,
-                    message: "Finalizing waveform.",
+                    message: tr("messages.waveformFinalizing"),
                     metadata: update.metadata
                   }
                 : current
@@ -148,7 +149,7 @@ export function useProgressiveWaveform(
             if (generationRef.current !== generation) return;
             setState((current) =>
               current.sourcePath === sourcePath
-                ? { ...current, phase: "ready", chunks: [], message: "Waveform ready." }
+                ? { ...current, phase: "ready", chunks: [], message: tr("messages.waveformReady") }
                 : current
             );
             onCompletedRef.current(sourcePath, allPoints, update.metadata);
@@ -163,7 +164,7 @@ export function useProgressiveWaveform(
         const message = String(error);
         setState((current) =>
           current.sourcePath === sourcePath
-            ? { ...current, phase: "failed", progress: 1, message: "Waveform unavailable.", error: message }
+            ? { ...current, phase: "failed", progress: 1, message: tr("messages.waveformUnavailable"), error: message }
             : current
         );
         if (started) {
@@ -171,7 +172,7 @@ export function useProgressiveWaveform(
             ...started,
             status: "failed",
             progress: 1,
-            message: "Waveform unavailable.",
+            message: tr("messages.waveformUnavailable"),
             error: message,
             updated_at: Date.now() / 1000
           });
@@ -204,6 +205,8 @@ function jobFromWaveformUpdate(started: JobRecord, update: WaveformUpdate): JobR
     status: update.status,
     progress: update.progress,
     message: update.message,
+    message_code: update.message_code,
+    message_args: update.message_args,
     error: update.error,
     result: update.metadata,
     updated_at: Date.now() / 1000

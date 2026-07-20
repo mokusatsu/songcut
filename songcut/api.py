@@ -115,6 +115,8 @@ class JobRecord(BaseModel):
     status: str
     progress: float = 0.0
     message: str = ""
+    message_code: str | None = None
+    message_args: dict[str, str | int | float] | None = None
     result: Any = None
     error: str | None = None
     created_at: float
@@ -252,6 +254,8 @@ def waveform_job_updates(job_id: str, cursor: int = 0, limit: int = 2048) -> dic
             "status": job.status,
             "progress": job.progress,
             "message": job.message,
+            "message_code": job.message_code,
+            "message_args": job.message_args,
             "error": job.error,
             "cursor": end,
             "points": update_points,
@@ -401,6 +405,7 @@ def start_job(kind: str, target, *, cancel_event: threading.Event | None = None)
 
 
 def update_job(job_id: str, **changes: Any) -> None:
+    _add_message_metadata(changes)
     with _jobs_lock:
         current = _jobs[job_id]
         data = current.model_dump()
@@ -410,6 +415,7 @@ def update_job(job_id: str, **changes: Any) -> None:
 
 
 def update_job_unless_cancelled(job_id: str, cancel_event: threading.Event, **changes: Any) -> bool:
+    _add_message_metadata(changes)
     with _jobs_lock:
         current = _jobs[job_id]
         if cancel_event.is_set() or current.status == "cancelled":
@@ -419,6 +425,51 @@ def update_job_unless_cancelled(job_id: str, cancel_event: threading.Event, **ch
         data["updated_at"] = time.time()
         _jobs[job_id] = JobRecord(**data)
         return True
+
+
+_MESSAGE_CODES = {
+    "Analyzing singing segments.": "analysisRunning",
+    "Singing analysis complete.": "analysisSingingComplete",
+    "Analysis complete.": "analysisComplete",
+    "Preparing waveform.": "waveformPreparing",
+    "Waveform ready.": "waveformReady",
+    "Waveform generation cancelled.": "waveformCancelled",
+    "Preparing Whisper transcription.": "transcriptionPreparing",
+    "Transcription complete.": "transcriptionComplete",
+    "Export complete.": "exportComplete",
+    "Preparing AAC scratch proxy.": "proxyPreparing",
+    "Scratch proxy ready.": "proxyReady",
+    "Scratch proxy generation cancelled.": "proxyCancelled",
+    "Creating AAC scratch proxy.": "proxyCreating",
+}
+
+
+def _add_message_metadata(changes: dict[str, Any]) -> None:
+    if "message" not in changes or "message_code" in changes:
+        return
+    message = str(changes["message"])
+    changes["message_code"] = _MESSAGE_CODES.get(message)
+    changes["message_args"] = None
+    dynamic_prefixes = (
+        ("Downloading Whisper ", "whisperDownloading", "model"),
+        ("Whisper ", "whisperReady", "model"),
+        ("Exporting ", "exportingItem", "id"),
+    )
+    for prefix, code, argument in dynamic_prefixes:
+        if message.startswith(prefix) and message.endswith("."):
+            value = message[len(prefix):-1]
+            if code == "whisperReady" and not value.endswith(" model ready"):
+                continue
+            if code == "whisperReady":
+                value = value.removesuffix(" model ready")
+            changes["message_code"] = code
+            changes["message_args"] = {argument: value}
+            return
+    if message.startswith("Transcribed ") and message.endswith(" segments."):
+        counts = message[len("Transcribed "):-len(" segments.")].split("/", 1)
+        if len(counts) == 2 and all(value.isdigit() for value in counts):
+            changes["message_code"] = "transcriptionProgress"
+            changes["message_args"] = {"current": int(counts[0]), "total": int(counts[1])}
 
 
 def fail_job(job_id: str, exc: Exception) -> None:

@@ -1,5 +1,6 @@
 import type { PropsWithChildren } from "react";
 import { Button } from "./button";
+import { tr } from "@/i18n";
 
 type DialogProps = PropsWithChildren<{
   open: boolean;
@@ -15,7 +16,7 @@ export function Dialog({ open, title, onClose, children }: DialogProps) {
         <div className="dialog-header">
           <h2>{title}</h2>
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
+            {tr("common.close")}
           </Button>
         </div>
         {children}

@@ -14,7 +14,7 @@ export type SegmentPair = {
   exportCandidate: ExportCandidate;
 };
 
-export function createManualSegment(existing: readonly Segment[], currentTime: number, sourceDuration: number): SegmentPair {
+export function createManualSegment(existing: readonly Segment[], currentTime: number, sourceDuration: number, title = "New Segment"): SegmentPair {
   const id = nextManualSegmentId(existing);
   const boundedDuration = Math.max(0, sourceDuration);
   const latestStart = Math.max(0, boundedDuration - MIN_SEGMENT_SECONDS);
@@ -24,7 +24,7 @@ export function createManualSegment(existing: readonly Segment[], currentTime: n
     : start + NEW_SEGMENT_SECONDS;
   const segment: Segment = {
     id,
-    title: "New Segment",
+    title,
     filename_stem: id,
     start,
     end,

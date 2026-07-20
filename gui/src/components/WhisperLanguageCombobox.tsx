@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { currentUiLanguage, tr, type UiLanguage } from "@/i18n";
 
 export type WhisperLanguageOption = {
   code: string;
@@ -14,16 +15,29 @@ export const PRIMARY_WHISPER_LANGUAGES: readonly WhisperLanguageOption[] = [
 ];
 
 const primaryCodes = new Set(PRIMARY_WHISPER_LANGUAGES.map((language) => language.code));
-const labelCollator = new Intl.Collator("en", { sensitivity: "base" });
 
+export function localizeWhisperLanguages(
+  languages: readonly WhisperLanguageOption[],
+  locale: UiLanguage,
+): WhisperLanguageOption[] {
+  const displayNames = new Intl.DisplayNames([locale], { type: "language" });
+  return languages.map((language) => ({
+    code: language.code,
+    label: language.code === "auto" ? (locale === "ja" ? "自動検出" : "Auto detect") : displayNames.of(language.code) ?? language.label,
+  }));
+}
 export function rankWhisperLanguages(
   languages: readonly WhisperLanguageOption[],
   query: string,
+  locale: UiLanguage = "en",
 ): WhisperLanguageOption[] {
+  const labelCollator = new Intl.Collator(locale, { sensitivity: "base" });
+  const localizedPrimary = localizeWhisperLanguages(PRIMARY_WHISPER_LANGUAGES, locale);
+  const localizedLanguages = localizeWhisperLanguages(languages, locale);
   const byCode = new Map<string, WhisperLanguageOption>(
-    PRIMARY_WHISPER_LANGUAGES.map((language) => [language.code, language]),
+    localizedPrimary.map((language) => [language.code, language]),
   );
-  for (const language of languages) {
+  for (const language of localizedLanguages) {
     const code = language.code.trim().toLocaleLowerCase();
     const label = language.label.trim();
     if (!code || !label || primaryCodes.has(code) || byCode.has(code)) continue;
@@ -33,7 +47,7 @@ export function rankWhisperLanguages(
   const secondary = [...byCode.values()]
     .filter((language) => !primaryCodes.has(language.code))
     .sort((left, right) => labelCollator.compare(left.label, right.label) || left.code.localeCompare(right.code));
-  const ordered = [...PRIMARY_WHISPER_LANGUAGES, ...secondary];
+  const ordered = [...localizedPrimary, ...secondary];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return ordered;
 
@@ -74,16 +88,17 @@ export function WhisperLanguageCombobox(props: {
   languages: readonly WhisperLanguageOption[];
   onChange: (code: string) => void;
 }) {
+  const locale = currentUiLanguage();
   const inputId = useId();
   const listboxId = `${inputId}-listbox`;
   const inputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
-  const allLanguages = useMemo(() => rankWhisperLanguages(props.languages, ""), [props.languages]);
+  const allLanguages = useMemo(() => rankWhisperLanguages(props.languages, "", locale), [props.languages, locale]);
   const visibleLanguages = useMemo(
-    () => rankWhisperLanguages(props.languages, query),
-    [props.languages, query],
+    () => rankWhisperLanguages(props.languages, query, locale),
+    [props.languages, query, locale],
   );
   const selected = allLanguages.find((language) => language.code === props.value) ?? null;
 
@@ -93,7 +108,7 @@ export function WhisperLanguageCombobox(props: {
   }, [open, visibleLanguages.length]);
 
   const openList = () => {
-    const unfiltered = rankWhisperLanguages(props.languages, "");
+    const unfiltered = rankWhisperLanguages(props.languages, "", locale);
     setQuery("");
     setOpen(true);
     setActiveIndex(Math.max(0, unfiltered.findIndex((language) => language.code === props.value)));
@@ -118,7 +133,7 @@ export function WhisperLanguageCombobox(props: {
         id={inputId}
         type="text"
         role="combobox"
-        aria-label="Language"
+        aria-label={tr("whisper.language")}
         aria-autocomplete="list"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -167,7 +182,7 @@ export function WhisperLanguageCombobox(props: {
       <button
         type="button"
         className="language-combobox-toggle"
-        aria-label={open ? "Close language options" : "Open language options"}
+        aria-label={tr(open ? "whisper.closeLanguages" : "whisper.openLanguages")}
         aria-expanded={open}
         aria-controls={listboxId}
         tabIndex={-1}
@@ -184,7 +199,7 @@ export function WhisperLanguageCombobox(props: {
         {open ? "▴" : "▾"}
       </button>
       {open ? (
-        <ul id={listboxId} className="language-combobox-list" role="listbox" aria-label="Whisper languages">
+        <ul id={listboxId} className="language-combobox-list" role="listbox" aria-label={tr("whisper.languages")}>
           {visibleLanguages.length ? (
             visibleLanguages.map((language, index) => {
               const isSelected = language.code === props.value;
@@ -212,7 +227,7 @@ export function WhisperLanguageCombobox(props: {
             })
           ) : (
             <li className="language-combobox-empty" role="option" aria-disabled="true">
-              No matching languages
+              {tr("whisper.noLanguages")}
             </li>
           )}
         </ul>
