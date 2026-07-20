@@ -30,7 +30,7 @@ def probe_video(ffprobe: Path, source: Path) -> dict[str, Any]:
         source,
         [
             "-show_entries",
-            "format=duration,bit_rate:stream=index,codec_type,codec_name,width,height,avg_frame_rate,bit_rate,duration",
+            "format=format_name,duration,bit_rate:stream=index,codec_type,codec_name,width,height,avg_frame_rate,bit_rate,duration",
         ],
     )
     video_stream = next((item for item in data.get("streams", []) if item.get("codec_type") == "video"), {})
@@ -39,6 +39,7 @@ def probe_video(ffprobe: Path, source: Path) -> dict[str, Any]:
     return {
         "path": str(source),
         "name": source.name,
+        "format_name": str(data.get("format", {}).get("format_name") or ""),
         "duration": round(duration, 3),
         "bit_rate": int(float(data.get("format", {}).get("bit_rate") or video_stream.get("bit_rate") or 0)),
         "video": {

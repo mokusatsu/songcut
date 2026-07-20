@@ -419,12 +419,18 @@ Toolbar controls:
     to the last 5 seconds and play that tail.
 - Confirming export opens a native output directory dialog, then starts the
   backend export job.
-- Before export, the backend evaluates each selected range against the source
-  codec, container, and keyframes. Export Review shows a green `Smart render`
-  badge when that range contains GOPs that can be copied, or an amber
-  `Full re-encode` badge with the reason when it does not. Because eligibility
-  depends on the range, a single export can contain both modes. The displayed
-  filename extension also follows the planned output container.
+- Export Review initially estimates smart-render compatibility from the source
+  container and video codec without scanning keyframes. Each selected range is
+  labeled `Not checked` until the user explicitly presses
+  `Check smart rendering details`. That action evaluates the ranges and changes
+  each label to green `Smart render` or amber `Full re-encode`, with the reason.
+  Because eligibility depends on the range, a single export can contain both
+  modes. Detailed checking is optional; export performs its own render planning.
+  The displayed filename extension follows the estimated or checked output
+  container.
+- Detailed checking runs one selected range at a time. Its button reports
+  `Checking... n/total`; completed rows immediately switch from `Not checked`
+  to their result while the remaining rows stay unchanged until processed.
 - Export Progress uses neutral export wording and repeats the mode summary.
   After completion it reflects the actual returned plans, including any smart
   pipeline failure that caused a full re-encode fallback.

@@ -1177,10 +1177,17 @@ tr.selected:hover {
 }
 
 .render-badge-checking,
+.render-badge-unchecked,
 .render-badge-unknown {
   color: #c0ccd1;
   background: #26343a;
   border-color: #53656d;
+}
+
+.render-badge-error {
+  color: #ffc1c1;
+  background: #48282b;
+  border-color: #8b4a50;
 }
 
 .output-list .scroll-area-viewport {

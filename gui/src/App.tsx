@@ -113,6 +113,7 @@ import type {
   JobRecord,
   ScratchProxyResult,
   Segment,
+  SmartRenderEstimate,
   Transcript,
   TimestampCommentCandidate,
   VideoInfo,
@@ -152,7 +153,8 @@ type OutputItem = {
 };
 
 type ExportPlanState =
-  | { status: "idle" | "loading"; plan: null; error: null }
+  | { status: "idle"; plan: null; error: null }
+  | { status: "loading"; plan: ExportRenderPlan; error: null; completed: number; total: number; currentId: string | null }
   | { status: "ready"; plan: ExportRenderPlan; error: null }
   | { status: "error"; plan: null; error: string };
 
@@ -307,26 +309,41 @@ export default function App(props: {
     () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
     [segments, exportCandidates, filenameTemplate]
   );
-  const exportPlanKey = useMemo(
-    () => outputPlan.items.filter((item) => item.checked).map((item) => `${item.id}:${item.start}:${item.end}`).join("|"),
-    [outputPlan.items]
-  );
-  useEffect(() => {
-    if (!outputOpen || !apiBaseUrl || !videoPath) return;
+  function openOutputReview() {
+    setExportPlanState({ status: "idle", plan: null, error: null });
+    setOutputOpen(true);
+  }
+
+  async function checkExportRenderDetails() {
+    if (!apiBaseUrl || !videoPath) return;
     const items = outputPlan.items.filter((item) => item.checked);
-    let cancelled = false;
-    setExportPlanState({ status: "loading", plan: null, error: null });
-    void getExportPlan(apiBaseUrl, videoPath, items)
-      .then((plan) => {
-        if (!cancelled) setExportPlanState({ status: "ready", plan, error: null });
-      })
-      .catch((error) => {
-        if (!cancelled) setExportPlanState({ status: "error", plan: null, error: String(error) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBaseUrl, exportPlanKey, outputOpen, videoPath]);
+    let plannedItems: ExportRenderPlanItem[] = [];
+    setExportPlanState({
+      status: "loading",
+      plan: { items: plannedItems },
+      error: null,
+      completed: 0,
+      total: items.length,
+      currentId: items[0]?.id ?? null
+    });
+    try {
+      for (let index = 0; index < items.length; index += 1) {
+        const result = await getExportPlan(apiBaseUrl, videoPath, [items[index]]);
+        plannedItems = [...plannedItems, ...result.items];
+        setExportPlanState({
+          status: "loading",
+          plan: { items: plannedItems },
+          error: null,
+          completed: index + 1,
+          total: items.length,
+          currentId: items[index + 1]?.id ?? null
+        });
+      }
+      setExportPlanState({ status: "ready", plan: { items: plannedItems }, error: null });
+    } catch (error) {
+      setExportPlanState({ status: "error", plan: null, error: localizedError(error) });
+    }
+  }
   const exportJob = taskRegistry.tasks.export ?? null;
   const transcriptionJob = taskRegistry.tasks.transcription ?? null;
   const activeJob = taskRegistry.activeTask;
@@ -1764,7 +1781,7 @@ export default function App(props: {
           playEndBoundary();
           break;
         case "export-movie":
-          if (checkedCount > 0) setOutputOpen(true);
+          if (checkedCount > 0) openOutputReview();
           break;
         case "export-timestamp":
           void exportTimestampText(command.format);
@@ -1911,7 +1928,7 @@ export default function App(props: {
             <Wand2 size={16} />
             {tr("common.analyze")}
           </Button>
-          <Button variant="secondary" onClick={() => setOutputOpen(true)} disabled={checkedCount === 0 || !sourceAvailable}>
+          <Button variant="secondary" onClick={openOutputReview} disabled={checkedCount === 0 || !sourceAvailable}>
             <Scissors size={16} />
             {tr("common.export")}
           </Button>
@@ -2050,6 +2067,7 @@ export default function App(props: {
       <OutputDialog
         open={outputOpen}
         items={outputPlan.items}
+        estimate={videoInfo?.smart_render_estimate ?? null}
         renderPlanState={exportPlanState}
         error={localizeFilenameTemplateError(outputPlan.error)}
         filenameTemplate={filenameTemplate}
@@ -2059,6 +2077,7 @@ export default function App(props: {
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
         onFilenameTemplate={updateFilenameTemplate}
         onCreateSourceFolder={setCreateSourceFolder}
+        onCheckRenderDetails={checkExportRenderDetails}
         onExport={async () => {
           const dir = await window.songcut.selectOutputDirectory();
           if (dir) await exportClips(dir, createSourceFolder);
@@ -2160,6 +2179,7 @@ export default function App(props: {
       <ExportProgressDialog
         open={exportProgressOpen}
         job={exportJob}
+        estimate={videoInfo?.smart_render_estimate ?? null}
         renderPlanState={exportPlanState}
         onClose={() => setExportProgressOpen(false)}
       />
@@ -2303,12 +2323,14 @@ function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
   return {
     path: document.source.absolute_path,
     name: document.source.filename,
+    format_name: "",
     duration: document.source.duration_seconds,
     bit_rate: 0,
     video: {},
     audio: {},
     timestamp_comment_candidates: [],
-    info_json_warning: "Source media is missing."
+    info_json_warning: "Source media is missing.",
+    smart_render_estimate: null
   };
 }
 
@@ -3368,6 +3390,7 @@ function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
 function OutputDialog(props: {
   open: boolean;
   items: OutputItem[];
+  estimate: SmartRenderEstimate | null;
   renderPlanState: ExportPlanState;
   error: string | null;
   filenameTemplate: string;
@@ -3377,12 +3400,13 @@ function OutputDialog(props: {
   onPreview: (item: OutputItem) => void;
   onFilenameTemplate: (value: string) => void;
   onCreateSourceFolder: (value: boolean) => void;
+  onCheckRenderDetails: () => Promise<void>;
   onExport: () => Promise<void>;
 }) {
   const renderPlans = new Map(props.renderPlanState.plan?.items.map((item) => [item.id, item]));
   return (
     <Dialog open={props.open} title={tr("output.review")} onClose={props.onClose}>
-      <ExportRenderSummary state={props.renderPlanState} />
+      <ExportCompatibilitySummary estimate={props.estimate} />
       <div className="output-options">
         <label className="output-template-field">
           <span>{tr("settings.filenameTemplate")}</span>
@@ -3411,18 +3435,34 @@ function OutputDialog(props: {
           onPreview={props.onPreview}
           renderPlans={renderPlans}
           renderPlanStatus={props.renderPlanState.status}
+          checkingItemId={props.renderPlanState.status === "loading" ? props.renderPlanState.currentId : null}
+          defaultSuffix={props.estimate?.output_suffix ?? ".mp4"}
         />
       </ScrollArea>
       <div className="dialog-actions">
         <Button variant="secondary" onClick={props.onClose}>
           {tr("common.back")}
         </Button>
-        <Button
-          onClick={props.onExport}
-          disabled={Boolean(props.error) || props.items.length === 0 || props.renderPlanState.status !== "ready"}
-        >
-          {tr("common.export")}
-        </Button>
+        <div className="dialog-action-group">
+          <Button
+            variant="secondary"
+            onClick={props.onCheckRenderDetails}
+            disabled={props.renderPlanState.status === "loading"}
+          >
+            {props.renderPlanState.status === "loading"
+              ? tr("output.checkingProgress", {
+                  completed: props.renderPlanState.completed,
+                  total: props.renderPlanState.total
+                })
+              : tr("output.checkDetails")}
+          </Button>
+          <Button
+            onClick={props.onExport}
+            disabled={Boolean(props.error) || props.items.length === 0 || props.renderPlanState.status === "loading"}
+          >
+            {tr("common.export")}
+          </Button>
+        </div>
       </div>
     </Dialog>
   );
@@ -3484,12 +3524,19 @@ function SegmentReviewRows(props: {
   onPreview?: (item: OutputItem) => void;
   renderPlans?: Map<string, ExportRenderPlanItem>;
   renderPlanStatus?: ExportPlanState["status"];
+  checkingItemId?: string | null;
+  defaultSuffix?: string;
 }) {
   return (
     <div className="output-list-content">
       {props.items.map((item) => {
         const renderPlan = props.renderPlans?.get(item.id);
-        const suffix = renderPlan?.output_suffix ?? ".mp4";
+        const renderStatus: ExportPlanState["status"] = renderPlan
+          ? "ready"
+          : props.renderPlanStatus === "loading" && props.checkingItemId !== item.id
+            ? "idle"
+            : props.renderPlanStatus ?? "idle";
+        const suffix = renderPlan?.output_suffix ?? props.defaultSuffix ?? ".mp4";
         return (
           <button
             key={item.id}
@@ -3501,7 +3548,7 @@ function SegmentReviewRows(props: {
               <span className="output-title-line">
                 <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
                 {props.renderPlans || props.renderPlanStatus ? (
-                  <ExportRenderBadge plan={renderPlan} status={props.renderPlanStatus ?? "idle"} />
+                  <ExportRenderBadge plan={renderPlan} status={renderStatus} />
                 ) : null}
               </span>
               <span className="output-meta">
@@ -3520,8 +3567,9 @@ function SegmentReviewRows(props: {
 }
 
 function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportPlanState["status"] }) {
-  if (props.status === "loading") return <span className="render-badge render-badge-checking">{tr("output.checking")}</span>;
-  if (!props.plan) return <span className="render-badge render-badge-unknown">{tr("common.unknownTitle")}</span>;
+  if (props.status === "loading" && !props.plan) return <span className="render-badge render-badge-checking">{tr("output.checking")}</span>;
+  if (props.status === "error") return <span className="render-badge render-badge-error">{tr("output.checkFailedBadge")}</span>;
+  if (!props.plan) return <span className="render-badge render-badge-unchecked">{tr("output.notChecked")}</span>;
   return (
     <span className={`render-badge ${props.plan.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
       {tr(props.plan.smart_render ? "output.smart" : "output.full")}
@@ -3529,11 +3577,32 @@ function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportP
   );
 }
 
+function ExportCompatibilitySummary(props: { estimate: SmartRenderEstimate | null }) {
+  const estimate = props.estimate;
+  if (!estimate) {
+    return <div className="export-render-summary"><span className="render-badge render-badge-unknown">{tr("common.unknownTitle")}</span></div>;
+  }
+  return (
+    <div className="export-render-summary">
+      <span className={`render-badge ${estimate.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
+        {tr(estimate.smart_render ? "output.smartEstimate" : "output.fullEstimate")}
+      </span>
+      <span>
+        {tr("output.estimateSummary", {
+          container: estimate.source_container.toUpperCase(),
+          codec: estimate.video_codec.toUpperCase() || tr("common.unknownTitle")
+        })}
+      </span>
+    </div>
+  );
+}
+
 function ExportRenderSummary(props: { state: ExportPlanState }) {
   const state = props.state;
-  if (state.status === "loading" || state.status === "idle") {
+  if (state.status === "loading") {
     return <div className="export-render-summary"><ExportRenderBadge status="loading" /><span>{tr("output.checkingSummary")}</span></div>;
   }
+  if (state.status === "idle") return null;
   if (state.status === "error") {
     return (
       <div className="export-render-summary export-render-summary-error">
@@ -3574,6 +3643,7 @@ function formatDuration(seconds: number) {
 function ExportProgressDialog(props: {
   open: boolean;
   job: JobRecord | null;
+  estimate: SmartRenderEstimate | null;
   renderPlanState: ExportPlanState;
   onClose: () => void;
 }) {
@@ -3581,11 +3651,15 @@ function ExportProgressDialog(props: {
   const status = props.job?.status ?? "queued";
   const complete = status === "completed";
   const failed = status === "failed";
-  const renderPlanState = actualExportPlanState(props.job) ?? props.renderPlanState;
+  const actualRenderPlanState = actualExportPlanState(props.job);
+  const checkedRenderPlanState = props.renderPlanState.status === "ready" ? props.renderPlanState : null;
+  const progressRenderPlanState = actualRenderPlanState ?? checkedRenderPlanState;
   return (
     <Dialog open={props.open} title={tr("output.progress")} onClose={props.onClose}>
       <div className="export-progress">
-        <ExportRenderSummary state={renderPlanState} />
+        {progressRenderPlanState
+          ? <ExportRenderSummary state={progressRenderPlanState} />
+          : <ExportCompatibilitySummary estimate={props.estimate} />}
         <div className={`export-progress-status export-progress-status-${status}`}>
           <span>{localizeJobMessage(props.job) || tr("output.preparing")}</span>
           <strong>{Math.round(progress * 100)}%</strong>

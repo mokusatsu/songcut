@@ -277,7 +277,10 @@ class ApiJobTests(unittest.TestCase):
         with (
             mock.patch("songcut.api.require_file", return_value=source),
             mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffprobe=Path("ffprobe.exe"))),
-            mock.patch("songcut.api.probe_video", return_value={"duration": 10.0}) as probe_video,
+            mock.patch(
+                "songcut.api.probe_video",
+                return_value={"duration": 10.0, "format_name": "matroska,webm", "video": {"codec": "vp9"}},
+            ) as probe_video,
             mock.patch(
                 "songcut.api.load_timestamp_comment_candidates",
                 return_value=(candidates, "metadata warning"),
@@ -288,6 +291,17 @@ class ApiJobTests(unittest.TestCase):
         probe_video.assert_called_once_with(Path("ffprobe.exe"), source)
         self.assertEqual(payload["timestamp_comment_candidates"], candidates)
         self.assertEqual(payload["info_json_warning"], "metadata warning")
+        self.assertEqual(
+            payload["smart_render_estimate"],
+            {
+                "smart_render": True,
+                "source_container": "webm",
+                "container_family": "webm",
+                "output_suffix": ".webm",
+                "video_codec": "vp9",
+                "fallback_reason": None,
+            },
+        )
 
     def test_export_job_uses_smart_renderer(self) -> None:
         now = time.time()

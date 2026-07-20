@@ -10,6 +10,7 @@ from songcut.smart_export import (
     SmartRenderSpan,
     SourceMediaInfo,
     estimate_reencode_bitrate,
+    estimate_smart_render,
     export_smart_clip,
     plan_smart_render,
     probe_keyframes,
@@ -17,6 +18,16 @@ from songcut.smart_export import (
 
 
 class SmartExportTests(unittest.TestCase):
+    def test_estimate_smart_render_uses_only_container_and_video_codec(self) -> None:
+        supported = estimate_smart_render("matroska,webm", "vp9", Path("source.webm"))
+        unsupported = estimate_smart_render("mov,mp4", "hevc", Path("source.mp4"))
+
+        self.assertTrue(supported.smart_render)
+        self.assertEqual(supported.container_family, "webm")
+        self.assertEqual(supported.output_suffix, ".webm")
+        self.assertFalse(unsupported.smart_render)
+        self.assertIn("codec=hevc", unsupported.fallback_reason)
+
     def test_estimate_reencode_bitrate_prefers_video_stream_rate(self) -> None:
         with mock.patch(
             "songcut.smart_export.ffprobe_json",

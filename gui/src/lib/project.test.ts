@@ -24,12 +24,21 @@ const source = {
 const videoInfo: VideoInfo = {
   path: source.path,
   name: source.filename,
+  format_name: "mov,mp4",
   duration: 30,
   bit_rate: 0,
   video: {},
   audio: {},
   timestamp_comment_candidates: [],
   info_json_warning: null,
+  smart_render_estimate: {
+    smart_render: true,
+    source_container: "mp4",
+    container_family: "mp4",
+    output_suffix: ".mp4",
+    video_codec: "h264",
+    fallback_reason: null,
+  },
 };
 
 const segment: Segment = {

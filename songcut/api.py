@@ -15,7 +15,7 @@ from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
-from .smart_export import export_smart_clip, plan_smart_render
+from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
 from .transcription import (
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
@@ -208,6 +208,13 @@ def probe(request: ProbeRequest) -> dict[str, Any]:
     source = require_file(request.path)
     ffmpeg = find_ffmpeg()
     payload = probe_video(ffmpeg.ffprobe, source)
+    payload["smart_render_estimate"] = asdict(
+        estimate_smart_render(
+            str(payload.get("format_name") or ""),
+            str(payload.get("video", {}).get("codec") or ""),
+            source,
+        )
+    )
     candidates, warning = load_timestamp_comment_candidates(source)
     payload["timestamp_comment_candidates"] = candidates
     payload["info_json_warning"] = warning

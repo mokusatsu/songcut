@@ -39,6 +39,16 @@ class RenderProfile:
 
 
 @dataclass(frozen=True)
+class SmartRenderEstimate:
+    smart_render: bool
+    source_container: str
+    container_family: str
+    output_suffix: str
+    video_codec: str
+    fallback_reason: str | None
+
+
+@dataclass(frozen=True)
 class SmartRenderSpan:
     mode: str
     start: float
@@ -178,8 +188,35 @@ def plan_smart_render(ffprobe: Path, source: Path, *, start: float, end: float) 
 
 
 def render_profile_for(info: SourceMediaInfo, source: Path) -> RenderProfile:
-    codec = info.video_codec
-    format_parts = {part.strip().lower() for part in info.format_name.split(",") if part.strip()}
+    estimate = estimate_smart_render(info.format_name, info.video_codec, source)
+    codec = estimate.video_codec
+
+    if estimate.container_family == "webm":
+        video_encoder = _webm_video_encoder(codec)
+        audio_encoder = "libopus"
+        audio_bitrate = "160k"
+    elif estimate.container_family == "mkv":
+        video_encoder = _matroska_video_encoder(codec)
+        audio_encoder, audio_bitrate = _matroska_audio_profile(info)
+    else:
+        video_encoder = "libsvtav1" if codec == "av1" else "libx264"
+        audio_encoder = "aac"
+        audio_bitrate = "192k"
+
+    return RenderProfile(
+        container_family=estimate.container_family,
+        output_suffix=estimate.output_suffix,
+        video_encoder=video_encoder,
+        audio_encoder=audio_encoder,
+        audio_bitrate=audio_bitrate,
+        smart_copy=estimate.smart_render,
+        fallback_reason=estimate.fallback_reason,
+    )
+
+
+def estimate_smart_render(format_name: str, video_codec: str, source: Path) -> SmartRenderEstimate:
+    codec = video_codec.lower()
+    format_parts = {part.strip().lower() for part in format_name.split(",") if part.strip()}
     suffix = source.suffix.lower()
     is_webm = suffix == ".webm" or ("webm" in format_parts and suffix != ".mkv")
     is_matroska = suffix == ".mkv" or ("matroska" in format_parts and not is_webm)
@@ -188,37 +225,37 @@ def render_profile_for(info: SourceMediaInfo, source: Path) -> RenderProfile:
     )
 
     if is_webm:
+        source_container = "webm"
         container_family = "webm"
         output_suffix = ".webm"
-        video_encoder = _webm_video_encoder(codec)
-        audio_encoder = "libopus"
-        audio_bitrate = "160k"
-        smart_copy = codec in {"vp8", "vp9", "av1"}
+        smart_render = codec in {"vp8", "vp9", "av1"}
     elif is_matroska:
+        source_container = "mkv"
         container_family = "mkv"
         output_suffix = ".mkv"
-        video_encoder = _matroska_video_encoder(codec)
-        audio_encoder, audio_bitrate = _matroska_audio_profile(info)
-        smart_copy = codec in {"h264", "vp8", "vp9", "av1"}
-    else:
-        container_family = "mp4" if is_mp4ish or codec in {"h264", "av1"} else "mp4"
+        smart_render = codec in {"h264", "vp8", "vp9", "av1"}
+    elif is_mp4ish:
+        source_container = suffix.removeprefix(".") or "mp4"
+        container_family = "mp4"
         output_suffix = ".mp4"
-        video_encoder = "libsvtav1" if codec == "av1" else "libx264"
-        audio_encoder = "aac"
-        audio_bitrate = "192k"
-        smart_copy = codec in {"h264", "av1"}
+        smart_render = codec in {"h264", "av1"}
+    else:
+        source_container = suffix.removeprefix(".") or next(iter(sorted(format_parts)), "unknown")
+        container_family = "mp4"
+        output_suffix = ".mp4"
+        smart_render = False
 
     fallback_reason = None
-    if not smart_copy:
-        fallback_reason = f"unsupported smart-render codec/container: codec={codec or 'unknown'}, container={container_family}"
-
-    return RenderProfile(
+    if not smart_render:
+        fallback_reason = (
+            f"unsupported smart-render codec/container: codec={codec or 'unknown'}, container={source_container}"
+        )
+    return SmartRenderEstimate(
+        smart_render=smart_render,
+        source_container=source_container,
         container_family=container_family,
         output_suffix=output_suffix,
-        video_encoder=video_encoder,
-        audio_encoder=audio_encoder,
-        audio_bitrate=audio_bitrate,
-        smart_copy=smart_copy,
+        video_codec=codec,
         fallback_reason=fallback_reason,
     )
 
