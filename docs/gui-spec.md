@@ -116,6 +116,13 @@ ffmpeg discovery:
   `Load` button.
 - `Edit` keeps only the songcut editing groups plus `Cut`, `Copy`, and `Paste`;
   `Undo`, `Redo`, and `Select All` are omitted.
+- Menu section-heading convention:
+  - A section heading is a disabled, non-selectable menu item. Its visible
+    label must use the exact `-- Section Name --` form, including one space
+    inside each pair of hyphens.
+  - Groups in the same menu are separated by a native menu separator.
+  - Commands remain flat directly below their heading; a heading does not own
+    a submenu.
 - `Edit` groups:
   - Disabled heading `-- Nudge Adjust Boundary --`, with `Nudge Boundary Left` and
     `Nudge Boundary Right`. Their displayed shortcuts are `Q` and `E`.
@@ -151,7 +158,12 @@ ffmpeg discovery:
 - `Sort Segments...` confirms a stable ascending start-time sort with `Before`
   and `After` review panes displayed side by side. Each comparison pane uses its
   own Shadcn/Radix `ScrollArea`.
-- `Export` provides `Export Movie` and `Export TS Text`.
+- `Export` provides `Export Movie`, followed by the disabled heading
+  `-- Timestamp --` and five direct timestamp-copy commands: `Timestamp
+  Comment`, `YouTube Chapters`, `TSV/Excel`, `CSV`, and `Audacity Labels`.
+  `TSV/Excel` and `CSV` include a `Start`, `End`, `Title` header row. Choosing a
+  menu command copies that format immediately without opening the renderer's
+  output-type dialog.
 - `Settings` contains one `Settings...` command with Electron's native
   `CommandOrControl+,` accelerator. Electron formats the displayed shortcut for
   the active application locale and opens the same

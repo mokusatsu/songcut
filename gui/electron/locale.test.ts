@@ -34,7 +34,9 @@ describe("main-process translations", () => {
     expect(flatten(mainTranslations.ja).every(Boolean)).toBe(true);
     await initializeMainI18n("ja");
     expect(mainI18n.t("menu.settingsItem")).toBe("設定...");
+    expect(mainI18n.t("menu.timestampHeading")).toBe("-- Timestamp --");
     await initializeMainI18n("en");
     expect(mainI18n.t("menu.settingsItem")).toBe("Settings...");
+    expect(mainI18n.t("menu.timestampHeading")).toBe("-- Timestamp --");
   });
 });

@@ -1991,6 +1991,20 @@ function cleanup(processHandle, cdp) {
     );
     await evaluate(cdp, `window.songcut.writeClipboard(""); true`);
     await clickButton(cdp, "Export TS");
+    const tsExportDialog = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector(".dialog");
+        const text = dialog?.innerText || "";
+        return ["Timestamp Comment", "YouTube Chapters", "TSV/Excel", "CSV", "Audacity Labels"].every((label) => text.includes(label))
+          ? text
+          : false;
+      })()`,
+      5000,
+      "TS output type dialog"
+    );
+    log("EXPORT_TS_TYPE_DIALOG_OK", tsExportDialog);
+    await clickButton(cdp, "Timestamp Comment");
     await sleep(300);
     const afterTsCopyClick = await evaluate(
       cdp,

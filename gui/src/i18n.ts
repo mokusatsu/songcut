@@ -74,6 +74,10 @@ const en = {
     editSelected: "Edit selected", edit: "Edit {{source}}", removeNonSongs: "Remove timestamps that do not mark songs, such as the stream start, MC, promotions, chat, or announcements.",
     apply: "Apply to guide", description: "Video description", comment: "Comment",
   },
+  timestampExport: {
+    choose: "Choose the timestamp output type.", "timestamp-comment": "Timestamp Comment",
+    "youtube-chapter": "YouTube Chapters", "tsv-excel": "TSV/Excel", csv: "CSV", "audacity-label": "Audacity Labels",
+  },
   output: {
     review: "Export Review", placeholders: "Placeholders: {{placeholders}}",
     createFolder: "Create a “{{name}}” folder inside the selected output folder", file: "File",
@@ -120,6 +124,7 @@ const en = {
     inverted: "Inverted the export selection.", dropFile: "Drop a video or .songcut project file.", added: "Added {{id}}.",
     removed_one: "Removed {{count}} segment.", removed_other: "Removed {{count}} segments.",
     detected: "Detected {{count}} segments.", copiedTs: "Copied {{count}} TS comment lines.",
+    copiedTimestamp: "Copied {{count}} {{format}} entries.",
     scratchDuration: "Scratch preview duration set to {{milliseconds}} ms.", whisperModelReady: "Whisper {{model}} model is ready.",
     ffmpegFailed: "ffmpeg check failed.", recoveredSaved: "Recovered edits were saved to the project sidecar.",
     candidateDurationMismatch: "The candidate source has a different duration and was not linked.",
@@ -206,6 +211,10 @@ const ja: TranslationShape<typeof en> = {
     editSelected: "選択項目を編集", edit: "{{source}}を編集", removeNonSongs: "配信開始、MC、宣伝、チャット、告知など、曲を示さないタイムスタンプを削除してください。",
     apply: "ガイドへ適用", description: "動画の説明", comment: "コメント",
   },
+  timestampExport: {
+    choose: "タイムスタンプの出力形式を選択してください。", "timestamp-comment": "タイムスタンプコメント",
+    "youtube-chapter": "YouTubeチャプター", "tsv-excel": "TSV/Excel", csv: "CSV", "audacity-label": "Audacityラベル",
+  },
   output: {
     review: "書き出し確認", placeholders: "プレースホルダー: {{placeholders}}",
     createFolder: "選択した出力フォルダー内に「{{name}}」フォルダーを作成", file: "ファイル",
@@ -252,6 +261,7 @@ const ja: TranslationShape<typeof en> = {
     inverted: "書き出し対象を反転しました。", dropFile: "動画または .songcut プロジェクトをドロップしてください。", added: "{{id}} を追加しました。",
     removed_one: "セグメント {{count}} 件を削除しました。", removed_other: "セグメント {{count}} 件を削除しました。",
     detected: "{{count}} 件のセグメントを検出しました。", copiedTs: "TS コメント {{count}} 行をコピーしました。",
+    copiedTimestamp: "{{format}} {{count}} 件をコピーしました。",
     scratchDuration: "スクラッチ試聴時間を {{milliseconds}} ms に設定しました。", whisperModelReady: "Whisper {{model}} モデルの準備ができました。",
     ffmpegFailed: "ffmpeg の確認に失敗しました。", recoveredSaved: "復元した編集内容をプロジェクトのサイドカーへ保存しました。",
     candidateDurationMismatch: "候補ソースの長さが異なるためリンクしませんでした。",

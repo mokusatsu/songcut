@@ -130,6 +130,17 @@ headings, with every command available directly in the menu:
 - **Export Selection** provides **Check All**, **Uncheck All**, and **Invert
   Selection** directly below its heading.
 
+Menu section headings are disabled and displayed as `-- Section Name --`.
+Groups are separated by a menu separator, and their commands are listed flat
+directly below each heading.
+
+The **Export** menu lists **Export Movie**, then the non-selectable
+**-- Timestamp --** heading with **Timestamp Comment**, **YouTube Chapters**,
+**TSV/Excel**, **CSV**, and **Audacity Labels** below it. **TSV/Excel** and
+**CSV** include a **Start**, **End**, **Title** header row. These menu commands
+copy the selected format directly without opening the **Export TS** selection
+dialog.
+
 # Useful Editing Tools
 
 ![Editing tools](image/tools.png)

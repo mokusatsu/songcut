@@ -6,6 +6,7 @@ type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 type UiLanguage = "en" | "ja";
 type UiLanguagePreference = "system" | UiLanguage;
+type TimestampExportFormat = "timestamp-comment" | "youtube-chapter" | "tsv-excel" | "csv" | "audacity-label";
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -34,7 +35,7 @@ type SongcutMenuCommand =
   | { type: "play-start-boundary" }
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
-  | { type: "export-ts-text" }
+  | { type: "export-timestamp"; format: TimestampExportFormat }
   | { type: "open-settings" };
 
 type SongcutMenuState = {

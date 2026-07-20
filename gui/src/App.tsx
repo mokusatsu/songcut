@@ -95,6 +95,8 @@ import {
   updateTimestampCommentDraft
 } from "@/lib/timestampComments";
 import type { TimestampCommentFlow } from "@/lib/timestampComments";
+import { buildTimestampExportText, timestampExportFormats } from "@/lib/timestampExport";
+import type { TimestampExportFormat } from "@/lib/timestampExport";
 import {
   buildWaveformPathSpecs,
   buildWaveformPyramid,
@@ -245,6 +247,7 @@ export default function App(props: {
   const [outputOpen, setOutputOpen] = useState(false);
   const [exportPlanState, setExportPlanState] = useState<ExportPlanState>({ status: "idle", plan: null, error: null });
   const [segmentManagementReview, setSegmentManagementReview] = useState<SegmentManagementReview | null>(null);
+  const [timestampExportOpen, setTimestampExportOpen] = useState(false);
   const [timestampCopyCount, setTimestampCopyCount] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
@@ -1185,7 +1188,7 @@ export default function App(props: {
         videoPath,
         outputDir,
         items,
-        buildTimestampCommentText(items),
+        buildTimestampExportText(items, "timestamp-comment"),
         createVideoFolder
       );
     } catch (error) {
@@ -1271,11 +1274,11 @@ export default function App(props: {
     return templated.error ? requested : templated.items;
   }
 
-  async function exportTimestampComments() {
+  async function exportTimestampText(format: TimestampExportFormat) {
     const items = buildOutputItems().filter((item) => item.checked);
-    const text = buildTimestampCommentText(items);
+    const text = buildTimestampExportText(items, format);
     if (!text) {
-      setMessage("No checked segments to copy.");
+      setMessage(tr("messages.noChecked"));
       return;
     }
     try {
@@ -1283,8 +1286,9 @@ export default function App(props: {
     } catch {
       await navigator.clipboard.writeText(text);
     }
+    setTimestampExportOpen(false);
     setTimestampCopyCount(items.length);
-    setMessage(`Copied ${items.length} TS comment lines.`);
+    setMessage(tr("messages.copiedTimestamp", { count: items.length, format: tr(`timestampExport.${format}`) }));
   }
 
   function updateSegment(id: string, patch: Partial<Segment>) {
@@ -1762,8 +1766,8 @@ export default function App(props: {
         case "export-movie":
           if (checkedCount > 0) setOutputOpen(true);
           break;
-        case "export-ts-text":
-          void exportTimestampComments();
+        case "export-timestamp":
+          void exportTimestampText(command.format);
           break;
         case "open-settings":
           openSettings();
@@ -1911,7 +1915,7 @@ export default function App(props: {
             <Scissors size={16} />
             {tr("common.export")}
           </Button>
-          <Button variant="secondary" onClick={exportTimestampComments} disabled={checkedCount === 0}>
+          <Button variant="secondary" onClick={() => setTimestampExportOpen(true)} disabled={checkedCount === 0}>
             <Copy size={16} />
             {tr("common.exportTs")}
           </Button>
@@ -2067,6 +2071,20 @@ export default function App(props: {
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
         onConfirm={confirmSegmentManagement}
       />
+      <Dialog open={timestampExportOpen} title={tr("app.exportTsTitle")} onClose={() => setTimestampExportOpen(false)}>
+        <p className="dialog-message">{tr("timestampExport.choose")}</p>
+        <div className="timestamp-export-options">
+          {timestampExportFormats.map((format) => (
+            <Button key={format} variant="secondary" onClick={() => void exportTimestampText(format)}>
+              {tr(`timestampExport.${format}`)}
+            </Button>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <span />
+          <Button variant="secondary" onClick={() => setTimestampExportOpen(false)}>{tr("common.cancel")}</Button>
+        </div>
+      </Dialog>
       <Dialog open={timestampCopyCount !== null} title={tr("app.exportTsTitle")} onClose={() => setTimestampCopyCount(null)}>
         <p className="dialog-message">
           {tr("app.copiedLines", { count: timestampCopyCount ?? 0 })}
@@ -3679,15 +3697,6 @@ function previewRange(video: HTMLVideoElement | null, start: number, end: number
     void video.play();
     window.setTimeout(() => video.pause(), 5000);
   }, 5000);
-}
-
-function buildTimestampCommentText(items: OutputItem[]) {
-  return items
-    .map((item) => {
-      const title = item.title.trim() || item.segmentId || item.id;
-      return `${formatTime(item.start)} - ${formatTime(item.end)} ${title}`;
-    })
-    .join("\n");
 }
 
 function segmentStopAtForTime(segment: Segment | null, time: number) {

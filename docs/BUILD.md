@@ -123,6 +123,12 @@ The default command is a normal distribution build. It updates only
 running copy of the packaged app before rebuilding so Windows can delete the
 previous Electron runtime files.
 
+When an automated build is explicitly asked to update `dist`, it may close
+running processes whose executable files are inside `dist\songcut-win-x64`
+without an additional confirmation prompt. It must verify the executable paths
+first and must not stop same-named processes from another package or directory.
+Save work in the packaged app before requesting an automated `dist` update.
+
 To create a release build, pass `-Release`:
 
 ```powershell

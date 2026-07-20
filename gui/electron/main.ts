@@ -57,6 +57,7 @@ const zoomLevels = [1, 2, 4, 8, 16, 32];
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
 const whisperModels = ["tiny", "base", "small"] as const;
 const waveformDisplayModes = ["rms", "peak", "peak-rms"] as const;
+const timestampExportFormats = ["timestamp-comment", "youtube-chapter", "tsv-excel", "csv", "audacity-label"] as const;
 const e2eMenuCommandTypes = new Set([
   "new-segment",
   "remove-segment",
@@ -72,6 +73,7 @@ type InferenceDevice = (typeof inferenceDevices)[number];
 type AnalysisDevice = InferenceDevice;
 type WhisperDevice = InferenceDevice;
 type WaveformDisplayMode = (typeof waveformDisplayModes)[number];
+type TimestampExportFormat = (typeof timestampExportFormats)[number];
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -100,7 +102,7 @@ type SongcutMenuCommand =
   | { type: "play-start-boundary" }
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
-  | { type: "export-ts-text" }
+  | { type: "export-timestamp"; format: TimestampExportFormat }
   | { type: "open-settings" };
 
 type SongcutMenuState = {
@@ -540,7 +542,14 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       label: mainI18n.t("menu.export"),
       submenu: [
         { id: "export.movie", label: mainI18n.t("menu.exportMovie"), enabled: canExportMovie, click: send({ type: "export-movie" }) },
-        { id: "export.ts", label: mainI18n.t("menu.exportTs"), enabled: canExportText, click: send({ type: "export-ts-text" }) }
+        { type: "separator" },
+        { id: "export.timestamp-heading", label: mainI18n.t("menu.timestampHeading"), enabled: false },
+        ...timestampExportFormats.map((format) => ({
+          id: `export.${format}`,
+          label: mainI18n.t(`menu.timestampExport.${format}`),
+          enabled: canExportText,
+          click: send({ type: "export-timestamp", format })
+        }))
       ]
     },
     {

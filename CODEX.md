@@ -79,3 +79,8 @@ build does not create or update these release archives.
 Close any running `dist\songcut-win-x64\songcut.exe` or
 `songcut-electron.exe` processes before rebuilding the portable package,
 because Windows can keep Electron runtime files locked.
+
+An explicit user request to update `dist` also authorizes closing processes
+whose resolved executable paths are inside `dist\songcut-win-x64`; do not ask
+for a separate confirmation. Resolve the exact process paths first and do not
+stop same-named processes running from another package or directory.
