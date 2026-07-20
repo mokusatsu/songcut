@@ -5,10 +5,12 @@ import {
   analysisFromProject,
   composeProjectDocument,
   createProjectDocument,
+  filenameTemplateFromProject,
   normalizeInterruptedOperation,
   transcriptSettingsAreStale,
   waveformFromProject,
 } from "./project";
+import { DEFAULT_FILENAME_TEMPLATE } from "./exportNaming";
 import type { AnalysisResult, Segment, VideoInfo } from "../types";
 
 const source = {
@@ -99,6 +101,7 @@ describe("project document composition", () => {
       exportCandidates: analysis.export_candidates,
       analysisDevice: "gpu",
       whisper: { enabled: true, model: "small", language: "ja", device: "auto" },
+      filenameTemplate: "{title}_{start}",
       selectedSegmentId: segment.id,
       currentTime: 2,
       zoomIndex: 3,
@@ -119,6 +122,8 @@ describe("project document composition", () => {
     expect(document.export_candidates[0].segment_id).toBe("seg-001");
     expect(document.settings.whisper.enabled).toBe(true);
     expect(document.settings.whisper.language).toBe("ja");
+    expect(document.settings.export?.filename_template).toBe("{title}_{start}");
+    expect(filenameTemplateFromProject(document)).toBe("{title}_{start}");
     expect(analysisFromProject(document)?.segments[0].title).toBe("Song");
   });
 
@@ -170,6 +175,7 @@ describe("project document composition", () => {
       exportCandidates: provisionalAnalysis.export_candidates,
       analysisDevice: "auto",
       whisper: DEFAULT_WHISPER_SETTINGS,
+      filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
       selectedSegmentId: provisional.id,
       currentTime: provisional.start,
       zoomIndex: 0,
@@ -191,6 +197,23 @@ describe("project document composition", () => {
 
   it("defaults new projects to Whisper off, Small, Japanese, and Auto", () => {
     expect(DEFAULT_WHISPER_SETTINGS).toEqual({ enabled: false, model: "small", language: "ja", device: "auto" });
+  });
+
+  it("defaults new and existing v3 projects to the standard filename template", () => {
+    const document = createProjectDocument("C:\\media\\archive.mp4.songcut", source, videoInfo);
+    expect(filenameTemplateFromProject(document)).toBe(DEFAULT_FILENAME_TEMPLATE);
+    delete document.settings.export;
+    expect(() => assertProjectDocument(document)).not.toThrow();
+    expect(filenameTemplateFromProject(document)).toBe(DEFAULT_FILENAME_TEMPLATE);
+  });
+
+  it("accepts user-managed segment order while keeping raw analysis chronologically sorted", () => {
+    const document = createProjectDocument("C:\\media\\archive.mp4.songcut", source, videoInfo);
+    document.segments = [
+      { ...segment, id: "later", start: 10, end: 15, start_timecode: "0:10", end_timecode: "0:15", transcript: undefined },
+      { ...segment, id: "earlier", start: 1, end: 5, start_timecode: "0:01", end_timecode: "0:05", transcript: undefined },
+    ];
+    expect(() => assertProjectDocument(document)).not.toThrow();
   });
 
   it("marks only model or requested-language changes as transcript-stale", () => {

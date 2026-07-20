@@ -111,6 +111,9 @@ export type ProjectDocumentV1 = {
   settings: {
     analysis_device: InferenceDevice;
     whisper: WhisperSettings;
+    export?: {
+      filename_template: string;
+    };
   };
   waveform_snapshot: ProjectWaveformSnapshot | null;
   analysis_snapshot: {
@@ -213,6 +216,10 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
   const settings = objectValue(root.settings, "settings");
   inferenceDevice(settings.analysis_device, "settings.analysis_device");
   whisperSettings(settings.whisper, "settings.whisper");
+  if (settings.export !== undefined) {
+    const exportSettings = objectValue(settings.export, "settings.export");
+    stringValue(exportSettings.filename_template, "settings.export.filename_template", true);
+  }
 
   if (root.waveform_snapshot !== null) {
     const waveform = objectValue(root.waveform_snapshot, "waveform_snapshot");
@@ -245,10 +252,10 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
       finiteValue(row.score, `analysis_snapshot.frame_scores[${index}].score`);
       finiteValue(row.rms, `analysis_snapshot.frame_scores[${index}].rms`);
     });
-    validateSegments(snapshot.raw_segments, "analysis_snapshot.raw_segments");
+    validateSegments(snapshot.raw_segments, "analysis_snapshot.raw_segments", true);
   }
 
-  validateSegments(root.segments, "segments");
+  validateSegments(root.segments, "segments", false);
   const segmentIds = new Set((root.segments as ProjectSegment[]).map((segment) => segment.id));
   arrayValue(root.export_candidates, "export_candidates").forEach((candidate, index) => {
     const row = objectValue(candidate, `export_candidates[${index}]`);
@@ -281,7 +288,7 @@ export function assertRecoverySnapshot(value: unknown): asserts value is Recover
   assertProjectDocument(root.document);
 }
 
-function validateSegments(value: unknown, label: string) {
+function validateSegments(value: unknown, label: string, requireSorted: boolean) {
   let priorStart = -1;
   const ids = new Set<string>();
   arrayValue(value, label).forEach((segment, index) => {
@@ -292,7 +299,7 @@ function validateSegments(value: unknown, label: string) {
     const start = nonNegativeFinite(row.start, `${label}[${index}].start`);
     const end = nonNegativeFinite(row.end, `${label}[${index}].end`);
     if (end <= start) throw new Error(`Invalid segment range: ${id}`);
-    if (start < priorStart) throw new Error(`${label} must be sorted by start time.`);
+    if (requireSorted && start < priorStart) throw new Error(`${label} must be sorted by start time.`);
     priorStart = start;
     stringValue(row.start_timecode, `${label}[${index}].start_timecode`, true);
     stringValue(row.end_timecode, `${label}[${index}].end_timecode`, true);

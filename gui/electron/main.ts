@@ -41,6 +41,15 @@ const zoomLevels = [1, 2, 4, 8, 16, 32];
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
 const whisperModels = ["tiny", "base", "small"] as const;
 const waveformDisplayModes = ["rms", "peak", "peak-rms"] as const;
+const e2eMenuCommandTypes = new Set([
+  "new-segment",
+  "remove-segment",
+  "remove-unchecked-segments",
+  "sort-segments",
+  "check-all-segments",
+  "uncheck-all-segments",
+  "invert-segment-selection",
+]);
 
 type InferenceDevice = (typeof inferenceDevices)[number];
 type AnalysisDevice = InferenceDevice;
@@ -56,6 +65,13 @@ type SongcutMenuCommand =
   | { type: "nudge-boundary-right" }
   | { type: "previous-segment" }
   | { type: "next-segment" }
+  | { type: "new-segment" }
+  | { type: "remove-segment" }
+  | { type: "remove-unchecked-segments" }
+  | { type: "sort-segments" }
+  | { type: "check-all-segments" }
+  | { type: "uncheck-all-segments" }
+  | { type: "invert-segment-selection" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
   | { type: "set-zoom"; zoomIndex: number }
@@ -77,6 +93,8 @@ type SongcutMenuState = {
   hasSegments: boolean;
   hasSelectedSegment: boolean;
   hasCheckedSegments: boolean;
+  hasUncheckedSegments: boolean;
+  hasMultipleSegments: boolean;
   canSelectPreviousSegment: boolean;
   canSelectNextSegment: boolean;
   playing: boolean;
@@ -95,6 +113,8 @@ let menuState: SongcutMenuState = {
   hasSegments: false,
   hasSelectedSegment: false,
   hasCheckedSegments: false,
+  hasUncheckedSegments: false,
+  hasMultipleSegments: false,
   canSelectPreviousSegment: false,
   canSelectNextSegment: false,
   playing: false,
@@ -133,6 +153,20 @@ async function createWindow() {
       void shell.openExternal(url);
     }
     return { action: "deny" };
+  });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (
+      input.type === "keyDown" &&
+      !input.isAutoRepeat &&
+      input.control &&
+      !input.alt &&
+      !input.shift &&
+      !input.meta &&
+      input.key === ","
+    ) {
+      event.preventDefault();
+      sendMenuCommand({ type: "open-settings" });
+    }
   });
   setApplicationMenu();
 
@@ -263,6 +297,27 @@ ipcMain.on("songcut:update-menu-state", (_event, nextState: Partial<SongcutMenuS
   setApplicationMenu();
 });
 
+ipcMain.on("songcut:e2e-menu-command", (_event, command: unknown) => {
+  if (!process.env.SONGCUT_E2E_USER_DATA_DIR || !command || typeof command !== "object") return;
+  const type = (command as { type?: unknown }).type;
+  if (typeof type === "string" && e2eMenuCommandTypes.has(type)) {
+    sendMenuCommand({ type } as SongcutMenuCommand);
+  }
+});
+
+ipcMain.handle("songcut:e2e-menu-structure", () => {
+  if (!process.env.SONGCUT_E2E_USER_DATA_DIR) return null;
+  const segmentMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "Segment");
+  return (
+    segmentMenu?.submenu?.items.map((item) => ({
+      label: item.label,
+      type: item.type,
+      enabled: item.enabled,
+      hasSubmenu: Boolean(item.submenu)
+    })) ?? null
+  );
+});
+
 function setApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate()));
 }
@@ -342,22 +397,6 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
     {
       label: "Play",
       submenu: [
-        { label: "-- Segment Selection --", enabled: false },
-        {
-          label: "Previous Segment",
-          accelerator: "W",
-          registerAccelerator: false,
-          enabled: canUseSegments && menuState.canSelectPreviousSegment,
-          click: send({ type: "previous-segment" })
-        },
-        {
-          label: "Next Segment",
-          accelerator: "S",
-          registerAccelerator: false,
-          enabled: canUseSegments && menuState.canSelectNextSegment,
-          click: send({ type: "next-segment" })
-        },
-        { type: "separator" },
         { label: "-- Movie Control --", enabled: false },
         { label: "Start", enabled: canUseVideo, click: send({ type: "start" }) },
         {
@@ -400,6 +439,61 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
       ]
     },
     {
+      label: "Segment",
+      submenu: [
+        { label: "-- Segment Selection --", enabled: false },
+        {
+          label: "Previous Segment",
+          accelerator: "W",
+          registerAccelerator: false,
+          enabled: canUseSegments && menuState.canSelectPreviousSegment,
+          click: send({ type: "previous-segment" })
+        },
+        {
+          label: "Next Segment",
+          accelerator: "S",
+          registerAccelerator: false,
+          enabled: canUseSegments && menuState.canSelectNextSegment,
+          click: send({ type: "next-segment" })
+        },
+        { type: "separator" },
+        { label: "-- Segment Management --", enabled: false },
+        { label: "New Segment", enabled: menuState.hasProject, click: send({ type: "new-segment" }) },
+        {
+          label: "Remove Segment...",
+          enabled: menuState.hasProject && menuState.hasSelectedSegment,
+          click: send({ type: "remove-segment" })
+        },
+        {
+          label: "Remove All Unchecked Segments...",
+          enabled: menuState.hasProject && menuState.hasUncheckedSegments,
+          click: send({ type: "remove-unchecked-segments" })
+        },
+        {
+          label: "Sort Segments...",
+          enabled: menuState.hasProject && menuState.hasMultipleSegments,
+          click: send({ type: "sort-segments" })
+        },
+        { type: "separator" },
+        { label: "-- Export Selection --", enabled: false },
+        {
+          label: "Check All",
+          enabled: menuState.hasProject && menuState.hasUncheckedSegments,
+          click: send({ type: "check-all-segments" })
+        },
+        {
+          label: "Uncheck All",
+          enabled: menuState.hasProject && menuState.hasCheckedSegments,
+          click: send({ type: "uncheck-all-segments" })
+        },
+        {
+          label: "Invert Selection",
+          enabled: menuState.hasProject && menuState.hasSegments,
+          click: send({ type: "invert-segment-selection" })
+        }
+      ]
+    },
+    {
       label: "Export",
       submenu: [
         { label: "Export Movie", enabled: canExportMovie, click: send({ type: "export-movie" }) },
@@ -409,7 +503,7 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
     {
       label: "Settings",
       submenu: [
-        { label: "Settings...", accelerator: "CmdOrCtrl+,", click: send({ type: "open-settings" }) }
+        { label: "Settings...\tCtrl+,", click: send({ type: "open-settings" }) }
       ]
     },
     {

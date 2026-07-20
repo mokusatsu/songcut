@@ -19,18 +19,25 @@ export type FilenameTemplateResult<T> = {
 const PLACEHOLDER_RE = /\{([a-zA-Z][a-zA-Z0-9_-]*)\}/g;
 const WINDOWS_RESERVED_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
-export function applyFilenameTemplate<T extends TemplateItem>(items: readonly T[], template: string): FilenameTemplateResult<T> {
+export function validateFilenameTemplate(template: string) {
   const normalized = template.trim();
-  if (!normalized) return { items: [], error: "Filename template cannot be empty." };
+  if (!normalized) return "Filename template cannot be empty.";
 
   const placeholders = [...normalized.matchAll(PLACEHOLDER_RE)].map((match) => match[1].toLowerCase());
   const unsupported = [...new Set(placeholders.filter((value) => !FILENAME_TEMPLATE_PLACEHOLDERS.includes(value as never)))];
   if (unsupported.length) {
-    return { items: [], error: `Unsupported placeholder: ${unsupported.map((value) => `{${value}}`).join(", ")}` };
+    return `Unsupported placeholder: ${unsupported.map((value) => `{${value}}`).join(", ")}`;
   }
   if (/[{}]/.test(normalized.replace(PLACEHOLDER_RE, ""))) {
-    return { items: [], error: "Filename template contains an unmatched brace." };
+    return "Filename template contains an unmatched brace.";
   }
+  return null;
+}
+
+export function applyFilenameTemplate<T extends TemplateItem>(items: readonly T[], template: string): FilenameTemplateResult<T> {
+  const error = validateFilenameTemplate(template);
+  if (error) return { items: [], error };
+  const normalized = template.trim();
 
   const width = Math.max(2, String(Math.max(1, items.length)).length);
   const used = new Set<string>();

@@ -82,6 +82,18 @@ ffmpeg discovery:
   scroll area. Verify the result at the supported minimum window size before
   accepting a layout change.
 
+### Scrollable panel and dialog practice
+
+- When a dialog or bounded panel can overflow at the supported minimum window
+  size, use the shared Shadcn/Radix `ScrollArea`; do not add native
+  `overflow: auto` to the content container.
+- Give the `ScrollArea` root an explicit bounded height and `min-height: 0`, and
+  put scrollbar clearance on its viewport rather than on the content.
+- Keep dialog headers and primary action rows outside the scrolling viewport so
+  the title, close control, and confirmation buttons remain visible.
+- For side-by-side comparisons, give each pane its own bounded `ScrollArea` and
+  collapse to one column at narrow widths.
+
 ### Scrollable table layout rule
 
 - A fixed table header must be a sibling outside the vertical scroll area. Only
@@ -98,7 +110,7 @@ ffmpeg discovery:
 
 ## Application menu
 
-- Top-level order: `File`, `Edit`, `Play`, `View`, `Export`, `Settings`,
+- Top-level order: `File`, `Edit`, `Play`, `Segment`, `Export`, `Settings`, `View`,
   `Window`, `Help`.
 - `File` adds `Load Movie`, which uses the same file-open flow as the toolbar
   `Load` button.
@@ -112,22 +124,44 @@ ffmpeg discovery:
     Timeline zoom shortcuts are `Z` for zoom out, `X` for 100%, and `C` for
     zoom in.
 - `Play` groups:
-  - Disabled heading `-- Segment Selection --`, with `Previous Segment` (`W`)
-    and `Next Segment` (`S`). Selection stops at the first and last segments.
   - Disabled heading `-- Movie Control --`, with `Start`, `Previous Boundary`
     (`Ctrl+A`), a dynamic `Play` / `Pause` item (`Space`), and `Next Boundary`
     (`Ctrl+D`).
   - Disabled heading `-- Play Boundary --`, with `Play Start Boundary` and
     `Play End Boundary` for the selected segment. Their shortcuts are `A` and
     `D`.
+- `Segment` uses the same flat, disabled-heading pattern as `Edit`, with
+  separators between these groups:
+  - Disabled heading `-- Segment Selection --`, followed by `Previous Segment`
+    (`W`) and `Next Segment` (`S`). Selection stops at the first and last
+    segments.
+  - Disabled heading `-- Segment Management --`, followed by `New Segment`,
+    `Remove Segment...`, `Remove All Unchecked Segments...`, and `Sort
+    Segments...`.
+  - Disabled heading `-- Export Selection --`, followed by `Check All`,
+    `Uncheck All`, and `Invert Selection`.
+- `New Segment` creates a checked five-second manual segment at the current
+  playback position, bounded by the source duration. It is inserted after the
+  explicitly selected segment, or appended when there is no explicit
+  selection, and becomes selected.
+- Removal commands require confirmation and use the same segment-review row as
+  Export Review. `Remove Segment...` is unavailable without an explicit
+  selection; `Remove All Unchecked Segments...` is unavailable when no
+  unchecked segments exist.
+- `Sort Segments...` confirms a stable ascending start-time sort with `Before`
+  and `After` review panes displayed side by side. Each comparison pane uses its
+  own Shadcn/Radix `ScrollArea`.
 - `Export` provides `Export Movie` and `Export TS Text`.
-- `Settings` contains one `Settings...` command (`Ctrl+,`) that opens the same
+- `Settings` contains one `Settings...` command with a literal `Ctrl+,` label
+  that opens the same
   Settings dialog as the toolbar Settings button.
 - The Settings dialog contains scratch-preview duration, a checked-by-default
   `Use Scratch Audio Proxy` toggle, waveform display, singing-analysis device,
-  all Whisper controls, `Prepare Whisper Model`, and `ffmpeg
+  the export filename template, all Whisper controls, `Prepare Whisper Model`, and `ffmpeg
   Check`. Scratch proxy and waveform display settings persist in renderer local
-  storage; analysis and Whisper settings are project settings.
+  storage; analysis, export filename, and Whisper settings are project settings.
+  The settings body uses the shared Shadcn/Radix `ScrollArea`, while its header
+  and action row remain fixed outside the scrolling viewport.
 - `View` and `Window` retain standard Electron role-based items.
 - `Help` provides `About songcut`, `Open Repository`, and
   `Report Issue / Request Feature`. About uses the native Electron dialog and
@@ -357,8 +391,9 @@ Toolbar controls:
   before export. Invalid Windows filename characters and reserved names are
   sanitized, and duplicate names receive a suffix.
 - `Create a "<source>" folder inside the selected output folder` optionally
-  creates a source-video-named child folder. Both filename-template and folder
-  preferences are restored on the next launch.
+  creates a source-video-named child folder. The filename template is shared
+  with Settings and stored in the current `.songcut` project. The folder option
+  remains an application-wide preference restored on the next launch.
 - Clicking an item previews its range in the video pane.
 - Preview behavior:
   - If the range is less than or equal to 10 seconds, play the full range once.

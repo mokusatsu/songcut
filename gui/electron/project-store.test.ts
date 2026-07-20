@@ -158,6 +158,7 @@ function projectDocument(revision: number): ProjectDocumentV1 {
     settings: {
       analysis_device: "auto",
       whisper: { enabled: false, model: "small", language: "ja", device: "auto" },
+      export: { filename_template: "{index}_{title}" },
     },
     waveform_snapshot: null,
     analysis_snapshot: null,

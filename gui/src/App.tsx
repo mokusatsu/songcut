@@ -49,6 +49,7 @@ import {
   composeProjectDocument,
   createProjectDocument,
   exportCandidatesFromProject,
+  filenameTemplateFromProject,
   normalizeInterruptedOperation,
   parseProjectOpenResult,
   parseRecoverySnapshot,
@@ -74,6 +75,15 @@ import {
   shouldCreateScratchProxy
 } from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
+import {
+  createManualSegment,
+  insertSegmentPair,
+  invertSegmentChecks,
+  removeSegments,
+  setAllSegmentsChecked,
+  sortSegmentsByStart,
+  type SegmentCollection,
+} from "@/lib/segmentManagement";
 import { nearestBoundaryTarget } from "@/lib/boundaries";
 import {
   applyTimestampCommentToGuide,
@@ -122,7 +132,6 @@ const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
 const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
 const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
 const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
-const FILENAME_TEMPLATE_STORAGE_KEY = "songcut:filename-template";
 const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
@@ -136,6 +145,23 @@ type OutputItem = {
   end: number;
   checked: boolean;
 };
+
+type SegmentManagementReview =
+  | {
+      kind: "remove";
+      title: string;
+      message: string;
+      confirmLabel: string;
+      segmentIds: string[];
+      items: OutputItem[];
+    }
+  | {
+      kind: "sort";
+      title: string;
+      message: string;
+      before: OutputItem[];
+      after: OutputItem[];
+    };
 
 type RelinkConflict = {
   selectedPath: string;
@@ -205,6 +231,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [transcriptSegment, setTranscriptSegment] = useState<Segment | null>(null);
   const [outputOpen, setOutputOpen] = useState(false);
+  const [segmentManagementReview, setSegmentManagementReview] = useState<SegmentManagementReview | null>(null);
   const [timestampCopyCount, setTimestampCopyCount] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
@@ -225,7 +252,7 @@ export default function App() {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [relinkConflict, setRelinkConflict] = useState<RelinkConflict | null>(null);
   const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
-  const [filenameTemplate, setFilenameTemplate] = useState(readFilenameTemplate);
+  const [filenameTemplate, setFilenameTemplate] = useState(DEFAULT_FILENAME_TEMPLATE);
   const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
 
   projectBaseRef.current = projectBase;
@@ -255,6 +282,7 @@ export default function App() {
   const duration = videoInfo?.duration ?? analysis?.duration ?? projectBase?.source.duration_seconds ?? videoRef.current?.duration ?? 0;
   const zoom = zoomLevels[zoomIndex];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
+  const uncheckedCount = segments.length - checkedCount;
   const visibleTranscriptSegment = useMemo(
     () => (transcriptSegment ? segments.find((segment) => segment.id === transcriptSegment.id) ?? transcriptSegment : null),
     [segments, transcriptSegment]
@@ -281,6 +309,7 @@ export default function App() {
             exportCandidates,
             analysisDevice,
             whisper: whisperSettings,
+            filenameTemplate,
             selectedSegmentId,
             currentTime,
             zoomIndex,
@@ -299,6 +328,7 @@ export default function App() {
       exportCandidates,
       analysisDevice,
       whisperSettings,
+      filenameTemplate,
       selectedSegmentId,
       currentTime,
       zoomIndex,
@@ -319,6 +349,11 @@ export default function App() {
 
   function markProjectChanged() {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
+  }
+
+  function updateFilenameTemplate(value: string) {
+    setFilenameTemplate(value);
+    markProjectChanged();
   }
 
   useEffect(() => {
@@ -384,12 +419,11 @@ export default function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(FILENAME_TEMPLATE_STORAGE_KEY, filenameTemplate);
       window.localStorage.setItem(CREATE_SOURCE_FOLDER_STORAGE_KEY, String(createSourceFolder));
     } catch {
-      // Keep export preferences for this session when persistent storage is unavailable.
+      // Keep the export-folder preference for this session when persistent storage is unavailable.
     }
-  }, [filenameTemplate, createSourceFolder]);
+  }, [createSourceFolder]);
 
   useEffect(() => {
     if (settingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
@@ -642,8 +676,10 @@ export default function App() {
     setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
     setAnalysisDevice(document.settings.analysis_device);
     setWhisperSettings({ ...document.settings.whisper });
+    setFilenameTemplate(filenameTemplateFromProject(document));
     taskRegistry.clearTasks(["analysis", "transcription", "export"]);
     setTranscriptSegment(null);
+    setSegmentManagementReview(null);
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage(
       sourcePath
@@ -736,9 +772,11 @@ export default function App() {
     setExportCandidates([]);
     setSelectedSegmentId(null);
     setTranscriptSegment(null);
+    setSegmentManagementReview(null);
     setCurrentTime(0);
     setAnalysisDevice("auto");
     setWhisperSettings({ ...DEFAULT_WHISPER_SETTINGS });
+    setFilenameTemplate(DEFAULT_FILENAME_TEMPLATE);
     setTimestampCommentFlow(beginTimestampCommentFlow(info.timestamp_comment_candidates ?? []));
     setMessage(
       initialSidecarError
@@ -1190,6 +1228,16 @@ export default function App() {
     });
   }
 
+  function buildSegmentReviewItems(reviewSegments: readonly Segment[]) {
+    const baseItems = new Map(buildBaseOutputItems().map((item) => [item.segmentId, item]));
+    const requested = reviewSegments.flatMap((segment) => {
+      const item = baseItems.get(segment.id);
+      return item ? [item] : [];
+    });
+    const templated = applyFilenameTemplate(requested, filenameTemplate);
+    return templated.error ? requested : templated.items;
+  }
+
   async function exportTimestampComments() {
     const items = buildOutputItems().filter((item) => item.checked);
     const text = buildTimestampCommentText(items);
@@ -1209,6 +1257,115 @@ export default function App() {
   function updateSegment(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
     markProjectChanged();
+  }
+
+  function addNewSegment() {
+    if (!projectBase) return;
+    const pair = createManualSegment(segments, currentTime, duration);
+    const next = insertSegmentPair({ segments, exportCandidates }, pair, selectedSegmentId);
+    setSegments(next.segments);
+    setExportCandidates(next.exportCandidates);
+    setSelectedSegmentId(pair.segment.id);
+    setSegmentFocusRequest((request) => request + 1);
+    seek(pair.segment.start);
+    markProjectChanged();
+    setMessage(`Added ${pair.segment.id}.`);
+  }
+
+  function requestRemoveSelectedSegment() {
+    if (!selectedSegmentId) return;
+    const segment = segments.find((item) => item.id === selectedSegmentId);
+    if (!segment) return;
+    setSegmentManagementReview({
+      kind: "remove",
+      title: "Remove Segment?",
+      message: "The following segment will be permanently removed from this project.",
+      confirmLabel: "Remove Segment",
+      segmentIds: [segment.id],
+      items: buildSegmentReviewItems([segment]),
+    });
+  }
+
+  function requestRemoveUncheckedSegments() {
+    const targets = segments.filter((segment) => segment.checked === false);
+    if (!targets.length) return;
+    setSegmentManagementReview({
+      kind: "remove",
+      title: "Remove All Unchecked Segments?",
+      message: `The following ${targets.length} unchecked ${targets.length === 1 ? "segment" : "segments"} will be permanently removed from this project.`,
+      confirmLabel: targets.length === 1 ? "Remove Segment" : "Remove Segments",
+      segmentIds: targets.map((segment) => segment.id),
+      items: buildSegmentReviewItems(targets),
+    });
+  }
+
+  function requestSortSegments() {
+    if (segments.length < 2) return;
+    const sorted = sortSegmentsByStart({ segments, exportCandidates });
+    setSegmentManagementReview({
+      kind: "sort",
+      title: "Sort Segments?",
+      message: "Segments will be reordered by start time. Review the current and resulting order before continuing.",
+      before: buildSegmentReviewItems(segments),
+      after: buildSegmentReviewItems(sorted.segments),
+    });
+  }
+
+  function confirmSegmentManagement() {
+    const review = segmentManagementReview;
+    if (!review) return;
+    if (review.kind === "remove") {
+      const removedIds = new Set(review.segmentIds);
+      const next = removeSegments({ segments, exportCandidates }, removedIds);
+      applySegmentCollection(next, removedIds);
+      setMessage(`Removed ${review.segmentIds.length} ${review.segmentIds.length === 1 ? "segment" : "segments"}.`);
+    } else {
+      applySegmentCollection(sortSegmentsByStart({ segments, exportCandidates }));
+      setMessage("Sorted segments by start time.");
+    }
+    setSegmentManagementReview(null);
+  }
+
+  function applySegmentCollection(next: SegmentCollection, removedIds = new Set<string>()) {
+    const priorSelectedIndex = selectedSegmentId
+      ? segments.findIndex((segment) => segment.id === selectedSegmentId)
+      : -1;
+    const retainedSelection = selectedSegmentId && next.segments.some((segment) => segment.id === selectedSegmentId)
+      ? selectedSegmentId
+      : null;
+    const replacement = !selectedSegmentId
+      ? null
+      : retainedSelection
+        ? next.segments.find((segment) => segment.id === retainedSelection) ?? null
+        : next.segments[Math.min(Math.max(0, priorSelectedIndex), Math.max(0, next.segments.length - 1))] ?? null;
+    setSegments(next.segments);
+    setExportCandidates(next.exportCandidates);
+    setSelectedSegmentId(replacement?.id ?? null);
+    setSegmentFocusRequest((request) => request + 1);
+    if (transcriptSegment && removedIds.has(transcriptSegment.id)) setTranscriptSegment(null);
+    if (replacement && selectedSegmentId && removedIds.has(selectedSegmentId)) seek(replacement.start);
+    markProjectChanged();
+  }
+
+  function checkAllSegments() {
+    if (!uncheckedCount) return;
+    setSegments(setAllSegmentsChecked(segments, true));
+    markProjectChanged();
+    setMessage("Checked all segments for export.");
+  }
+
+  function uncheckAllSegments() {
+    if (!checkedCount) return;
+    setSegments(setAllSegmentsChecked(segments, false));
+    markProjectChanged();
+    setMessage("Unchecked all segments for export.");
+  }
+
+  function invertExportSelection() {
+    if (!segments.length) return;
+    setSegments(invertSegmentChecks(segments));
+    markProjectChanged();
+    setMessage("Inverted the export selection.");
   }
 
   function selectSegment(segment: Segment) {
@@ -1457,8 +1614,10 @@ export default function App() {
       hasProject: Boolean(projectBase),
       hasVideo: Boolean(videoUrl),
       hasSegments: segments.length > 0,
-      hasSelectedSegment: Boolean(videoUrl && selectedSegment),
+      hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
       hasCheckedSegments: checkedCount > 0,
+      hasUncheckedSegments: uncheckedCount > 0,
+      hasMultipleSegments: segments.length > 1,
       canSelectPreviousSegment,
       canSelectNextSegment,
       playing,
@@ -1475,7 +1634,9 @@ export default function App() {
     videoUrl,
     segments.length,
     selectedSegment?.id,
+    selectedSegmentId,
     checkedCount,
+    uncheckedCount,
     canSelectPreviousSegment,
     canSelectNextSegment,
     playing,
@@ -1513,6 +1674,27 @@ export default function App() {
           break;
         case "next-segment":
           selectAdjacentSegment(1);
+          break;
+        case "new-segment":
+          addNewSegment();
+          break;
+        case "remove-segment":
+          requestRemoveSelectedSegment();
+          break;
+        case "remove-unchecked-segments":
+          requestRemoveUncheckedSegments();
+          break;
+        case "sort-segments":
+          requestSortSegments();
+          break;
+        case "check-all-segments":
+          checkAllSegments();
+          break;
+        case "uncheck-all-segments":
+          uncheckAllSegments();
+          break;
+        case "invert-segment-selection":
+          invertExportSelection();
           break;
         case "zoom-in":
           setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
@@ -1559,16 +1741,23 @@ export default function App() {
     apiBaseUrl,
     videoUrl,
     selectedSegment?.id,
+    selectedSegmentId,
     segments,
+    exportCandidates,
     checkedCount,
+    uncheckedCount,
     currentTime,
+    duration,
+    filenameTemplate,
     boundarySecondsInput,
     boundaryNudgeSecondsInput,
     zoomIndex,
     whisperSettings,
     projectPath,
     projectBase,
-    projectOperation
+    projectReadOnly,
+    projectOperation,
+    transcriptSegment?.id
   ]);
 
   useEffect(() => {
@@ -1830,12 +2019,19 @@ export default function App() {
         sourceFolderName={videoInfo ? filenameWithoutExtension(videoInfo.name) : "video"}
         onClose={() => setOutputOpen(false)}
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
-        onFilenameTemplate={setFilenameTemplate}
+        onFilenameTemplate={updateFilenameTemplate}
         onCreateSourceFolder={setCreateSourceFolder}
         onExport={async () => {
           const dir = await window.songcut.selectOutputDirectory();
           if (dir) await exportClips(dir, createSourceFolder);
         }}
+      />
+      <SegmentManagementDialog
+        review={segmentManagementReview}
+        canPreview={sourceAvailable}
+        onClose={() => setSegmentManagementReview(null)}
+        onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
+        onConfirm={confirmSegmentManagement}
       />
       <Dialog open={timestampCopyCount !== null} title="Export TS" onClose={() => setTimestampCopyCount(null)}>
         <p className="dialog-message">
@@ -1858,6 +2054,8 @@ export default function App() {
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
         waveformDisplayMode={waveformDisplayMode}
         analysisDevice={analysisDevice}
+        filenameTemplate={filenameTemplate}
+        filenameTemplateError={outputPlan.error}
         whisperSettings={whisperSettings}
         whisperStatus={whisperStatus}
         whisperBusy={whisperBusy}
@@ -1879,6 +2077,7 @@ export default function App() {
           markProjectChanged();
           setMessage(`Singing analysis device set to ${deviceLabel(device)}.`);
         }}
+        onFilenameTemplate={updateFilenameTemplate}
         onWhisperSettings={(settings) => {
           setWhisperSettings(settings);
           markProjectChanged();
@@ -3118,23 +3317,7 @@ function OutputDialog(props: {
         </label>
       </div>
       <ScrollArea className="output-list" scrollbars={["vertical"]}>
-        <div className="output-list-content">
-          {props.items
-            .filter((item) => item.checked)
-            .map((item) => (
-              <button key={item.id} className="output-row" onClick={() => props.onPreview(item)}>
-                <span className="output-main">
-                  <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
-                  <span className="output-meta">
-                    ID: {item.segmentId || item.id} / File: {item.filename_stem}.mp4
-                  </span>
-                </span>
-                <span className="output-time">
-                  {formatTime(item.start)} - {formatTime(item.end)}
-                </span>
-              </button>
-            ))}
-        </div>
+        <SegmentReviewRows items={props.items.filter((item) => item.checked)} onPreview={props.onPreview} />
       </ScrollArea>
       <div className="dialog-actions">
         <Button variant="secondary" onClick={props.onClose}>
@@ -3143,6 +3326,82 @@ function OutputDialog(props: {
         <Button onClick={props.onExport} disabled={Boolean(props.error) || props.items.length === 0}>Export</Button>
       </div>
     </Dialog>
+  );
+}
+
+function SegmentManagementDialog(props: {
+  review: SegmentManagementReview | null;
+  canPreview: boolean;
+  onClose: () => void;
+  onPreview: (item: OutputItem) => void;
+  onConfirm: () => void;
+}) {
+  const review = props.review;
+  return (
+    <Dialog open={Boolean(review)} title={review?.title ?? "Segment Management"} onClose={props.onClose}>
+      {review ? (
+        <>
+          <p className="dialog-message">{review.message}</p>
+          {review.kind === "sort" ? (
+            <div className="segment-sort-comparison">
+              <SegmentReviewPane label="Before" items={review.before} canPreview={props.canPreview} onPreview={props.onPreview} />
+              <SegmentReviewPane label="After" items={review.after} canPreview={props.canPreview} onPreview={props.onPreview} />
+            </div>
+          ) : (
+            <ScrollArea className="output-list segment-management-list" scrollbars={["vertical"]}>
+              <SegmentReviewRows items={review.items} onPreview={props.canPreview ? props.onPreview : undefined} />
+            </ScrollArea>
+          )}
+          <div className="dialog-actions">
+            <Button variant="secondary" onClick={props.onClose}>Cancel</Button>
+            <Button variant={review.kind === "remove" ? "danger" : "default"} onClick={props.onConfirm}>
+              {review.kind === "remove" ? review.confirmLabel : "Sort Segments"}
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function SegmentReviewPane(props: {
+  label: string;
+  items: OutputItem[];
+  canPreview: boolean;
+  onPreview: (item: OutputItem) => void;
+}) {
+  return (
+    <section className="segment-review-pane" aria-label={props.label}>
+      <h3>{props.label}</h3>
+      <ScrollArea className="segment-review-list" scrollbars={["vertical"]}>
+        <SegmentReviewRows items={props.items} onPreview={props.canPreview ? props.onPreview : undefined} />
+      </ScrollArea>
+    </section>
+  );
+}
+
+function SegmentReviewRows(props: { items: OutputItem[]; onPreview?: (item: OutputItem) => void }) {
+  return (
+    <div className="output-list-content">
+      {props.items.map((item) => (
+        <button
+          key={item.id}
+          className="output-row"
+          onClick={() => props.onPreview?.(item)}
+          disabled={!props.onPreview}
+        >
+          <span className="output-main">
+            <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
+            <span className="output-meta">
+              ID: {item.segmentId || item.id} / File: {item.filename_stem}.mp4
+            </span>
+          </span>
+          <span className="output-time">
+            {formatTime(item.start)} - {formatTime(item.end)}
+          </span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -3359,14 +3618,6 @@ function readWaveformDisplayMode(): WaveformDisplayMode {
     return normalizeWaveformDisplayMode(window.localStorage.getItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY));
   } catch {
     return "rms";
-  }
-}
-
-function readFilenameTemplate() {
-  try {
-    return window.localStorage.getItem(FILENAME_TEMPLATE_STORAGE_KEY) || DEFAULT_FILENAME_TEMPLATE;
-  } catch {
-    return DEFAULT_FILENAME_TEMPLATE;
   }
 }
 

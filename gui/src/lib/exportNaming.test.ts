@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE } from "@/lib/exportNaming";
+import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, validateFilenameTemplate } from "@/lib/exportNaming";
 
 const items = [
   { id: "export-1", segmentId: "seg-1", title: "First / Song", start: 1, end: 65 },
@@ -22,5 +22,12 @@ describe("export filename templates", () => {
   it("reports unsupported placeholders and makes duplicate names unique", () => {
     expect(applyFilenameTemplate(items, "{number}_{title}").error).toContain("{number}");
     expect(applyFilenameTemplate(items, "clip").items.map((item) => item.filename_stem)).toEqual(["clip", "clip_2"]);
+  });
+
+  it("validates templates independently of the export rows", () => {
+    expect(validateFilenameTemplate(DEFAULT_FILENAME_TEMPLATE)).toBeNull();
+    expect(validateFilenameTemplate(" ")).toBe("Filename template cannot be empty.");
+    expect(validateFilenameTemplate("{title")).toBe("Filename template contains an unmatched brace.");
+    expect(validateFilenameTemplate("{number}_{title}")).toContain("{number}");
   });
 });

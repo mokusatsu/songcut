@@ -10,6 +10,7 @@ import type {
   WhisperSettings as ProjectWhisperSettings,
 } from "../../electron/project-schema";
 import type { WhisperSettings } from "@/lib/api";
+import { DEFAULT_FILENAME_TEMPLATE } from "@/lib/exportNaming";
 import type { AnalysisResult, ExportCandidate, Segment, VideoInfo, WaveformPoint } from "@/types";
 
 export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | "save-failed" | "read-only";
@@ -47,6 +48,7 @@ export function createProjectDocument(
     settings: {
       analysis_device: "auto",
       whisper: { ...DEFAULT_WHISPER_SETTINGS },
+      export: { filename_template: DEFAULT_FILENAME_TEMPLATE },
     },
     waveform_snapshot: null,
     analysis_snapshot: null,
@@ -70,6 +72,7 @@ export function composeProjectDocument(
     exportCandidates: ExportCandidate[];
     analysisDevice: ProjectDocumentV1["settings"]["analysis_device"];
     whisper: WhisperSettings;
+    filenameTemplate: string;
     selectedSegmentId: string | null;
     currentTime: number;
     zoomIndex: number;
@@ -78,11 +81,18 @@ export function composeProjectDocument(
 ): ProjectDocumentV1 {
   const segmentIds = new Set(state.segments.map((segment) => segment.id));
   const exportCandidates: ProjectExportCandidate[] = state.exportCandidates
-    .map((candidate, index) => ({
-      ...candidate,
-      segment_id: state.segments[index]?.id ?? candidate.id,
-      checked: state.segments[index]?.checked ?? candidate.checked,
-    }))
+    .map((candidate, index) => {
+      const segment = state.segments[index];
+      return {
+        ...candidate,
+        segment_id: segment?.id ?? candidate.id,
+        title: segment?.title?.trim() || candidate.title,
+        start: segment?.start ?? candidate.start,
+        end: segment?.end ?? candidate.end,
+        duration: segment ? segment.end - segment.start : candidate.duration,
+        checked: segment?.checked ?? candidate.checked,
+      };
+    })
     .filter((candidate) => segmentIds.has(candidate.segment_id));
   const analysis = state.analysis;
   const priorWaveform = base.waveform_snapshot;
@@ -100,6 +110,7 @@ export function composeProjectDocument(
     settings: {
       analysis_device: state.analysisDevice,
       whisper: { ...state.whisper } as ProjectWhisperSettings,
+      export: { filename_template: state.filenameTemplate },
     },
     waveform_snapshot: waveform.length
       ? {
@@ -169,6 +180,10 @@ export function waveformFromProject(document: ProjectDocumentV1): WaveformPoint[
 
 export function exportCandidatesFromProject(document: ProjectDocumentV1): ExportCandidate[] {
   return document.export_candidates.map(stripProjectCandidate);
+}
+
+export function filenameTemplateFromProject(document: ProjectDocumentV1) {
+  return document.settings.export?.filename_template ?? DEFAULT_FILENAME_TEMPLATE;
 }
 
 export function normalizeInterruptedOperation(operation: ProjectOperation): ProjectOperation {

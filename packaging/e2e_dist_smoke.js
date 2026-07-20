@@ -20,7 +20,6 @@ const editorSettingStorageKeys = {
   boundaryNudge: "songcut:boundary-nudge-seconds",
   videoSplit: "songcut:video-split-percent",
   waveformDisplay: "songcut:waveform-display-mode",
-  filenameTemplate: "songcut:filename-template",
   createSourceFolder: "songcut:create-source-folder"
 };
 
@@ -138,6 +137,21 @@ async function waitFor(cdp, expression, timeoutMs, label) {
     last = await evaluate(cdp, expression);
     if (last) return last;
     await sleep(500);
+  }
+  throw new Error(`Timeout waiting for ${label}; last=${JSON.stringify(last)}`);
+}
+
+async function waitForJsonFile(filePath, predicate, timeoutMs, label) {
+  const start = Date.now();
+  let last;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      last = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      if (predicate(last)) return last;
+    } catch (error) {
+      last = String(error);
+    }
+    await sleep(250);
   }
   throw new Error(`Timeout waiting for ${label}; last=${JSON.stringify(last)}`);
 }
@@ -347,22 +361,46 @@ async function dispatchShortcut(cdp, code, options = {}) {
   return dispatched;
 }
 
-async function dispatchInputKey(cdp, key, code, windowsVirtualKeyCode) {
+async function dispatchInputKey(cdp, key, code, windowsVirtualKeyCode, options = {}) {
   await cdp.send("Input.dispatchKeyEvent", {
     type: "rawKeyDown",
     key,
     code,
     windowsVirtualKeyCode,
-    nativeVirtualKeyCode: windowsVirtualKeyCode
+    nativeVirtualKeyCode: windowsVirtualKeyCode,
+    modifiers: options.modifiers || 0
   });
   await cdp.send("Input.dispatchKeyEvent", {
     type: "keyUp",
     key,
     code,
     windowsVirtualKeyCode,
-    nativeVirtualKeyCode: windowsVirtualKeyCode
+    nativeVirtualKeyCode: windowsVirtualKeyCode,
+    modifiers: options.modifiers || 0
   });
   await sleep(120);
+}
+
+async function dispatchMenuCommandForTest(cdp, type) {
+  const sent = await evaluate(
+    cdp,
+    `(() => {
+      if (typeof window.songcut?.sendMenuCommandForTest !== "function") return false;
+      window.songcut.sendMenuCommandForTest({ type: ${JSON.stringify(type)} });
+      return true;
+    })()`
+  );
+  if (!sent) throw new Error(`E2E menu command bridge unavailable for ${type}.`);
+  await sleep(120);
+}
+
+async function getSegmentMenuStructureForTest(cdp) {
+  return evaluate(
+    cdp,
+    `typeof window.songcut?.getSegmentMenuStructureForTest === "function"
+      ? window.songcut.getSegmentMenuStructureForTest()
+      : null`
+  );
 }
 
 async function shortcutState(cdp) {
@@ -1364,6 +1402,34 @@ function cleanup(processHandle, cdp) {
       "Boundary playback, nudge, or TS export controls are missing from the toolbar.",
       initial
     );
+    const segmentMenuStructure = await getSegmentMenuStructureForTest(cdp);
+    const expectedSegmentMenuLabels = [
+      "-- Segment Selection --",
+      "Previous Segment",
+      "Next Segment",
+      "-- Segment Management --",
+      "New Segment",
+      "Remove Segment...",
+      "Remove All Unchecked Segments...",
+      "Sort Segments...",
+      "-- Export Selection --",
+      "Check All",
+      "Uncheck All",
+      "Invert Selection"
+    ];
+    assertPass(
+      Array.isArray(segmentMenuStructure) &&
+        JSON.stringify(segmentMenuStructure.filter((item) => item.type !== "separator").map((item) => item.label)) ===
+          JSON.stringify(expectedSegmentMenuLabels) &&
+        segmentMenuStructure.filter((item) => item.type === "separator").length === 2 &&
+        segmentMenuStructure.every((item) => !item.hasSubmenu) &&
+        segmentMenuStructure
+          .filter((item) => item.label?.startsWith("-- "))
+          .every((item) => item.enabled === false),
+      "The Segment menu is not a flat, headed menu like Edit.",
+      segmentMenuStructure
+    );
+    log("SEGMENT_MENU_FLAT_STRUCTURE_OK", segmentMenuStructure);
     assertPass(await capturePng(cdp, initialScreenshotPath, "INITIAL_RENDER", processHandle), "Initial render screenshot could not be captured.");
     await runEditorSettingPersistenceChecks(cdp);
 
@@ -1398,8 +1464,9 @@ function cleanup(processHandle, cdp) {
         initialProject.settings?.whisper?.enabled === false &&
         initialProject.settings?.whisper?.model === "small" &&
         initialProject.settings?.whisper?.language === "ja" &&
-        initialProject.settings?.whisper?.device === "auto",
-      "The initial sidecar did not contain the expected schema and Whisper defaults.",
+        initialProject.settings?.whisper?.device === "auto" &&
+        initialProject.settings?.export?.filename_template === "{index}_{title}",
+      "The initial sidecar did not contain the expected schema and project-setting defaults.",
       initialProject
     );
     log("PROJECT_SIDECAR_CREATED_OK", { sidecarPath, revision: initialProject.revision });
@@ -1462,12 +1529,33 @@ function cleanup(processHandle, cdp) {
       `(() => {
         const dialog = [...document.querySelectorAll(".dialog")].find((node) => node.innerText.includes("Whisper transcription"));
         const text = dialog?.innerText || "";
-        return dialog && text.includes("Prepare Whisper Model") && text.includes("Playback and analysis") ? text : false;
+        const filenameTemplate = dialog?.querySelector("#export-filename-template")?.value;
+        const hasSettingsScrollArea = !!dialog?.querySelector(".settings-dialog-scroll.scroll-area .scroll-area-viewport");
+        return dialog && text.includes("Prepare Whisper Model") && text.includes("Playback and analysis") &&
+          text.includes("Export") && text.includes("Filename template") && filenameTemplate === "{index}_{title}" &&
+          hasSettingsScrollArea ? text : false;
       })()`,
       10_000,
       "Settings dialog with Whisper controls"
     );
     log("SETTINGS_DIALOG_OK", settingsDialog);
+    const settingsScrollArea = await evaluate(
+      cdp,
+      `(() => {
+        const root = document.querySelector(".settings-dialog-scroll.scroll-area");
+        const viewport = root?.querySelector(".scroll-area-viewport");
+        const content = document.querySelector(".settings-dialog-content");
+        return root && viewport && content
+          ? { height: root.getBoundingClientRect().height, contentOverflowY: getComputedStyle(content).overflowY }
+          : null;
+      })()`
+    );
+    assertPass(
+      settingsScrollArea?.height > 0 && settingsScrollArea.contentOverflowY !== "auto" && settingsScrollArea.contentOverflowY !== "scroll",
+      "Settings does not use the bounded Shadcn/Radix ScrollArea as its scroll owner.",
+      settingsScrollArea
+    );
+    log("SETTINGS_SCROLL_AREA_OK", settingsScrollArea);
     assertPass(
       await evaluate(cdp, `!document.querySelector('input[list], datalist')`),
       "Settings still uses the native language datalist."
@@ -1557,6 +1645,25 @@ function cleanup(processHandle, cdp) {
     );
     assertPass(whisperEnabled, "Whisper could not be enabled after explicit model preparation.");
     log("WHISPER_ENABLED_OK");
+    const settingsFilenameTemplateChanged = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector("#export-filename-template");
+        if (!input) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, "{title}_{index}");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      })()`
+    );
+    assertPass(settingsFilenameTemplateChanged, "Settings filename template was not editable.");
+    await waitFor(
+      cdp,
+      `document.querySelector("#export-filename-template")?.value === "{title}_{index}"`,
+      5000,
+      "Settings filename template change"
+    );
+    log("SETTINGS_FILENAME_TEMPLATE_OK");
     await clickButton(cdp, "Done");
     await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "Settings dialog close");
     assertPass(
@@ -1564,6 +1671,16 @@ function cleanup(processHandle, cdp) {
       "Whisper settings remained resident after closing Settings."
     );
     log("WHISPER_SETTINGS_NON_RESIDENT_OK");
+    await dispatchInputKey(cdp, ",", "Comma", 188, { modifiers: 2 });
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"]') ? true : false`,
+      5000,
+      "Ctrl+, Settings shortcut"
+    );
+    log("SETTINGS_CTRL_COMMA_SHORTCUT_OK");
+    await clickButton(cdp, "Done");
+    await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "Settings shortcut dialog close");
 
     await setGuideText(
       cdp,
@@ -1673,6 +1790,173 @@ function cleanup(processHandle, cdp) {
       savedProject
     );
     log("PROJECT_AUTOSAVE_OK", { revision: savedProject.revision, segmentCount: savedProject.segments.length });
+
+    await clickButton(cdp, "Export");
+    await waitFor(cdp, `document.querySelector(".dialog") && document.body.innerText.includes("Export Review")`, 15_000, "early export dialog");
+    const settingsTemplateReview = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".output-template-field input");
+        const row = document.querySelector(".output-row");
+        return input?.value === "{title}_{index}" && row?.innerText.includes("Smoke Song Edited_01.mp4")
+          ? { template: input.value, row: row.innerText }
+          : false;
+      })()`
+    );
+    assertPass(settingsTemplateReview, "The filename template changed in Settings was not reflected in Export Review.");
+    const earlyExportTemplateChanged = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".output-template-field input");
+        if (!input) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, "{index}_{id}");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      })()`
+    );
+    assertPass(earlyExportTemplateChanged, "Export Review filename template was not editable.");
+    await waitFor(
+      cdp,
+      `document.querySelector(".output-row")?.innerText.includes("01_guide-001.mp4")`,
+      5000,
+      "early customized export filename"
+    );
+    const earlyCustomizedProject = await waitForJsonFile(
+      sidecarPath,
+      (document) => document.settings?.export?.filename_template === "{index}_{id}",
+      10_000,
+      "early project-specific export filename template"
+    );
+    assertPass(
+      await evaluate(cdp, `localStorage.getItem("songcut:filename-template") === null`),
+      "The project-specific filename template was still written to renderer local storage."
+    );
+    log("EXPORT_NAMING_PROJECT_SETTING_EARLY_OK", {
+      fromSettings: settingsTemplateReview.template,
+      savedTemplate: earlyCustomizedProject.settings.export.filename_template,
+      revision: earlyCustomizedProject.revision
+    });
+    await clickButton(cdp, "Back");
+    await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "early export dialog close");
+    if (process.env.SONGCUT_E2E_SEGMENT_MENU_ONLY === "1") {
+      await evaluate(
+        cdp,
+        `(() => {
+          const video = document.querySelector("video");
+          if (!video) return false;
+          video.currentTime = 4.5;
+          video.dispatchEvent(new Event("timeupdate"));
+          return true;
+        })()`
+      );
+      await dispatchMenuCommandForTest(cdp, "new-segment");
+      const newSegmentState = await waitFor(
+        cdp,
+        `(() => {
+          const rows = [...document.querySelectorAll(".segment-list tbody tr")];
+          const selected = document.querySelector(".segment-list tbody tr.selected");
+          return rows.length === 3 && selected?.innerText.includes("manual-001")
+            ? rows.map((row) => row.innerText)
+            : false;
+        })()`,
+        5000,
+        "New Segment menu command"
+      );
+      log("SEGMENT_MENU_NEW_OK", newSegmentState);
+
+      await dispatchMenuCommandForTest(cdp, "sort-segments");
+      const sortReview = await waitFor(
+        cdp,
+        `(() => {
+          const dialog = document.querySelector('.dialog[aria-label="Sort Segments?"]');
+          const panes = [...(dialog?.querySelectorAll(".segment-review-pane") || [])].map((pane) => ({
+            label: pane.querySelector("h3")?.innerText || "",
+            ids: [...pane.querySelectorAll(".output-meta")].map((item) => item.innerText.match(/ID: ([^ /]+)/)?.[1] || "")
+          }));
+          return panes.length === 2 ? panes : false;
+        })()`,
+        5000,
+        "Sort Segments review"
+      );
+      assertPass(
+        JSON.stringify(sortReview[0]) === JSON.stringify({ label: "Before", ids: ["guide-001", "manual-001", "guide-002"] }) &&
+          JSON.stringify(sortReview[1]) === JSON.stringify({ label: "After", ids: ["guide-001", "guide-002", "manual-001"] }),
+        "Sort Segments review did not show the expected Before/After order.",
+        sortReview
+      );
+      await clickButton(cdp, "Sort Segments");
+      await waitFor(
+        cdp,
+        `JSON.stringify([...document.querySelectorAll(".segment-list tbody tr")].map((row) => row.cells[2]?.innerText)) === JSON.stringify(["guide-001", "guide-002", "manual-001"])`,
+        5000,
+        "sorted segment list"
+      );
+      log("SEGMENT_MENU_SORT_OK", sortReview);
+
+      await dispatchMenuCommandForTest(cdp, "uncheck-all-segments");
+      await waitFor(cdp, `[...document.querySelectorAll(".segment-list input[type=checkbox]")].every((item) => !item.checked)`, 5000, "Uncheck All");
+      await dispatchMenuCommandForTest(cdp, "check-all-segments");
+      await waitFor(cdp, `[...document.querySelectorAll(".segment-list input[type=checkbox]")].every((item) => item.checked)`, 5000, "Check All");
+      await dispatchMenuCommandForTest(cdp, "invert-segment-selection");
+      await waitFor(cdp, `[...document.querySelectorAll(".segment-list input[type=checkbox]")].every((item) => !item.checked)`, 5000, "Invert Selection off");
+      await dispatchMenuCommandForTest(cdp, "invert-segment-selection");
+      await waitFor(cdp, `[...document.querySelectorAll(".segment-list input[type=checkbox]")].every((item) => item.checked)`, 5000, "Invert Selection on");
+      log("SEGMENT_MENU_EXPORT_SELECTION_OK");
+
+      await dispatchMenuCommandForTest(cdp, "remove-segment");
+      const removeReview = await waitFor(
+        cdp,
+        `(() => {
+          const dialog = document.querySelector('.dialog[aria-label="Remove Segment?"]');
+          const rows = [...(dialog?.querySelectorAll(".output-row") || [])];
+          return rows.length === 1 && rows[0].innerText.includes("manual-001") ? rows[0].innerText : false;
+        })()`,
+        5000,
+        "Remove Segment review"
+      );
+      await clickButton(cdp, "Remove Segment");
+      await waitFor(cdp, `document.querySelectorAll(".segment-list tbody tr").length === 2 && !document.querySelector(".dialog")`, 5000, "Remove Segment confirm");
+      log("SEGMENT_MENU_REMOVE_ONE_OK", removeReview);
+
+      await clickSelector(cdp, ".segment-list input[type=checkbox]", 1);
+      await waitFor(cdp, `document.querySelectorAll(".segment-list input[type=checkbox]:not(:checked)").length === 1`, 5000, "unchecked segment target");
+      await dispatchMenuCommandForTest(cdp, "remove-unchecked-segments");
+      const removeUncheckedReview = await waitFor(
+        cdp,
+        `(() => {
+          const dialog = document.querySelector('.dialog[aria-label="Remove All Unchecked Segments?"]');
+          const rows = [...(dialog?.querySelectorAll(".output-row") || [])];
+          return rows.length === 1 && rows[0].innerText.includes("guide-002") ? rows[0].innerText : false;
+        })()`,
+        5000,
+        "Remove All Unchecked Segments review"
+      );
+      await clickButton(cdp, "Remove Segment");
+      await waitFor(cdp, `document.querySelectorAll(".segment-list tbody tr").length === 1 && !document.querySelector(".dialog")`, 5000, "Remove All Unchecked Segments confirm");
+      log("SEGMENT_MENU_REMOVE_UNCHECKED_OK", removeUncheckedReview);
+      const segmentMenuProject = await waitForJsonFile(
+        sidecarPath,
+        (document) =>
+          document.segments?.length === 1 &&
+          document.segments[0]?.id === "guide-001" &&
+          document.export_candidates?.length === 1 &&
+          document.export_candidates[0]?.segment_id === "guide-001",
+        10_000,
+        "segment menu project autosave"
+      );
+      log("SEGMENT_MENU_PROJECT_AUTOSAVE_OK", {
+        segmentIds: segmentMenuProject.segments.map((segment) => segment.id),
+        exportCandidateIds: segmentMenuProject.export_candidates.map((candidate) => candidate.segment_id),
+        revision: segmentMenuProject.revision
+      });
+      log("E2E_SEGMENT_MENU_ONLY_PASS");
+      return;
+    }
+    if (process.env.SONGCUT_E2E_EXPORT_NAMING_ONLY === "1") {
+      log("E2E_EXPORT_NAMING_ONLY_PASS");
+      return;
+    }
 
     await runShortcutChecks(cdp);
 
@@ -2122,10 +2406,10 @@ function cleanup(processHandle, cdp) {
       `[...document.querySelectorAll(".output-row")].map((row) => row.innerText)`
     );
     assertPass(
-      reviewItems.length === 1 &&
+        reviewItems.length === 1 &&
         reviewItems[0].includes("Smoke Song Edited") &&
         reviewItems[0].includes("ID: guide-001") &&
-        reviewItems[0].includes("01_Smoke Song Edited.mp4"),
+        reviewItems[0].includes("01_guide-001.mp4"),
       "Export review did not list the checked guided segment title, ID, and filename.",
       reviewItems
     );
@@ -2149,17 +2433,31 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const row = document.querySelector(".output-row");
+        const input = document.querySelector(".output-template-field input");
         const checkbox = document.querySelector(".output-folder-option input[type=checkbox]");
-        const template = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.filenameTemplate)});
         const folder = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.createSourceFolder)});
-        return row?.innerText.includes("01_guide-001.mp4") && checkbox?.checked && template === "{index}_{id}" && folder === "true"
-          ? { row: row.innerText, template, folder }
+        return row?.innerText.includes("01_guide-001.mp4") && checkbox?.checked && input?.value === "{index}_{id}" && folder === "true"
+          ? { row: row.innerText, template: input.value, folder }
           : false;
       })()`,
       5000,
       "customized export filename and source folder"
     );
     log("EXPORT_NAMING_OPTIONS_OK", customizedExport);
+    const customizedProject = await waitForJsonFile(
+      sidecarPath,
+      (document) => document.settings?.export?.filename_template === "{index}_{id}",
+      10_000,
+      "project-specific export filename template"
+    );
+    assertPass(
+      await evaluate(cdp, `localStorage.getItem("songcut:filename-template") === null`),
+      "The project-specific filename template was still written to renderer local storage."
+    );
+    log("EXPORT_NAMING_PROJECT_SETTING_OK", {
+      revision: customizedProject.revision,
+      template: customizedProject.settings.export.filename_template
+    });
     assertPass(await capturePng(cdp, reviewScreenshotPath, "EXPORT_REVIEW", processHandle), "Export review screenshot could not be captured.");
 
     await clickSelector(cdp, ".output-row");

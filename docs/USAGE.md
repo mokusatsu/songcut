@@ -106,6 +106,20 @@ end times.
 Use the checkbox for each segment to choose whether it is included when
 exporting video clips or a timestamp comment.
 
+The **Segment** menu groups segment operations under non-selectable section
+headings, with every command available directly in the menu:
+
+- **Segment Selection** moves to the previous or next segment.
+- **New Segment** under **Segment Management** inserts a checked five-second segment
+  at the current playback position. It is placed after the selected segment,
+  or appended when no segment is selected.
+- **Remove Segment...** and **Remove All Unchecked Segments...** show the
+  affected segment rows for confirmation before removal.
+- **Sort Segments...** previews the current and start-time-sorted orders side
+  by side before applying the change.
+- **Export Selection** provides **Check All**, **Uncheck All**, and **Invert
+  Selection** directly below its heading.
+
 # Useful Editing Tools
 
 ![Editing tools](image/tools.png)
@@ -169,10 +183,12 @@ starts.
 Click **Export** to export a separate video clip for each selected segment.
 In Export Review, customize filenames with `{index}`, `{title}`, `{id}`,
 `{start}`, and `{end}` placeholders. The default is `{index}_{title}`, and the
-preview shows the actual sanitized filenames before export. Enable **Create a
+preview shows the actual sanitized filenames before export. The same template
+is available in **Settings > Export** and is saved separately in each `.songcut`
+project. Enable **Create a
 "<source>" folder inside the selected output folder** to place clips and the
-optional timestamp-comment file in a source-video-named child folder. These two
-choices are restored the next time the application starts.
+optional timestamp-comment file in a source-video-named child folder. The folder
+choice is an application-wide preference restored the next time the application starts.
 
 Click **Export TS** to copy the selected segments to the clipboard as a
 timestamp comment.

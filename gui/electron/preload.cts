@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld("songcut", {
     ipcRenderer.on("songcut:menu-command", listener);
     return () => ipcRenderer.removeListener("songcut:menu-command", listener);
   },
+  ...(process.env.SONGCUT_E2E_USER_DATA_DIR
+    ? {
+        sendMenuCommandForTest: (command: unknown) => ipcRenderer.send("songcut:e2e-menu-command", command),
+        getSegmentMenuStructureForTest: () => ipcRenderer.invoke("songcut:e2e-menu-structure")
+      }
+    : {}),
   updateMenuState: (state: unknown) => ipcRenderer.send("songcut:update-menu-state", state),
   confirmClose: () => ipcRenderer.invoke("songcut:confirm-close") as Promise<void>,
   cancelClose: () => ipcRenderer.invoke("songcut:cancel-close") as Promise<void>,

@@ -14,6 +14,13 @@ type SongcutMenuCommand =
   | { type: "nudge-boundary-right" }
   | { type: "previous-segment" }
   | { type: "next-segment" }
+  | { type: "new-segment" }
+  | { type: "remove-segment" }
+  | { type: "remove-unchecked-segments" }
+  | { type: "sort-segments" }
+  | { type: "check-all-segments" }
+  | { type: "uncheck-all-segments" }
+  | { type: "invert-segment-selection" }
   | { type: "zoom-in" }
   | { type: "zoom-out" }
   | { type: "set-zoom"; zoomIndex: number }
@@ -35,6 +42,8 @@ type SongcutMenuState = {
   hasSegments: boolean;
   hasSelectedSegment: boolean;
   hasCheckedSegments: boolean;
+  hasUncheckedSegments: boolean;
+  hasMultipleSegments: boolean;
   canSelectPreviousSegment: boolean;
   canSelectNextSegment: boolean;
   playing: boolean;
@@ -51,6 +60,10 @@ interface Window {
     apiBaseUrl(): Promise<string>;
     onCloseRequested(callback: () => void): () => void;
     onMenuCommand(callback: (command: SongcutMenuCommand) => void): () => void;
+    sendMenuCommandForTest?(command: SongcutMenuCommand): void;
+    getSegmentMenuStructureForTest?(): Promise<
+      Array<{ label: string; type: string; enabled: boolean; hasSubmenu: boolean }> | null
+    >;
     updateMenuState(state: SongcutMenuState): void;
     confirmClose(): Promise<void>;
     cancelClose(): Promise<void>;

@@ -1,8 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { WhisperSettingsPanel } from "@/components/WhisperSettingsPanel";
 import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
+import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import type { WaveformDisplayMode } from "@/types";
 
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
@@ -14,6 +16,8 @@ export function SettingsDialog(props: {
   scratchAudioProxyEnabled: boolean;
   waveformDisplayMode: WaveformDisplayMode;
   analysisDevice: AnalysisDevice;
+  filenameTemplate: string;
+  filenameTemplateError: string | null;
   whisperSettings: WhisperSettings;
   whisperStatus: WhisperStatus | null;
   whisperBusy: boolean;
@@ -25,6 +29,7 @@ export function SettingsDialog(props: {
   onScratchAudioProxyEnabled: (enabled: boolean) => void;
   onWaveformDisplayMode: (mode: WaveformDisplayMode) => void;
   onAnalysisDevice: (device: AnalysisDevice) => void;
+  onFilenameTemplate: (value: string) => void;
   onWhisperSettings: (settings: WhisperSettings) => void;
   onPrepareWhisperModel: () => void;
   onTranscribe: () => void;
@@ -32,7 +37,8 @@ export function SettingsDialog(props: {
 }) {
   return (
     <Dialog open={props.open} title="Settings" onClose={props.onClose}>
-      <div className="settings-dialog-content">
+      <ScrollArea className="settings-dialog-scroll" viewportClassName="settings-dialog-viewport">
+        <div className="settings-dialog-content">
         <section className="settings-section" aria-labelledby="playback-settings-heading">
           <h3 id="playback-settings-heading">Playback and analysis</h3>
           <div className="settings-grid">
@@ -103,6 +109,30 @@ export function SettingsDialog(props: {
           />
         </section>
 
+        <section className="settings-section" aria-labelledby="export-settings-heading">
+          <h3 id="export-settings-heading">Export</h3>
+          <label className="settings-field" htmlFor="export-filename-template">
+            <span>Filename template</span>
+            <Input
+              id="export-filename-template"
+              value={props.filenameTemplate}
+              placeholder={DEFAULT_FILENAME_TEMPLATE}
+              spellCheck={false}
+              aria-invalid={Boolean(props.filenameTemplateError)}
+              onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
+            />
+          </label>
+          <span className="settings-field-help">
+            {`Available placeholders: ${FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ")}`}
+          </span>
+          {props.filenameTemplateError ? (
+            <span className="settings-field-error" role="alert">
+              {props.filenameTemplateError}
+            </span>
+          ) : null}
+          <span className="settings-field-help">This setting is saved separately for each .songcut project.</span>
+        </section>
+
         <section className="settings-section settings-tools" aria-labelledby="tools-settings-heading">
           <div>
             <h3 id="tools-settings-heading">Tools</h3>
@@ -112,7 +142,8 @@ export function SettingsDialog(props: {
             ffmpeg Check
           </Button>
         </section>
-      </div>
+        </div>
+      </ScrollArea>
       <div className="dialog-actions settings-dialog-actions">
         <span>Changes are applied immediately and project settings are autosaved.</span>
         <Button onClick={props.onClose}>Done</Button>
