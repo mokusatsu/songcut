@@ -9,6 +9,7 @@ from songcut.api import (
     FFMPEG_DOWNLOAD_URL,
     AnalyzeRequest,
     ExportItem,
+    ExportPlanRequest,
     ExportRequest,
     JobRecord,
     ProbeRequest,
@@ -26,6 +27,7 @@ from songcut.api import (
     _scratch_proxy_job,
     cancel_scratch_proxy_job,
     create_transcription_job,
+    create_export_plan,
     download_whisper_model,
     ffmpeg_check,
     health,
@@ -304,7 +306,45 @@ class ApiJobTests(unittest.TestCase):
         with _jobs_lock:
             completed = _jobs["export-001"]
         self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.result["exported"][0]["id"], "guide-001")
         self.assertEqual(completed.result["exported"][0]["target"], "out/01_Song.mp4")
+
+    def test_export_plan_reports_smart_and_full_reencode_items(self) -> None:
+        source = Path("source.mp4")
+        smart_plan = SimpleNamespace(
+            fallback_reason=None,
+            output_suffix=".mp4",
+            video_codec="h264",
+            container_family="mp4",
+            spans=[SimpleNamespace(mode="encode", start=10.0, end=12.0), SimpleNamespace(mode="copy", start=12.0, end=18.0)],
+        )
+        fallback_plan = SimpleNamespace(
+            fallback_reason="no keyframe-aligned GOP exists entirely inside the requested range",
+            output_suffix=".mp4",
+            video_codec="h264",
+            container_family="mp4",
+            spans=[SimpleNamespace(mode="encode", start=20.0, end=21.0)],
+        )
+        request = ExportPlanRequest(
+            source_path=str(source),
+            items=[
+                ExportItem(id="smart", filename_stem="Smart", start=10.0, end=20.0),
+                ExportItem(id="fallback", filename_stem="Fallback", start=20.0, end=21.0),
+            ],
+        )
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=source),
+            mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffprobe=Path("ffprobe.exe"))),
+            mock.patch("songcut.api.plan_smart_render", side_effect=[smart_plan, fallback_plan]),
+        ):
+            payload = create_export_plan(request)
+
+        self.assertEqual(payload["items"][0]["smart_render"], True)
+        self.assertEqual(payload["items"][0]["copied_seconds"], 6.0)
+        self.assertEqual(payload["items"][0]["encoded_seconds"], 4.0)
+        self.assertEqual(payload["items"][1]["smart_render"], False)
+        self.assertEqual(payload["items"][1]["fallback_reason"], fallback_plan.fallback_reason)
 
     def test_export_job_can_create_a_source_named_folder(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

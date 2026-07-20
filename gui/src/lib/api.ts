@@ -1,5 +1,6 @@
 import type {
   AnalysisResult,
+  ExportRenderPlan,
   FfmpegCheckResult,
   JobRecord,
   ScratchProxyResult,
@@ -156,6 +157,13 @@ export function startExport(
     items,
     timestamp_comment_text: timestampCommentText,
     create_source_folder: createSourceFolder
+  });
+}
+
+export function getExportPlan(baseUrl: string, sourcePath: string, items: unknown[]) {
+  return postJson<ExportRenderPlan>(baseUrl, "/export/plan", {
+    source_path: sourcePath,
+    items
   });
 }
 

@@ -15,7 +15,7 @@ from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
-from .smart_export import export_smart_clip
+from .smart_export import export_smart_clip, plan_smart_render
 from .transcription import (
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
@@ -94,6 +94,11 @@ class ExportRequest(BaseModel):
     items: list[ExportItem] = Field(default_factory=list)
     timestamp_comment_text: str = ""
     create_source_folder: bool = False
+
+
+class ExportPlanRequest(BaseModel):
+    source_path: str
+    items: list[ExportItem] = Field(default_factory=list)
 
 
 class ScratchProxyRequest(BaseModel):
@@ -314,6 +319,31 @@ def create_transcription_job(request: TranscriptionRequest) -> JobRecord:
 @app.post("/export/jobs")
 def create_export_job(request: ExportRequest) -> JobRecord:
     return start_job("export", lambda job_id: _export_job(job_id, request))
+
+
+@app.post("/export/plan")
+def create_export_plan(request: ExportPlanRequest) -> dict[str, Any]:
+    source = require_file(request.source_path)
+    ffmpeg = find_ffmpeg()
+    items: list[dict[str, Any]] = []
+    for item in request.items:
+        if not item.checked:
+            continue
+        plan = plan_smart_render(ffmpeg.ffprobe, source, start=item.start, end=item.end)
+        copied_seconds = sum(span.end - span.start for span in plan.spans if span.mode == "copy")
+        items.append(
+            {
+                "id": item.id,
+                "smart_render": plan.fallback_reason is None,
+                "output_suffix": plan.output_suffix,
+                "video_codec": plan.video_codec,
+                "container_family": plan.container_family,
+                "copied_seconds": copied_seconds,
+                "encoded_seconds": max(0.0, item.end - item.start - copied_seconds),
+                "fallback_reason": plan.fallback_reason,
+            }
+        )
+    return {"items": items}
 
 
 @app.post("/scratch-proxy/jobs")
@@ -617,14 +647,23 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
                 job_id,
                 status="running",
                 progress=(index - 1) / max(1, len(selected)),
-                message=f"Smart rendering {item.id}.",
+                message=f"Exporting {item.id}.",
             )
             filename_stem = make_unique_stem(
                 safe_filename_stem(item.filename_stem, fallback=item.id),
                 used_filename_stems,
             )
             target = output_dir / f"{filename_stem}.mp4"
-            exported.append(export_smart_clip(ffmpeg.ffmpeg, ffmpeg.ffprobe, source, target, start=item.start, end=item.end))
+            export_result = export_smart_clip(
+                ffmpeg.ffmpeg,
+                ffmpeg.ffprobe,
+                source,
+                target,
+                start=item.start,
+                end=item.end,
+            )
+            export_result["id"] = item.id
+            exported.append(export_result)
         result: dict[str, Any] = {"exported": exported, "output_dir": str(output_dir)}
         if timestamp_comment_path:
             result["timestamp_comment_path"] = timestamp_comment_path

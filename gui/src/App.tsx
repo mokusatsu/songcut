@@ -31,6 +31,7 @@ import {
   ApiError,
   cancelScratchProxy,
   checkFfmpeg,
+  getExportPlan,
   getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
@@ -105,6 +106,8 @@ import type { ScratchProxyState } from "@/lib/scratchProxy";
 import type {
   AnalysisResult,
   ExportCandidate,
+  ExportRenderPlan,
+  ExportRenderPlanItem,
   FfmpegCheckResult,
   JobRecord,
   ScratchProxyResult,
@@ -145,6 +148,11 @@ type OutputItem = {
   end: number;
   checked: boolean;
 };
+
+type ExportPlanState =
+  | { status: "idle" | "loading"; plan: null; error: null }
+  | { status: "ready"; plan: ExportRenderPlan; error: null }
+  | { status: "error"; plan: null; error: string };
 
 type SegmentManagementReview =
   | {
@@ -231,6 +239,7 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [transcriptSegment, setTranscriptSegment] = useState<Segment | null>(null);
   const [outputOpen, setOutputOpen] = useState(false);
+  const [exportPlanState, setExportPlanState] = useState<ExportPlanState>({ status: "idle", plan: null, error: null });
   const [segmentManagementReview, setSegmentManagementReview] = useState<SegmentManagementReview | null>(null);
   const [timestampCopyCount, setTimestampCopyCount] = useState<number | null>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -291,6 +300,26 @@ export default function App() {
     () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
     [segments, exportCandidates, filenameTemplate]
   );
+  const exportPlanKey = useMemo(
+    () => outputPlan.items.filter((item) => item.checked).map((item) => `${item.id}:${item.start}:${item.end}`).join("|"),
+    [outputPlan.items]
+  );
+  useEffect(() => {
+    if (!outputOpen || !apiBaseUrl || !videoPath) return;
+    const items = outputPlan.items.filter((item) => item.checked);
+    let cancelled = false;
+    setExportPlanState({ status: "loading", plan: null, error: null });
+    void getExportPlan(apiBaseUrl, videoPath, items)
+      .then((plan) => {
+        if (!cancelled) setExportPlanState({ status: "ready", plan, error: null });
+      })
+      .catch((error) => {
+        if (!cancelled) setExportPlanState({ status: "error", plan: null, error: String(error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl, exportPlanKey, outputOpen, videoPath]);
   const exportJob = taskRegistry.tasks.export ?? null;
   const transcriptionJob = taskRegistry.tasks.transcription ?? null;
   const activeJob = taskRegistry.activeTask;
@@ -2013,6 +2042,7 @@ export default function App() {
       <OutputDialog
         open={outputOpen}
         items={outputPlan.items}
+        renderPlanState={exportPlanState}
         error={outputPlan.error}
         filenameTemplate={filenameTemplate}
         createSourceFolder={createSourceFolder}
@@ -2092,7 +2122,12 @@ export default function App() {
           void runFfmpegCheck(true);
         }}
       />
-      <ExportProgressDialog open={exportProgressOpen} job={exportJob} onClose={() => setExportProgressOpen(false)} />
+      <ExportProgressDialog
+        open={exportProgressOpen}
+        job={exportJob}
+        renderPlanState={exportPlanState}
+        onClose={() => setExportProgressOpen(false)}
+      />
       <Dialog open={whisperPreflightOpen} title="Whisper model is not ready" onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
           {`The selected ${whisperSettings.model} model is not installed. Downloading is always an explicit action.`}
@@ -3282,6 +3317,7 @@ function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
 function OutputDialog(props: {
   open: boolean;
   items: OutputItem[];
+  renderPlanState: ExportPlanState;
   error: string | null;
   filenameTemplate: string;
   createSourceFolder: boolean;
@@ -3292,8 +3328,10 @@ function OutputDialog(props: {
   onCreateSourceFolder: (value: boolean) => void;
   onExport: () => Promise<void>;
 }) {
+  const renderPlans = new Map(props.renderPlanState.plan?.items.map((item) => [item.id, item]));
   return (
     <Dialog open={props.open} title="Export Review" onClose={props.onClose}>
+      <ExportRenderSummary state={props.renderPlanState} />
       <div className="output-options">
         <label className="output-template-field">
           <span>Filename template</span>
@@ -3317,13 +3355,23 @@ function OutputDialog(props: {
         </label>
       </div>
       <ScrollArea className="output-list" scrollbars={["vertical"]}>
-        <SegmentReviewRows items={props.items.filter((item) => item.checked)} onPreview={props.onPreview} />
+        <SegmentReviewRows
+          items={props.items.filter((item) => item.checked)}
+          onPreview={props.onPreview}
+          renderPlans={renderPlans}
+          renderPlanStatus={props.renderPlanState.status}
+        />
       </ScrollArea>
       <div className="dialog-actions">
         <Button variant="secondary" onClick={props.onClose}>
           Back
         </Button>
-        <Button onClick={props.onExport} disabled={Boolean(props.error) || props.items.length === 0}>Export</Button>
+        <Button
+          onClick={props.onExport}
+          disabled={Boolean(props.error) || props.items.length === 0 || props.renderPlanState.status !== "ready"}
+        >
+          Export
+        </Button>
       </div>
     </Dialog>
   );
@@ -3380,41 +3428,115 @@ function SegmentReviewPane(props: {
   );
 }
 
-function SegmentReviewRows(props: { items: OutputItem[]; onPreview?: (item: OutputItem) => void }) {
+function SegmentReviewRows(props: {
+  items: OutputItem[];
+  onPreview?: (item: OutputItem) => void;
+  renderPlans?: Map<string, ExportRenderPlanItem>;
+  renderPlanStatus?: ExportPlanState["status"];
+}) {
   return (
     <div className="output-list-content">
-      {props.items.map((item) => (
-        <button
-          key={item.id}
-          className="output-row"
-          onClick={() => props.onPreview?.(item)}
-          disabled={!props.onPreview}
-        >
-          <span className="output-main">
-            <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
-            <span className="output-meta">
-              ID: {item.segmentId || item.id} / File: {item.filename_stem}.mp4
+      {props.items.map((item) => {
+        const renderPlan = props.renderPlans?.get(item.id);
+        const suffix = renderPlan?.output_suffix ?? ".mp4";
+        return (
+          <button
+            key={item.id}
+            className="output-row"
+            onClick={() => props.onPreview?.(item)}
+            disabled={!props.onPreview}
+          >
+            <span className="output-main">
+              <span className="output-title-line">
+                <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
+                {props.renderPlans || props.renderPlanStatus ? (
+                  <ExportRenderBadge plan={renderPlan} status={props.renderPlanStatus ?? "idle"} />
+                ) : null}
+              </span>
+              <span className="output-meta">
+                ID: {item.segmentId || item.id} / File: {item.filename_stem}{suffix}
+              </span>
+              {renderPlan ? <span className="output-render-detail">{exportRenderDetail(renderPlan)}</span> : null}
             </span>
-          </span>
-          <span className="output-time">
-            {formatTime(item.start)} - {formatTime(item.end)}
-          </span>
-        </button>
-      ))}
+            <span className="output-time">
+              {formatTime(item.start)} - {formatTime(item.end)}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-function ExportProgressDialog(props: { open: boolean; job: JobRecord | null; onClose: () => void }) {
+function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportPlanState["status"] }) {
+  if (props.status === "loading") return <span className="render-badge render-badge-checking">Checking</span>;
+  if (!props.plan) return <span className="render-badge render-badge-unknown">Unknown</span>;
+  return (
+    <span className={`render-badge ${props.plan.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
+      {props.plan.smart_render ? "Smart render" : "Full re-encode"}
+    </span>
+  );
+}
+
+function ExportRenderSummary(props: { state: ExportPlanState }) {
+  const state = props.state;
+  if (state.status === "loading" || state.status === "idle") {
+    return <div className="export-render-summary"><ExportRenderBadge status="loading" /><span>Checking source format and keyframes for each clip.</span></div>;
+  }
+  if (state.status === "error") {
+    return (
+      <div className="export-render-summary export-render-summary-error">
+        <ExportRenderBadge status="error" />
+        <span>Render mode could not be checked: {state.error}</span>
+      </div>
+    );
+  }
+  if (!state.plan) return null;
+  const smartCount = state.plan.items.filter((item) => item.smart_render).length;
+  const reencodeCount = state.plan.items.length - smartCount;
+  return (
+    <div className="export-render-summary">
+      {smartCount > 0 ? <span className="render-badge render-badge-smart">Smart render {smartCount}</span> : null}
+      {reencodeCount > 0 ? <span className="render-badge render-badge-reencode">Full re-encode {reencodeCount}</span> : null}
+      <span>{reencodeCount === 0 ? "All clips can copy their keyframe-aligned GOPs." : "Render mode is determined separately for each clip."}</span>
+    </div>
+  );
+}
+
+function exportRenderDetail(plan: ExportRenderPlanItem) {
+  if (plan.smart_render) {
+    return `${plan.video_codec.toUpperCase()} / copies ${formatDuration(plan.copied_seconds)}; re-encodes ${formatDuration(plan.encoded_seconds)} at the boundaries`;
+  }
+  if (plan.fallback_reason?.startsWith("no keyframe-aligned GOP")) {
+    return "No complete keyframe-aligned GOP is inside this range; the entire clip will be re-encoded.";
+  }
+  if (plan.fallback_reason?.startsWith("unsupported smart-render codec/container")) {
+    return `${plan.video_codec.toUpperCase() || "Unknown codec"} in ${plan.container_family.toUpperCase()} is not eligible for smart rendering.`;
+  }
+  return plan.fallback_reason || "The entire clip will be re-encoded.";
+}
+
+function formatDuration(seconds: number) {
+  return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
+function ExportProgressDialog(props: {
+  open: boolean;
+  job: JobRecord | null;
+  renderPlanState: ExportPlanState;
+  onClose: () => void;
+}) {
   const progress = clamp(props.job?.progress ?? 0, 0, 1);
   const status = props.job?.status ?? "queued";
   const complete = status === "completed";
   const failed = status === "failed";
+  const renderPlanState = actualExportPlanState(props.job) ?? props.renderPlanState;
   return (
     <Dialog open={props.open} title="Export Progress" onClose={props.onClose}>
       <div className="export-progress">
+        <ExportRenderSummary state={renderPlanState} />
         <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>{props.job?.message || "Preparing smart rendering."}</span>
+          <span>{props.job?.message || "Preparing export."}</span>
           <strong>{Math.round(progress * 100)}%</strong>
         </div>
         <progress value={progress} max={1} />
@@ -3423,7 +3545,7 @@ function ExportProgressDialog(props: { open: boolean; job: JobRecord | null; onC
             ? props.job?.error || "Export failed."
             : complete
               ? "Export complete."
-              : "Smart rendering is using ffprobe keyframes and re-encoding only the required GOP edges."}
+              : "Smart-render clips copy eligible GOPs and re-encode their boundaries; other clips are fully re-encoded."}
         </div>
       </div>
       <div className="dialog-actions">
@@ -3433,6 +3555,41 @@ function ExportProgressDialog(props: { open: boolean; job: JobRecord | null; onC
       </div>
     </Dialog>
   );
+}
+
+function actualExportPlanState(job: JobRecord | null): ExportPlanState | null {
+  if (job?.status !== "completed" || !job.result || typeof job.result !== "object") return null;
+  const exported = (job.result as { exported?: unknown }).exported;
+  if (!Array.isArray(exported)) return null;
+  const items: ExportRenderPlanItem[] = [];
+  for (const result of exported) {
+    if (!result || typeof result !== "object") return null;
+    const row = result as { id?: unknown; smart_render_plan?: unknown };
+    if (typeof row.id !== "string" || !row.smart_render_plan || typeof row.smart_render_plan !== "object") return null;
+    const plan = row.smart_render_plan as Record<string, unknown>;
+    const spans = Array.isArray(plan.spans) ? plan.spans : [];
+    const copiedSeconds = spans.reduce((total, span) => {
+      if (!span || typeof span !== "object") return total;
+      const value = span as Record<string, unknown>;
+      return value.mode === "copy" && typeof value.start === "number" && typeof value.end === "number"
+        ? total + Math.max(0, value.end - value.start)
+        : total;
+    }, 0);
+    const start = typeof plan.start === "number" ? plan.start : 0;
+    const end = typeof plan.end === "number" ? plan.end : start;
+    const fallbackReason = typeof plan.fallback_reason === "string" ? plan.fallback_reason : null;
+    items.push({
+      id: row.id,
+      smart_render: fallbackReason === null,
+      output_suffix: typeof plan.output_suffix === "string" ? plan.output_suffix : ".mp4",
+      video_codec: typeof plan.video_codec === "string" ? plan.video_codec : "",
+      container_family: typeof plan.container_family === "string" ? plan.container_family : "",
+      copied_seconds: copiedSeconds,
+      encoded_seconds: Math.max(0, end - start - copiedSeconds),
+      fallback_reason: fallbackReason
+    });
+  }
+  return { status: "ready", plan: { items }, error: null };
 }
 
 function FfmpegCheckDialog(props: {

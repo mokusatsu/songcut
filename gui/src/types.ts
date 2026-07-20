@@ -126,6 +126,21 @@ export type JobRecord = {
   updated_at: number;
 };
 
+export type ExportRenderPlanItem = {
+  id: string;
+  smart_render: boolean;
+  output_suffix: string;
+  video_codec: string;
+  container_family: string;
+  copied_seconds: number;
+  encoded_seconds: number;
+  fallback_reason: string | null;
+};
+
+export type ExportRenderPlan = {
+  items: ExportRenderPlanItem[];
+};
+
 export type ScratchProxyResult = {
   proxy_id: string;
   source_path: string;

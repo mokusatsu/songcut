@@ -1119,6 +1119,60 @@ tr.selected:hover {
   min-height: 0;
 }
 
+.export-render-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  min-height: 28px;
+  padding: 8px 10px;
+  color: #b9c7cd;
+  background: #10171a;
+  border: 1px solid #31434a;
+  border-radius: 6px;
+  font-size: var(--font-size-control);
+}
+
+.export-render-summary-error {
+  color: #ffc1c1;
+  border-color: #74494d;
+}
+
+.render-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.render-badge-smart {
+  color: #a8f0df;
+  background: #173b35;
+  border-color: #347d6e;
+}
+
+.render-badge-reencode {
+  color: #ffd49a;
+  background: #45331d;
+  border-color: #8a6534;
+}
+
+.render-badge-checking,
+.render-badge-unknown {
+  color: #c0ccd1;
+  background: #26343a;
+  border-color: #53656d;
+}
+
 .output-list .scroll-area-viewport {
   padding-right: 12px;
 }
@@ -1202,6 +1256,13 @@ tr.selected:hover {
   text-align: left;
 }
 
+.output-title-line {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
 .output-title {
   overflow: hidden;
   font-size: 14px;
@@ -1213,6 +1274,14 @@ tr.selected:hover {
 .output-meta {
   overflow: hidden;
   color: #91a4ad;
+  font-size: var(--font-size-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.output-render-detail {
+  overflow: hidden;
+  color: #aebdc3;
   font-size: var(--font-size-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
