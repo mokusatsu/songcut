@@ -2,6 +2,8 @@
 
 Public build instructions live in `docs/BUILD.md` and `docs/BUILD.ja.md`.
 Keep Codex-specific runtime paths out of README and public build docs.
+Packaged-GUI E2E commands, modes, artifacts, and troubleshooting are documented
+in `docs/E2E_TESTING.md`; read it before changing or running an E2E script.
 
 When building inside Codex, inject the bundled runtime paths through the
 environment variables supported by `packaging/build_dist.ps1`. Keep these
