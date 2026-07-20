@@ -259,7 +259,13 @@ ffmpeg discovery:
 - Clicking the waveform timeline seeks the video to that position.
 - The waveform timeline is fixed to the full detected waveform view, with
   detected segments shown as overlays.
-- GUI analysis waveform points use
+- Loading a video starts an independent waveform job when no valid saved
+  waveform is available. The waveform job is not part of singing analysis and
+  may run at the same time as analysis, transcription, or scratch-proxy work.
+- The waveform job decodes only the first audio stream as 4 kHz mono signed
+  16-bit PCM. It reads the FFmpeg pipe incrementally and publishes completed
+  point batches; it does not retain the decoded PCM stream in memory.
+- Waveform points use
   `min(max(ceil(durationSeconds), 2400), 21600)`, further limited by the decoded
   PCM frame count. This retains 2400 points for videos up to 40 minutes, targets
   about one second per point through six hours, and caps longer videos at 21600
@@ -267,12 +273,30 @@ ffmpeg discovery:
 - PCM frames are divided with proportional integer boundaries so every frame is
   included exactly once and bucket sizes differ by at most one frame. Points
   carry `t`, `min`, `max`, `rms`, and `sample_count`.
-- The renderer builds peak-preserving 1x, 2x, 4x, ... waveform levels once per
-  analysis result. It selects the finest level whose bucket duration is at
-  least the current seconds-per-pixel value.
+- While generation is running, each published batch is appended as a separate
+  temporary SVG path. A progress frontier marks the generated extent, so the
+  usable waveform grows from left to right without rebuilding prior batches.
+- At completion, the renderer builds the peak-preserving 1x, 2x, 4x, ... final
+  waveform levels. Temporary and final SVG layers overlap for a short
+  cross-fade before the temporary paths are removed. The renderer selects the
+  finest final level whose bucket duration is at least the current
+  seconds-per-pixel value.
 - Only the selected level is mounted. RMS and peak samples are combined into
   one SVG path each; the combined display mode mounts two paths. Playback
   cursor updates do not rebuild or replace the static waveform path.
+- Completed waveforms are saved independently in the project's top-level
+  `waveform_snapshot`, with source fingerprint, duration, generator, sample
+  rate, channel count, encoding, point count, and Base64 data. Each waveform
+  point is one 20-byte little-endian record: Float32 `t`, `min`, `max`, and
+  `rms`, followed by Uint32 `sample_count`. The encoding identifier is
+  `f32le-4-u32le-1-v1`. A valid saved snapshot is decoded and shown immediately
+  on reload.
+- Project schema version 3 is the first version using the packed waveform
+  representation. Earlier project schemas are rejected; no waveform migration
+  path is provided.
+- Changing video, closing the app, or retrying cancels or releases the active
+  waveform job. Waveform and scratch-proxy background tasks do not block app
+  exit; analysis, transcription, export, and model-download tasks do.
 - The segment timeline reflects the selected segment.
 - The selected segment start and end marks are draggable.
 - Dragging start/end only changes the segment export range in the GUI state.
@@ -327,6 +351,14 @@ Toolbar controls:
 
 - Pressing `Export` opens an export review dialog.
 - The dialog lists only checked export items.
+- The filename template defaults to `{index}_{title}`. Supported placeholders
+  are `{index}`, `{title}`, `{id}`, `{start}`, and `{end}`. The dialog validates
+  unknown or unmatched placeholders and shows the resulting `.mp4` names
+  before export. Invalid Windows filename characters and reserved names are
+  sanitized, and duplicate names receive a suffix.
+- `Create a "<source>" folder inside the selected output folder` optionally
+  creates a source-video-named child folder. Both filename-template and folder
+  preferences are restored on the next launch.
 - Clicking an item previews its range in the video pane.
 - Preview behavior:
   - If the range is less than or equal to 10 seconds, play the full range once.

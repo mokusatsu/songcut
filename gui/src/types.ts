@@ -26,6 +26,27 @@ export type WaveformPoint = {
   sample_count: number;
 };
 
+export type WaveformMetadata = {
+  source_path: string;
+  duration: number;
+  sample_rate: number;
+  channels: number;
+  generator: string;
+  point_count: number;
+};
+
+export type WaveformUpdate = {
+  id: string;
+  status: JobRecord["status"];
+  progress: number;
+  message: string;
+  error: string | null;
+  cursor: number;
+  points: WaveformPoint[];
+  has_more: boolean;
+  metadata: WaveformMetadata | null;
+};
+
 export type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 
 export type Transcript = {
@@ -101,6 +122,8 @@ export type JobRecord = {
   message: string;
   result?: unknown;
   error?: string | null;
+  created_at: number;
+  updated_at: number;
 };
 
 export type ScratchProxyResult = {

@@ -1,4 +1,12 @@
-import type { AnalysisResult, FfmpegCheckResult, JobRecord, ScratchProxyResult, Segment, VideoInfo } from "@/types";
+import type {
+  AnalysisResult,
+  FfmpegCheckResult,
+  JobRecord,
+  ScratchProxyResult,
+  Segment,
+  VideoInfo,
+  WaveformUpdate
+} from "@/types";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -92,6 +100,19 @@ export function startAnalysis(
   });
 }
 
+export function startWaveform(baseUrl: string, filePath: string) {
+  return postJson<JobRecord>(baseUrl, "/waveform/jobs", { path: filePath });
+}
+
+export function getWaveformUpdates(baseUrl: string, jobId: string, cursor: number, limit = 2048) {
+  const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
+  return getJson<WaveformUpdate>(baseUrl, `/waveform/jobs/${encodeURIComponent(jobId)}/updates?${query}`);
+}
+
+export function cancelOrReleaseWaveform(baseUrl: string, jobId: string) {
+  return deleteJson<JobRecord>(baseUrl, `/waveform/jobs/${encodeURIComponent(jobId)}`);
+}
+
 export function getWhisperStatus(baseUrl: string) {
   return getJson<WhisperStatus>(baseUrl, "/models/whisper");
 }
@@ -121,12 +142,20 @@ export function checkFfmpeg(baseUrl: string) {
   return getJson<FfmpegCheckResult>(baseUrl, "/ffmpeg/check");
 }
 
-export function startExport(baseUrl: string, sourcePath: string, outputDir: string, items: unknown[], timestampCommentText = "") {
+export function startExport(
+  baseUrl: string,
+  sourcePath: string,
+  outputDir: string,
+  items: unknown[],
+  timestampCommentText = "",
+  createSourceFolder = false
+) {
   return postJson<JobRecord>(baseUrl, "/export/jobs", {
     source_path: sourcePath,
     output_dir: outputDir,
     items,
-    timestamp_comment_text: timestampCommentText
+    timestamp_comment_text: timestampCommentText,
+    create_source_folder: createSourceFolder
   });
 }
 

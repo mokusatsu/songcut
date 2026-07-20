@@ -21,6 +21,8 @@ from songcut.api import (
     _job_cancel_events,
     _jobs,
     _jobs_lock,
+    _waveform_finished_at,
+    _waveform_points,
     _scratch_proxy_job,
     cancel_scratch_proxy_job,
     create_transcription_job,
@@ -28,6 +30,7 @@ from songcut.api import (
     ffmpeg_check,
     health,
     probe,
+    waveform_job_updates,
 )
 from fastapi import HTTPException
 from songcut.gui_pipeline import build_gui_segments_and_exports
@@ -38,6 +41,8 @@ class ApiJobTests(unittest.TestCase):
         with _jobs_lock:
             _jobs.clear()
             _job_cancel_events.clear()
+            _waveform_points.clear()
+            _waveform_finished_at.clear()
 
     def test_analysis_starts_transcription_job_without_waiting_for_it(self) -> None:
         now = time.time()
@@ -73,6 +78,28 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["segments"][0]["id"], "guide-001")
         start_job.assert_called_once()
         transcribe_segments.assert_not_called()
+
+    def test_waveform_updates_return_only_points_after_the_cursor(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["waveform-001"] = JobRecord(
+                id="waveform-001",
+                kind="waveform",
+                status="running",
+                progress=0.5,
+                message="Generating waveform.",
+                created_at=now,
+                updated_at=now,
+            )
+            _waveform_points["waveform-001"] = [
+                {"t": index + 0.5, "min": -0.1, "max": 0.1, "rms": 0.05, "sample_count": 4000}
+                for index in range(5)
+            ]
+
+        update = waveform_job_updates("waveform-001", cursor=2, limit=2)
+        self.assertEqual(update["cursor"], 4)
+        self.assertEqual([point["t"] for point in update["points"]], [2.5, 3.5])
+        self.assertTrue(update["has_more"])
 
     def test_unmatched_guide_timestamp_does_not_fail_analysis_job(self) -> None:
         now = time.time()
@@ -278,6 +305,70 @@ class ApiJobTests(unittest.TestCase):
             completed = _jobs["export-001"]
         self.assertEqual(completed.status, "completed")
         self.assertEqual(completed.result["exported"][0]["target"], "out/01_Song.mp4")
+
+    def test_export_job_can_create_a_source_named_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            parent = Path(temp_dir)
+            source = parent / "My Video.mp4"
+            source.write_bytes(b"video")
+            request = ExportRequest(
+                source_path=str(source),
+                output_dir=str(parent / "exports"),
+                create_source_folder=True,
+                items=[ExportItem(id="guide-001", filename_stem="01_Song", start=10.0, end=20.0)],
+            )
+            now = time.time()
+            with _jobs_lock:
+                _jobs["export-folder"] = JobRecord(
+                    id="export-folder",
+                    kind="export",
+                    status="queued",
+                    created_at=now,
+                    updated_at=now,
+                )
+            with (
+                mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg", ffprobe="ffprobe")),
+                mock.patch("songcut.api.export_smart_clip", return_value={"ok": True}) as export_smart_clip,
+            ):
+                _export_job("export-folder", request)
+
+            target = parent / "exports" / "My Video" / "01_Song.mp4"
+            self.assertTrue(target.parent.is_dir())
+            self.assertEqual(export_smart_clip.call_args.args[3], target)
+            with _jobs_lock:
+                self.assertEqual(_jobs["export-folder"].result["output_dir"], str(target.parent))
+
+    def test_export_job_sanitizes_and_deduplicates_filename_stems(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source.mp4"
+            source.write_bytes(b"video")
+            request = ExportRequest(
+                source_path=str(source),
+                output_dir=str(Path(temp_dir) / "exports"),
+                items=[
+                    ExportItem(id="one", filename_stem="../Same", start=0.0, end=1.0),
+                    ExportItem(id="two", filename_stem="../Same", start=1.0, end=2.0),
+                ],
+            )
+            now = time.time()
+            with _jobs_lock:
+                _jobs["export-safe-names"] = JobRecord(
+                    id="export-safe-names",
+                    kind="export",
+                    status="queued",
+                    created_at=now,
+                    updated_at=now,
+                )
+            with (
+                mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg", ffprobe="ffprobe")),
+                mock.patch("songcut.api.export_smart_clip", return_value={"ok": True}) as export_smart_clip,
+            ):
+                _export_job("export-safe-names", request)
+
+            targets = [call.args[3] for call in export_smart_clip.call_args_list]
+            output_dir = Path(temp_dir) / "exports"
+            self.assertEqual(targets, [output_dir / "- Same.mp4", output_dir / "- Same (2).mp4"])
+            self.assertTrue(all(target.parent == output_dir for target in targets))
 
     def test_export_job_writes_timestamp_comment_text(self) -> None:
         now = time.time()

@@ -79,15 +79,23 @@ OpenVINO outputs: `profile`, `timestamp_source`, `model_versions`, `backend`,
 `device_requested`, `device_used`, `available_devices`, `fallbacks`,
 `backend_note`, `ffmpeg_path`, and `ffprobe_path`.
 
-The GUI analysis endpoint uses schema version 3. Its display waveform is
-separate from the CLI `segments.json` contract and contains `t`, `min`, `max`,
-`rms`, and `sample_count` for every point. The requested point count is the
-video duration rounded up to seconds, clamped to 2400 through 21600 and then
-limited by the available PCM frame count. Proportional integer bucket
-boundaries cover every PCM frame exactly once and keep bucket sizes within one
-frame of each other.
+The GUI analysis endpoint uses schema version 3. Waveform generation is a
+separate load-time job and is not part of this analysis response or the CLI
+`segments.json` contract. It decodes the first audio stream to 4 kHz mono
+signed 16-bit PCM through an FFmpeg pipe and aggregates samples as they arrive,
+without retaining the full PCM stream. Every point contains `t`, `min`, `max`,
+`rms`, and `sample_count`. The requested point count is the video duration
+rounded up to seconds, clamped to 2400 through 21600 and then limited by the
+available PCM frame count. Proportional integer bucket boundaries cover every
+PCM frame exactly once and keep bucket sizes within one frame of each other.
 
-The GUI derives a peak-preserving waveform pyramid from this base level. Min
-and max values are combined as extrema, while RMS and representative time use
-`sample_count` weighting. The active zoom level is selected from timeline
-seconds per pixel, and only that level is rendered.
+The API publishes completed point batches while decoding. The GUI appends those
+batches as temporary SVG paths, then derives a peak-preserving waveform pyramid
+after completion. Min and max values are combined as extrema, while RMS and
+representative time use `sample_count` weighting. The active zoom level is
+selected from timeline seconds per pixel, and only that final level is rendered.
+The completed base level is persisted separately from `analysis_snapshot` in
+the project `waveform_snapshot`. Its point array is serialized as fixed-width
+20-byte little-endian records (`t`, `min`, `max`, and `rms` as Float32;
+`sample_count` as Uint32), then stored in JSON as Base64 using encoding id
+`f32le-4-u32le-1-v1`.

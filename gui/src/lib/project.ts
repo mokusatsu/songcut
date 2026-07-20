@@ -1,4 +1,5 @@
 import { assertProjectDocument } from "../../electron/project-schema";
+import { WAVEFORM_BINARY_ENCODING, decodeWaveformPoints, encodeWaveformPoints } from "../../electron/waveform-codec";
 import type {
   ProjectDocumentV1,
   ProjectExportCandidate,
@@ -9,7 +10,7 @@ import type {
   WhisperSettings as ProjectWhisperSettings,
 } from "../../electron/project-schema";
 import type { WhisperSettings } from "@/lib/api";
-import type { AnalysisResult, ExportCandidate, Segment, VideoInfo } from "@/types";
+import type { AnalysisResult, ExportCandidate, Segment, VideoInfo, WaveformPoint } from "@/types";
 
 export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | "save-failed" | "read-only";
 
@@ -28,7 +29,7 @@ export function createProjectDocument(
   const now = new Date().toISOString();
   return {
     format: "songcut-project",
-    schema_version: 1,
+    schema_version: 3,
     project_id: crypto.randomUUID(),
     revision: 0,
     created_at: now,
@@ -47,6 +48,7 @@ export function createProjectDocument(
       analysis_device: "auto",
       whisper: { ...DEFAULT_WHISPER_SETTINGS },
     },
+    waveform_snapshot: null,
     analysis_snapshot: null,
     segments: [],
     export_candidates: [],
@@ -62,6 +64,7 @@ export function composeProjectDocument(
     videoPath: string;
     duration: number;
     guideText: string;
+    waveform: WaveformPoint[];
     analysis: AnalysisResult | null;
     segments: Segment[];
     exportCandidates: ExportCandidate[];
@@ -82,6 +85,8 @@ export function composeProjectDocument(
     }))
     .filter((candidate) => segmentIds.has(candidate.segment_id));
   const analysis = state.analysis;
+  const priorWaveform = base.waveform_snapshot;
+  const waveform = state.waveform;
   return {
     ...base,
     revision: state.revision,
@@ -96,6 +101,20 @@ export function composeProjectDocument(
       analysis_device: state.analysisDevice,
       whisper: { ...state.whisper } as ProjectWhisperSettings,
     },
+    waveform_snapshot: waveform.length
+      ? {
+          schema_version: 2,
+          generator: priorWaveform?.generator ?? "pcm-4k-mono-stream-v1",
+          source_fingerprint: base.source.fingerprint.value,
+          duration_seconds: state.duration || base.source.duration_seconds,
+          sample_rate: priorWaveform?.sample_rate || 4000,
+          channels: priorWaveform?.channels || 1,
+          completed_at: priorWaveform?.completed_at ?? base.updated_at,
+          encoding: WAVEFORM_BINARY_ENCODING,
+          point_count: waveform.length,
+          data_base64: encodeWaveformPoints(waveform)
+        }
+      : null,
     analysis_snapshot: analysis
       ? {
           timestamp_source: analysis.timestamp_source,
@@ -104,7 +123,6 @@ export function composeProjectDocument(
           device_used: analysis.device_used,
           model_versions: analysis.model_versions ?? {},
           elapsed_seconds: analysis.elapsed_seconds ?? 0,
-          waveform: analysis.waveform,
           frame_scores: analysis.frame_scores ?? [],
           raw_segments: analysis.raw_segments ?? [],
         }
@@ -136,9 +154,17 @@ export function analysisFromProject(document: ProjectDocumentV1): AnalysisResult
     segments: document.segments,
     raw_segments: snapshot.raw_segments,
     export_candidates: document.export_candidates.map(stripProjectCandidate),
-    waveform: snapshot.waveform,
+    waveform: [],
     frame_scores: snapshot.frame_scores,
   };
+}
+
+export function waveformFromProject(document: ProjectDocumentV1): WaveformPoint[] {
+  const snapshot = document.waveform_snapshot;
+  if (!snapshot) return [];
+  if (snapshot.source_fingerprint !== document.source.fingerprint.value) return [];
+  if (!sourceDurationMatches(snapshot.duration_seconds, document.source.duration_seconds)) return [];
+  return decodeWaveformPoints(snapshot.data_base64, snapshot.point_count);
 }
 
 export function exportCandidatesFromProject(document: ProjectDocumentV1): ExportCandidate[] {
@@ -189,6 +215,10 @@ export function transcriptSettingsAreStale(segment: Segment, settings: WhisperSe
     ? transcript.language_requested !== settings.language
     : settings.language !== "auto" && Boolean(transcript.language && transcript.language !== settings.language);
   return modelChanged || languageChanged;
+}
+
+function sourceDurationMatches(expected: number, actual: number) {
+  return Math.abs(expected - actual) <= Math.max(0.05, expected * 0.00001);
 }
 
 function stripProjectCandidate(candidate: ProjectExportCandidate): ExportCandidate {

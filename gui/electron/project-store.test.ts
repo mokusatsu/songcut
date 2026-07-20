@@ -13,6 +13,7 @@ import {
   sourceIdentityMatches,
 } from "./project-store.js";
 import { parseProjectText, type ProjectDocumentV1, type RecoverySnapshot } from "./project-schema.js";
+import { WAVEFORM_BINARY_ENCODING, encodeWaveformPoints } from "./waveform-codec.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -30,6 +31,19 @@ describe("songcut project storage", () => {
     const directory = await tempDirectory();
     const projectPath = path.join(directory, "video.mp4.songcut");
     const document = projectDocument(3);
+    const points = [{ t: 0.5, min: -0.5, max: 0.5, rms: 0.25, sample_count: 4_000 }];
+    document.waveform_snapshot = {
+      schema_version: 2,
+      generator: "pcm-4k-mono-stream-v1",
+      source_fingerprint: document.source.fingerprint.value,
+      duration_seconds: document.source.duration_seconds,
+      sample_rate: 4_000,
+      channels: 1,
+      completed_at: document.updated_at,
+      encoding: WAVEFORM_BINARY_ENCODING,
+      point_count: points.length,
+      data_base64: encodeWaveformPoints(points),
+    };
 
     await saveProject(projectPath, document);
     const loaded = await loadProject(projectPath);
@@ -97,14 +111,19 @@ describe("songcut project storage", () => {
   });
 
   it("refuses a newer schema without coercing it", () => {
-    const value = { ...projectDocument(1), schema_version: 2 };
+    const value = { ...projectDocument(1), schema_version: 4 };
     expect(() => parseProjectText(JSON.stringify(value))).toThrow(/newer version/i);
+  });
+
+  it("rejects older schemas instead of migrating them", () => {
+    const value = { ...projectDocument(1), schema_version: 2 };
+    expect(() => parseProjectText(JSON.stringify(value))).toThrow(/unsupported.*schema/i);
   });
 
   it("does not use an older backup when the target has a newer schema", async () => {
     const directory = await tempDirectory();
     const projectPath = path.join(directory, "future.mp4.songcut");
-    await writeFile(projectPath, JSON.stringify({ ...projectDocument(2), schema_version: 2 }), "utf8");
+    await writeFile(projectPath, JSON.stringify({ ...projectDocument(2), schema_version: 4 }), "utf8");
     await writeFile(`${projectPath}.bak`, JSON.stringify(projectDocument(1)), "utf8");
 
     await expect(loadProject(projectPath)).rejects.toThrow(/newer version/i);
@@ -121,7 +140,7 @@ function projectDocument(revision: number): ProjectDocumentV1 {
   const now = new Date().toISOString();
   return {
     format: "songcut-project",
-    schema_version: 1,
+    schema_version: 3,
     project_id: "project-1",
     revision,
     created_at: now,
@@ -140,6 +159,7 @@ function projectDocument(revision: number): ProjectDocumentV1 {
       analysis_device: "auto",
       whisper: { enabled: false, model: "small", language: "ja", device: "auto" },
     },
+    waveform_snapshot: null,
     analysis_snapshot: null,
     segments: [],
     export_candidates: [],

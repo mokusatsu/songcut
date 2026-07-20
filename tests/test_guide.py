@@ -193,6 +193,7 @@ class GuideTests(unittest.TestCase):
 
     def test_safe_filename_stem_removes_windows_reserved_characters(self) -> None:
         self.assertEqual(safe_filename_stem('A/B:C*D?"E'), "A - BCDE")
+        self.assertEqual(safe_filename_stem("CON.txt", fallback="clip-001"), "clip-001")
 
     def test_gui_segments_are_replaced_by_guided_segments_when_guide_is_present(self) -> None:
         detected = [

@@ -19,7 +19,9 @@ const editorSettingStorageKeys = {
   boundaryPreview: "songcut:boundary-preview-seconds",
   boundaryNudge: "songcut:boundary-nudge-seconds",
   videoSplit: "songcut:video-split-percent",
-  waveformDisplay: "songcut:waveform-display-mode"
+  waveformDisplay: "songcut:waveform-display-mode",
+  filenameTemplate: "songcut:filename-template",
+  createSourceFolder: "songcut:create-source-folder"
 };
 
 fs.mkdirSync(path.join(repo, "out"), { recursive: true });
@@ -1166,16 +1168,16 @@ async function dragHandle(cdp, selector, ratio) {
   await sleep(800);
 }
 
-async function waitForExportedFile() {
+async function waitForExportedFile(directory = outputDir) {
   const start = Date.now();
   while (Date.now() - start < 120_000) {
-    const files = fs.existsSync(outputDir)
-      ? fs.readdirSync(outputDir).filter((name) => name.toLowerCase().endsWith(".mp4"))
+    const files = fs.existsSync(directory)
+      ? fs.readdirSync(directory).filter((name) => name.toLowerCase().endsWith(".mp4"))
       : [];
     if (files.length) {
       const stats = files.map((name) => ({
         name,
-        bytes: fs.statSync(path.join(outputDir, name)).size
+        bytes: fs.statSync(path.join(directory, name)).size
       }));
       if (stats.every((item) => item.bytes > 0)) return stats;
     }
@@ -1384,14 +1386,15 @@ function cleanup(processHandle, cdp) {
     log("OUTPUT_DIRECTORY_BRIDGE_OK", e2eOutputDir);
 
     await dropVideo(cdp);
-    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Video loaded and project created.")`, 30_000, "video load");
+    await waitFor(cdp, `document.querySelector("video")?.src.includes("e2e_input.mp4")`, 30_000, "video load");
     log("DND_LOAD_OK", await videoState(cdp));
     const sidecarPath = `${input}.songcut`;
     assertPass(fs.existsSync(sidecarPath), "Loading a video did not create its .songcut sidecar.", sidecarPath);
     const initialProject = JSON.parse(fs.readFileSync(sidecarPath, "utf8"));
     assertPass(
       initialProject.format === "songcut-project" &&
-        initialProject.schema_version === 1 &&
+        initialProject.schema_version === 3 &&
+        (initialProject.waveform_snapshot === null || typeof initialProject.waveform_snapshot?.data_base64 === "string") &&
         initialProject.settings?.whisper?.enabled === false &&
         initialProject.settings?.whisper?.model === "small" &&
         initialProject.settings?.whisper?.language === "ja" &&
@@ -1402,7 +1405,7 @@ function cleanup(processHandle, cdp) {
     log("PROJECT_SIDECAR_CREATED_OK", { sidecarPath, revision: initialProject.revision });
 
     await clickButton(cdp, "Load");
-    await waitFor(cdp, `document.querySelector("video") && document.body.innerText.includes("Project loaded.")`, 30_000, "video load button");
+    await waitFor(cdp, `document.querySelector("video")?.src.includes("e2e_input.mp4")`, 30_000, "video load button");
     log("LOAD_BUTTON_OK", await videoState(cdp));
 
     const layout = await layoutMetrics(cdp);
@@ -1420,6 +1423,22 @@ function cleanup(processHandle, cdp) {
     );
     log("LOAD_LAYOUT_OK", layout);
     assertPass(await capturePng(cdp, loadedScreenshotPath, "LOADED_LAYOUT", processHandle), "Loaded layout screenshot could not be captured.");
+
+    const loadTimeWaveform = await waitFor(
+      cdp,
+      `(() => {
+        const layer = document.querySelector(".waveform-static-layer");
+        const path = document.querySelector(".waveform-static-layer path[data-waveform-path]");
+        const pointCount = Number(layer?.dataset.waveformPoints);
+        return path?.getAttribute("d") && pointCount > 0 && document.querySelectorAll(".segment-list tbody tr").length === 0
+          ? { pointCount, phase: document.querySelector(".waveform-timeline svg")?.dataset.waveformPhase || null }
+          : false;
+      })()`,
+      30_000,
+      "load-time waveform before analysis"
+    );
+    assertPass(loadTimeWaveform.pointCount > 0, "Video load did not produce a waveform before analysis.", loadTimeWaveform);
+    log("LOAD_TIME_WAVEFORM_OK", loadTimeWaveform);
 
     const splitBefore = await layoutMetrics(cdp);
     await dragSplitter(cdp, 90);
@@ -1592,7 +1611,7 @@ function cleanup(processHandle, cdp) {
         waveformRender.hasPathData &&
         waveformRender.pointCount > 0 &&
         waveformRender.lineCount === 0,
-      "Analysis did not render one active RMS waveform path.",
+      "The completed load-time waveform did not remain as one active RMS path after analysis.",
       waveformRender
     );
     log("WAVEFORM_RENDER_OK", waveformRender);
@@ -1642,7 +1661,13 @@ function cleanup(processHandle, cdp) {
       savedProject.revision > initialProject.revision &&
         savedProject.guide_text.includes("Smoke Song") &&
         savedProject.segments?.[0]?.title === "Smoke Song Edited" &&
-        savedProject.analysis_snapshot?.waveform?.length > 0 &&
+        savedProject.waveform_snapshot?.encoding === "f32le-4-u32le-1-v1" &&
+        savedProject.waveform_snapshot?.point_count > 0 &&
+        savedProject.waveform_snapshot?.data_base64?.length > 0 &&
+        savedProject.waveform_snapshot.data_base64.length ===
+          Math.ceil((savedProject.waveform_snapshot.point_count * 20) / 3) * 4 &&
+        !Object.prototype.hasOwnProperty.call(savedProject.waveform_snapshot || {}, "points") &&
+        !Object.prototype.hasOwnProperty.call(savedProject.analysis_snapshot || {}, "waveform") &&
         savedProject.settings?.whisper?.enabled === true,
       "Autosave did not persist the guide, analysis, edit, and Whisper setting.",
       savedProject
@@ -2105,6 +2130,36 @@ function cleanup(processHandle, cdp) {
       reviewItems
     );
     log("EXPORT_REVIEW_OK", reviewItems);
+
+    const exportOptionsChanged = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".output-template-field input");
+        const checkbox = document.querySelector(".output-folder-option input[type=checkbox]");
+        if (!input || !checkbox) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, "{index}_{id}");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        if (!checkbox.checked) checkbox.click();
+        return true;
+      })()`
+    );
+    assertPass(exportOptionsChanged, "Export filename template or source-folder option was unavailable.");
+    const customizedExport = await waitFor(
+      cdp,
+      `(() => {
+        const row = document.querySelector(".output-row");
+        const checkbox = document.querySelector(".output-folder-option input[type=checkbox]");
+        const template = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.filenameTemplate)});
+        const folder = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.createSourceFolder)});
+        return row?.innerText.includes("01_guide-001.mp4") && checkbox?.checked && template === "{index}_{id}" && folder === "true"
+          ? { row: row.innerText, template, folder }
+          : false;
+      })()`,
+      5000,
+      "customized export filename and source folder"
+    );
+    log("EXPORT_NAMING_OPTIONS_OK", customizedExport);
     assertPass(await capturePng(cdp, reviewScreenshotPath, "EXPORT_REVIEW", processHandle), "Export review screenshot could not be captured.");
 
     await clickSelector(cdp, ".output-row");
@@ -2204,19 +2259,20 @@ function cleanup(processHandle, cdp) {
       "quit confirmation cancel"
     );
     log("RUNNING_TASK_QUIT_CANCEL_OK");
-    const exported = await waitForExportedFile();
+    const sourceOutputDir = path.join(outputDir, path.parse(input).name);
+    const exported = await waitForExportedFile(sourceOutputDir);
     assertPass(
-      exported.some((file) => file.name === "01_Smoke Song Edited.mp4"),
-      "Exported video filename did not reflect the current GUI title.",
+      exported.some((file) => file.name === "01_guide-001.mp4"),
+      "Exported video filename did not reflect the customized template.",
       exported
     );
-    const exportedPath = path.join(outputDir, exported[0].name);
+    const exportedPath = path.join(sourceOutputDir, exported[0].name);
     const duration = probeDuration(exportedPath);
     if (!(duration > 0.2 && duration < 2.5)) {
       throw new Error(`Unexpected exported duration: ${duration}`);
     }
     log("EXPORT_OK", { exported, duration });
-    const tsCommentPath = path.join(outputDir, "ts_comments.txt");
+    const tsCommentPath = path.join(sourceOutputDir, "ts_comments.txt");
     assertPass(fs.existsSync(tsCommentPath), "TS comment file was not written to the export folder.");
     const exportedTsComment = fs.readFileSync(tsCommentPath, "utf-8");
     assertPass(

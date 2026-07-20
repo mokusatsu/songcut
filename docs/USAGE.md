@@ -48,6 +48,11 @@ Click **Analyze** to start detecting singing segments. When timestamp guide text
 is provided, the start time of each segment is taken from the timestamps and
 its end time is detected automatically.
 
+Waveform generation starts independently when a video is loaded. Completed
+parts appear from left to right while generation continues, so seeking becomes
+available before analysis finishes. A saved waveform is reused when the same
+source is reopened; use the status-area retry action if generation fails.
+
 # Project Saving and Recovery
 
 After a video loads successfully, songcut creates a sidecar such as
@@ -61,9 +66,11 @@ media. Songcut verifies the file size and a SHA-256 fingerprint of its first and
 last MiB. Saved guides, waveforms, segments, and transcripts remain viewable
 even while the source is missing.
 
-A `.songcut` file is local UTF-8 JSON. Sharing it also shares the media's local
-absolute path, guide, edits, and transcripts. It does not embed media, scratch
-proxies, Whisper models, temporary WAV files, or backend job IDs.
+A `.songcut` file is local UTF-8 JSON. Its waveform is packed into fixed-width
+binary records and stored as Base64 to keep the sidecar compact. Sharing the
+file also shares the media's local absolute path, guide, edits, and transcripts.
+It does not embed media, scratch proxies, Whisper models, temporary WAV files,
+or backend job IDs. Earlier project schema versions are not migrated.
 
 # Whisper Transcription
 
@@ -160,5 +167,12 @@ starts.
 # Exporting
 
 Click **Export** to export a separate video clip for each selected segment.
+In Export Review, customize filenames with `{index}`, `{title}`, `{id}`,
+`{start}`, and `{end}` placeholders. The default is `{index}_{title}`, and the
+preview shows the actual sanitized filenames before export. Enable **Create a
+"<source>" folder inside the selected output folder** to place clips and the
+optional timestamp-comment file in a source-video-named child folder. These two
+choices are restored the next time the application starts.
+
 Click **Export TS** to copy the selected segments to the clipboard as a
 timestamp comment.

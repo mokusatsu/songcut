@@ -1,5 +1,12 @@
+import {
+  WAVEFORM_BINARY_ENCODING,
+  WAVEFORM_BINARY_MAX_POINTS,
+  decodeWaveformPoints,
+  type PackedWaveformPoint,
+} from "./waveform-codec.js";
+
 export const PROJECT_FORMAT = "songcut-project" as const;
-export const PROJECT_SCHEMA_VERSION = 1 as const;
+export const PROJECT_SCHEMA_VERSION = 3 as const;
 export const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
 
 export type InferenceDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -52,12 +59,19 @@ export type ProjectExportCandidate = {
   checked: boolean;
 };
 
-export type ProjectWaveformPoint = {
-  t: number;
-  min: number;
-  max: number;
-  rms: number;
-  sample_count: number;
+export type ProjectWaveformPoint = PackedWaveformPoint;
+
+export type ProjectWaveformSnapshot = {
+  schema_version: 2;
+  generator: string;
+  source_fingerprint: string;
+  duration_seconds: number;
+  sample_rate: number;
+  channels: number;
+  completed_at: string;
+  encoding: typeof WAVEFORM_BINARY_ENCODING;
+  point_count: number;
+  data_base64: string;
 };
 
 export type WhisperSettings = {
@@ -98,6 +112,7 @@ export type ProjectDocumentV1 = {
     analysis_device: InferenceDevice;
     whisper: WhisperSettings;
   };
+  waveform_snapshot: ProjectWaveformSnapshot | null;
   analysis_snapshot: {
     timestamp_source: string;
     backend: string;
@@ -105,7 +120,6 @@ export type ProjectDocumentV1 = {
     device_used: string;
     model_versions: Record<string, string>;
     elapsed_seconds: number;
-    waveform: ProjectWaveformPoint[];
     frame_scores: { t: number; score: number; rms: number }[];
     raw_segments: ProjectSegment[];
   } | null;
@@ -200,6 +214,23 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
   inferenceDevice(settings.analysis_device, "settings.analysis_device");
   whisperSettings(settings.whisper, "settings.whisper");
 
+  if (root.waveform_snapshot !== null) {
+    const waveform = objectValue(root.waveform_snapshot, "waveform_snapshot");
+    if (waveform.schema_version !== 2) throw new Error("Unsupported waveform snapshot schema.");
+    stringValue(waveform.generator, "waveform_snapshot.generator");
+    const waveformFingerprint = stringValue(waveform.source_fingerprint, "waveform_snapshot.source_fingerprint");
+    if (!/^[a-f0-9]{64}$/i.test(waveformFingerprint)) throw new Error("Invalid waveform source fingerprint.");
+    nonNegativeFinite(waveform.duration_seconds, "waveform_snapshot.duration_seconds");
+    nonNegativeInteger(waveform.sample_rate, "waveform_snapshot.sample_rate");
+    nonNegativeInteger(waveform.channels, "waveform_snapshot.channels");
+    dateValue(waveform.completed_at, "waveform_snapshot.completed_at");
+    if (waveform.encoding !== WAVEFORM_BINARY_ENCODING) throw new Error("Unsupported waveform binary encoding.");
+    const pointCount = nonNegativeInteger(waveform.point_count, "waveform_snapshot.point_count");
+    if (pointCount > WAVEFORM_BINARY_MAX_POINTS) throw new Error("Waveform exceeds the supported point limit.");
+    const dataBase64 = stringValue(waveform.data_base64, "waveform_snapshot.data_base64", true);
+    decodeWaveformPoints(dataBase64, pointCount);
+  }
+
   if (root.analysis_snapshot !== null) {
     const snapshot = objectValue(root.analysis_snapshot, "analysis_snapshot");
     stringValue(snapshot.timestamp_source, "analysis_snapshot.timestamp_source", true);
@@ -208,7 +239,6 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
     stringValue(snapshot.device_used, "analysis_snapshot.device_used", true);
     objectValue(snapshot.model_versions, "analysis_snapshot.model_versions");
     nonNegativeFinite(snapshot.elapsed_seconds, "analysis_snapshot.elapsed_seconds");
-    arrayValue(snapshot.waveform, "analysis_snapshot.waveform").forEach((point, index) => validateWaveformPoint(point, index));
     arrayValue(snapshot.frame_scores, "analysis_snapshot.frame_scores").forEach((point, index) => {
       const row = objectValue(point, `analysis_snapshot.frame_scores[${index}]`);
       nonNegativeFinite(row.t, `analysis_snapshot.frame_scores[${index}].t`);
@@ -316,15 +346,6 @@ function validateTranscript(value: unknown, label: string, segmentId: string) {
     if (end < start) throw new Error(`Invalid transcript chunk in ${label}.`);
     stringValue(item.text, `${label}.chunks[${index}].text`, true);
   });
-}
-
-function validateWaveformPoint(value: unknown, index: number) {
-  const row = objectValue(value, `analysis_snapshot.waveform[${index}]`);
-  nonNegativeFinite(row.t, `analysis_snapshot.waveform[${index}].t`);
-  finiteValue(row.min, `analysis_snapshot.waveform[${index}].min`);
-  finiteValue(row.max, `analysis_snapshot.waveform[${index}].max`);
-  finiteValue(row.rms, `analysis_snapshot.waveform[${index}].rms`);
-  nonNegativeInteger(row.sample_count, `analysis_snapshot.waveform[${index}].sample_count`);
 }
 
 function whisperSettings(value: unknown, label: string) {

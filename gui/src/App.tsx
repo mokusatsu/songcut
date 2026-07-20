@@ -53,7 +53,8 @@ import {
   parseProjectOpenResult,
   parseRecoverySnapshot,
   parseSourceIdentity,
-  transcriptSettingsAreStale
+  transcriptSettingsAreStale,
+  waveformFromProject
 } from "@/lib/project";
 import type {
   ProjectDocumentV1,
@@ -63,6 +64,9 @@ import type {
   SourceIdentity
 } from "@/lib/project";
 import { useProjectPersistence } from "@/lib/useProjectPersistence";
+import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
+import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
+import { useTaskRegistry } from "@/lib/useTaskRegistry";
 import {
   normalizeScratchAudioProxyEnabled,
   scratchProxyStatusLabel,
@@ -118,6 +122,8 @@ const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
 const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
 const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
 const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
+const FILENAME_TEMPLATE_STORAGE_KEY = "songcut:filename-template";
+const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
@@ -163,7 +169,11 @@ export default function App() {
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
   const projectDocumentRef = useRef<ProjectDocumentV1 | null>(null);
+  const projectBaseRef = useRef<ProjectDocumentV1 | null>(null);
+  const videoPathRef = useRef("");
+  const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
+  const taskRegistry = useTaskRegistry();
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -191,10 +201,7 @@ export default function App() {
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
   const [split, setSplit] = useState(readVideoSplitPercent);
-  const [job, setJob] = useState<JobRecord | null>(null);
-  const [exportJob, setExportJob] = useState<JobRecord | null>(null);
   const [exportProgressOpen, setExportProgressOpen] = useState(false);
-  const [transcriptionJob, setTranscriptionJob] = useState<JobRecord | null>(null);
   const [message, setMessage] = useState("");
   const [transcriptSegment, setTranscriptSegment] = useState<Segment | null>(null);
   const [outputOpen, setOutputOpen] = useState(false);
@@ -218,6 +225,25 @@ export default function App() {
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [relinkConflict, setRelinkConflict] = useState<RelinkConflict | null>(null);
   const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
+  const [filenameTemplate, setFilenameTemplate] = useState(readFilenameTemplate);
+  const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
+
+  projectBaseRef.current = projectBase;
+  videoPathRef.current = videoPath;
+  projectReadOnlyRef.current = projectReadOnly;
+  const progressiveWaveform = useProgressiveWaveform(
+    apiBaseUrl,
+    (nextJob) => taskRegistry.updateTask("waveform", nextJob),
+    (sourcePath) => {
+      if (
+        projectBaseRef.current &&
+        !projectReadOnlyRef.current &&
+        sameWindowsPath(sourcePath, videoPathRef.current)
+      ) {
+        setProjectRevision((revision) => revision + 1);
+      }
+    }
+  );
 
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
@@ -233,13 +259,14 @@ export default function App() {
     () => (transcriptSegment ? segments.find((segment) => segment.id === transcriptSegment.id) ?? transcriptSegment : null),
     [segments, transcriptSegment]
   );
-  const activeJob =
-    exportJob && exportJob.status !== "completed" && exportJob.status !== "failed"
-      ? exportJob
-      : transcriptionJob && transcriptionJob.status !== "completed"
-        ? transcriptionJob
-        : job;
-  const runningJob = [exportJob, transcriptionJob, job].find(isRunningJob) ?? null;
+  const outputPlan = useMemo(
+    () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
+    [segments, exportCandidates, filenameTemplate]
+  );
+  const exportJob = taskRegistry.tasks.export ?? null;
+  const transcriptionJob = taskRegistry.tasks.transcription ?? null;
+  const activeJob = taskRegistry.activeTask;
+  const runningJob = taskRegistry.blockingTask;
   const projectDocument = useMemo(
     () =>
       projectBase
@@ -248,6 +275,7 @@ export default function App() {
             videoPath,
             duration,
             guideText,
+            waveform: progressiveWaveform.waveform,
             analysis,
             segments,
             exportCandidates,
@@ -265,6 +293,7 @@ export default function App() {
       videoPath,
       duration,
       guideText,
+      progressiveWaveform.waveform,
       analysis,
       segments,
       exportCandidates,
@@ -282,7 +311,9 @@ export default function App() {
     [segments, whisperSettings]
   );
   const selectedWhisperModel = whisperStatus?.models.find((model) => model.key === whisperSettings.model) ?? null;
-  const whisperBusy = Boolean([transcriptionJob, job].find(isRunningJob));
+  const whisperBusy = taskRegistry.runningTasks.some((task) =>
+    ["analysis", "transcription", "export", "download-whisper"].includes(task.kind)
+  );
 
   projectDocumentRef.current = projectDocument;
 
@@ -350,6 +381,15 @@ export default function App() {
       // Keep the setting for this session when persistent storage is unavailable.
     }
   }, [waveformDisplayMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FILENAME_TEMPLATE_STORAGE_KEY, filenameTemplate);
+      window.localStorage.setItem(CREATE_SOURCE_FOLDER_STORAGE_KEY, String(createSourceFolder));
+    } catch {
+      // Keep export preferences for this session when persistent storage is unavailable.
+    }
+  }, [filenameTemplate, createSourceFolder]);
 
   useEffect(() => {
     if (settingsOpen) setScratchPreviewMillisecondsInput(String(scratchPreviewMilliseconds));
@@ -509,7 +549,7 @@ export default function App() {
     setMessage("Transcribing in background.");
     const onUpdate = (nextJob: JobRecord) => {
       if (cancelled) return;
-      setTranscriptionJob(nextJob);
+      taskRegistry.updateTask("transcription", nextJob);
       applyTranscriptResult(nextJob.result);
     };
     waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, jobId, onUpdate)
@@ -524,7 +564,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [apiBaseUrl, analysis?.transcription_job_id]);
+  }, [apiBaseUrl, analysis?.transcription_job_id, taskRegistry.updateTask]);
 
   async function refreshWhisperStatus() {
     if (!apiBaseUrl) return null;
@@ -578,6 +618,9 @@ export default function App() {
 
     scratchProxyConfigurationGenerationRef.current += 1;
     void disposeScratchProxy(apiBaseUrl);
+    projectBaseRef.current = document;
+    videoPathRef.current = sourcePath ?? "";
+    projectReadOnlyRef.current = false;
     setProjectPath(nextProjectPath);
     setProjectBase(document);
     setProjectRevision(document.revision + (wasRunning ? 1 : 0));
@@ -589,6 +632,9 @@ export default function App() {
     setVideoInfo(info ?? offlineVideoInfo(document));
     setGuideText(document.guide_text);
     setAnalysis(analysisFromProject(document));
+    const cachedWaveform = waveformFromProject(document);
+    progressiveWaveform.showCached(sourcePath ?? document.source.absolute_path, cachedWaveform);
+    if (sourcePath && cachedWaveform.length === 0) void progressiveWaveform.start(sourcePath);
     setSegments(document.segments.map((segment) => ({ ...segment })));
     setExportCandidates(exportCandidatesFromProject(document));
     setSelectedSegmentId(document.view_state.selected_segment_id ?? document.segments[0]?.id ?? null);
@@ -596,7 +642,7 @@ export default function App() {
     setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
     setAnalysisDevice(document.settings.analysis_device);
     setWhisperSettings({ ...document.settings.whisper });
-    setTranscriptionJob(null);
+    taskRegistry.clearTasks(["analysis", "transcription", "export"]);
     setTranscriptSegment(null);
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage(
@@ -632,6 +678,8 @@ export default function App() {
     }
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
+    progressiveWaveform.cancel();
+    taskRegistry.clearTasks(["analysis", "transcription", "export"]);
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage("Loading video.");
     const [info, fileUrl, identity, nextProjectPath] = await Promise.all([
@@ -668,6 +716,9 @@ export default function App() {
     }
     scratchProxyConfigurationGenerationRef.current += 1;
     void disposeScratchProxy(apiBaseUrl);
+    projectBaseRef.current = document;
+    videoPathRef.current = filePath;
+    projectReadOnlyRef.current = false;
     setProjectPath(nextProjectPath);
     setProjectBase(document);
     setProjectRevision(document.revision);
@@ -679,10 +730,11 @@ export default function App() {
     setVideoInfo(info);
     setGuideText("");
     setAnalysis(null);
+    progressiveWaveform.showCached(filePath, []);
+    void progressiveWaveform.start(filePath);
     setSegments([]);
     setExportCandidates([]);
     setSelectedSegmentId(null);
-    setTranscriptionJob(null);
     setTranscriptSegment(null);
     setCurrentTime(0);
     setAnalysisDevice("auto");
@@ -849,12 +901,18 @@ export default function App() {
     setScratchProxyState("preparing");
     try {
       const started = await startScratchProxy(apiBaseUrl, videoPath);
+      taskRegistry.updateTask("scratch-proxy", started);
       if (scratchProxyConfigurationGenerationRef.current !== generation) {
         await cancelScratchProxy(apiBaseUrl, started.id).catch(() => undefined);
         return;
       }
       scratchProxyJobIdRef.current = started.id;
-      const result = await waitForJob<ScratchProxyResult>(apiBaseUrl, started.id, () => undefined, 250);
+      const result = await waitForJob<ScratchProxyResult>(
+        apiBaseUrl,
+        started.id,
+        (nextJob) => taskRegistry.updateTask("scratch-proxy", nextJob),
+        250
+      );
       if (scratchProxyJobIdRef.current === started.id) scratchProxyJobIdRef.current = null;
       if (scratchProxyConfigurationGenerationRef.current !== generation) {
         await releaseScratchProxy(apiBaseUrl, result.proxy_id).catch(() => undefined);
@@ -896,6 +954,7 @@ export default function App() {
     const proxyId = scratchProxyIdRef.current;
     scratchProxyJobIdRef.current = null;
     scratchProxyIdRef.current = null;
+    taskRegistry.updateTask("scratch-proxy", null);
     if (!baseUrl) return;
     if (jobId) await cancelScratchProxy(baseUrl, jobId).catch(() => undefined);
     if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
@@ -910,8 +969,8 @@ export default function App() {
   async function ensureWhisper() {
     if (!apiBaseUrl) return;
     const started = await startWhisperDownload(apiBaseUrl, whisperSettings.model);
-    setJob(started);
-    await waitForJob(apiBaseUrl, started.id, setJob);
+    taskRegistry.updateTask("download-whisper", started);
+    await waitForJob(apiBaseUrl, started.id, (nextJob) => taskRegistry.updateTask("download-whisper", nextJob));
     await refreshWhisperStatus();
     setMessage(`Whisper ${whisperSettings.model} model is ready.`);
   }
@@ -944,13 +1003,15 @@ export default function App() {
 
   async function runAnalysis(transcribeAfter: boolean) {
     if (!apiBaseUrl || !videoPath) return;
-    setTranscriptionJob(null);
+    taskRegistry.updateTask("transcription", null);
     setProjectOperation({ kind: "analysis", status: "running" });
     markProjectChanged();
     const started = await startAnalysis(apiBaseUrl, videoPath, guideText, analysisDevice);
-    setJob(started);
+    taskRegistry.updateTask("analysis", started);
     try {
-      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, setJob);
+      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) =>
+        taskRegistry.updateTask("analysis", nextJob)
+      );
       const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
       setAnalysis(result);
       setSegments(nextSegments);
@@ -989,10 +1050,10 @@ export default function App() {
     markProjectChanged();
     try {
       const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
-      setTranscriptionJob(started);
+      taskRegistry.updateTask("transcription", started);
       const appliedTranscripts = new Map<string, string>();
       const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
-        setTranscriptionJob(nextJob);
+        taskRegistry.updateTask("transcription", nextJob);
         const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
         const changed = partial.filter((transcript) => {
           const serialized = JSON.stringify(transcript);
@@ -1038,21 +1099,36 @@ export default function App() {
     }
   }
 
-  async function exportClips(outputDir: string) {
+  async function exportClips(outputDir: string, createVideoFolder: boolean) {
     if (!apiBaseUrl || !videoPath) return;
+    if (outputPlan.error) {
+      setMessage(outputPlan.error);
+      return;
+    }
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
-    const started = await startExport(apiBaseUrl, videoPath, outputDir, items, buildTimestampCommentText(items));
+    let started: JobRecord;
+    try {
+      started = await startExport(
+        apiBaseUrl,
+        videoPath,
+        outputDir,
+        items,
+        buildTimestampCommentText(items),
+        createVideoFolder
+      );
+    } catch (error) {
+      setMessage(`Export could not be started: ${String(error)}`);
+      return;
+    }
     setOutputOpen(false);
     setExportProgressOpen(true);
-    setExportJob(started);
-    setJob(started);
+    taskRegistry.updateTask("export", started);
     setProjectOperation({ kind: "export", status: "running" });
     markProjectChanged();
     try {
       await waitForJob(apiBaseUrl, started.id, (nextJob) => {
-        setJob(nextJob);
-        setExportJob(nextJob);
+        taskRegistry.updateTask("export", nextJob);
       });
       setProjectOperation(null);
       markProjectChanged();
@@ -1095,6 +1171,10 @@ export default function App() {
   }
 
   function buildOutputItems(): OutputItem[] {
+    return outputPlan.items;
+  }
+
+  function buildBaseOutputItems(): OutputItem[] {
     return segments.map((segment, index) => {
       const candidate = exportCandidates[index];
       const title = segmentTitle(segment);
@@ -1662,11 +1742,26 @@ export default function App() {
             }}
             placeholder="Paste timestamp comment here"
           />
-          <StatusPanel job={activeJob} message={message} videoInfo={videoInfo} scratchProxyState={scratchProxyState} />
+          <StatusPanel
+            job={activeJob}
+            message={message}
+            videoInfo={videoInfo}
+            scratchProxyState={scratchProxyState}
+            waveformPhase={progressiveWaveform.phase}
+            waveformProgress={progressiveWaveform.progress}
+            onWaveformRetry={
+              sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
+                ? () => void progressiveWaveform.start(videoPath)
+                : null
+            }
+          />
         </div>
         <TimelineStack
           duration={duration}
-          waveform={analysis?.waveform ?? []}
+          waveform={progressiveWaveform.waveform}
+          progressiveWaveformChunks={progressiveWaveform.chunks}
+          waveformPhase={progressiveWaveform.phase}
+          waveformProgress={progressiveWaveform.progress}
           segments={segments}
           selectedSegment={selectedSegment}
           currentTime={currentTime}
@@ -1728,12 +1823,18 @@ export default function App() {
       />
       <OutputDialog
         open={outputOpen}
-        items={buildOutputItems()}
+        items={outputPlan.items}
+        error={outputPlan.error}
+        filenameTemplate={filenameTemplate}
+        createSourceFolder={createSourceFolder}
+        sourceFolderName={videoInfo ? filenameWithoutExtension(videoInfo.name) : "video"}
         onClose={() => setOutputOpen(false)}
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
+        onFilenameTemplate={setFilenameTemplate}
+        onCreateSourceFolder={setCreateSourceFolder}
         onExport={async () => {
           const dir = await window.songcut.selectOutputDirectory();
-          if (dir) await exportClips(dir);
+          if (dir) await exportClips(dir, createSourceFolder);
         }}
       />
       <Dialog open={timestampCopyCount !== null} title="Export TS" onClose={() => setTimestampCopyCount(null)}>
@@ -1971,16 +2072,29 @@ function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>
   }
 }
 
-function isRunningJob(job: JobRecord | null | undefined): job is JobRecord {
-  return job?.status === "queued" || job?.status === "running";
-}
-
 function jobKindLabel(kind: string) {
   if (kind === "analysis") return "Analysis";
   if (kind === "transcription") return "Transcription";
   if (kind === "export") return "Export";
   if (kind === "download-whisper") return "Whisper model download";
+  if (kind === "waveform") return "Waveform generation";
+  if (kind === "scratch-proxy") return "Scratch audio preparation";
   return "A task";
+}
+
+function waveformStatusLabel(phase: ReturnType<typeof useProgressiveWaveform>["phase"], progress: number) {
+  switch (phase) {
+    case "streaming":
+      return `Waveform: ${Math.round(clamp(progress, 0, 1) * 100)}%`;
+    case "finalizing":
+      return "Waveform: Finalizing";
+    case "ready":
+      return "Waveform: Ready";
+    case "failed":
+      return "Waveform: Unavailable";
+    case "idle":
+      return "Waveform: Waiting";
+  }
 }
 
 function BoundaryControls(props: {
@@ -2118,12 +2232,18 @@ function StatusPanel({
   job,
   message,
   videoInfo,
-  scratchProxyState
+  scratchProxyState,
+  waveformPhase,
+  waveformProgress,
+  onWaveformRetry
 }: {
   job: JobRecord | null;
   message: string;
   videoInfo: VideoInfo | null;
   scratchProxyState: ScratchProxyState;
+  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
+  waveformProgress: number;
+  onWaveformRetry: (() => void) | null;
 }) {
   return (
     <aside className="status-panel">
@@ -2140,6 +2260,12 @@ function StatusPanel({
           <div className="meta-line" data-scratch-proxy-status={scratchProxyState}>
             {scratchProxyStatusLabel(scratchProxyState)}
           </div>
+          <div className="meta-line waveform-status-line" data-waveform-status={waveformPhase}>
+            <span>{waveformStatusLabel(waveformPhase, waveformProgress)}</span>
+            {onWaveformRetry ? (
+              <button type="button" className="waveform-retry" onClick={onWaveformRetry}>Retry</button>
+            ) : null}
+          </div>
         </>
       ) : null}
     </aside>
@@ -2149,6 +2275,9 @@ function StatusPanel({
 function TimelineStack(props: {
   duration: number;
   waveform: WaveformPoint[];
+  progressiveWaveformChunks: WaveformPoint[][];
+  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
+  waveformProgress: number;
   segments: Segment[];
   selectedSegment: Segment | null;
   currentTime: number;
@@ -2247,6 +2376,9 @@ function TimelineStack(props: {
         <WaveformTimeline
           duration={props.duration}
           waveform={props.waveform}
+          progressiveWaveformChunks={props.progressiveWaveformChunks}
+          waveformPhase={props.waveformPhase}
+          waveformProgress={props.waveformProgress}
           waveformDisplayMode={props.waveformDisplayMode}
           segments={props.segments}
           selectedSegmentId={props.selectedSegment?.id ?? null}
@@ -2273,6 +2405,9 @@ function TimelineStack(props: {
 function WaveformTimeline(props: {
   duration: number;
   waveform: WaveformPoint[];
+  progressiveWaveformChunks: WaveformPoint[][];
+  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
+  waveformProgress: number;
   waveformDisplayMode: WaveformDisplayMode;
   segments: Segment[];
   selectedSegmentId: string | null;
@@ -2437,12 +2572,34 @@ function WaveformTimeline(props: {
             fill={segment.id === props.selectedSegmentId ? "rgba(242, 109, 91, 0.3)" : "rgba(69, 179, 157, 0.26)"}
           />
         ))}
-        <StaticWaveformLayer
-          duration={props.duration}
-          waveform={props.waveform}
-          width={props.width}
-          mode={props.waveformDisplayMode}
-        />
+        {props.waveformPhase === "streaming" || props.waveformPhase === "finalizing" ? (
+          <ProgressiveWaveformLayer
+            duration={props.duration}
+            chunks={props.progressiveWaveformChunks}
+            width={props.width}
+            mode={props.waveformDisplayMode}
+            finalizing={props.waveformPhase === "finalizing"}
+          />
+        ) : null}
+        {props.waveformPhase === "ready" || props.waveformPhase === "finalizing" ? (
+          <StaticWaveformLayer
+            duration={props.duration}
+            waveform={props.waveform}
+            width={props.width}
+            mode={props.waveformDisplayMode}
+            finalizing={props.waveformPhase === "finalizing"}
+          />
+        ) : null}
+        {props.waveformPhase === "streaming" ? (
+          <line
+            className="waveform-progress-frontier"
+            x1={clamp(props.waveformProgress, 0, 1) * props.width}
+            x2={clamp(props.waveformProgress, 0, 1) * props.width}
+            y1="4"
+            y2="82"
+            pointerEvents="none"
+          />
+        ) : null}
       </svg>
     </div>
   );
@@ -2453,6 +2610,7 @@ const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
   waveform: WaveformPoint[];
   width: number;
   mode: WaveformDisplayMode;
+  finalizing?: boolean;
 }) {
   const pyramid = useMemo(() => buildWaveformPyramid(props.waveform), [props.waveform]);
   const selectedLevel = useMemo(
@@ -2466,7 +2624,11 @@ const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
   );
 
   return (
-    <g className="waveform-static-layer" data-waveform-level={selectedLevel} data-waveform-points={points.length}>
+    <g
+      className={props.finalizing ? "waveform-static-layer is-finalizing" : "waveform-static-layer"}
+      data-waveform-level={selectedLevel}
+      data-waveform-points={points.length}
+    >
       {paths.map((path) => (
         <path
           key={path.kind}
@@ -2482,6 +2644,56 @@ const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
       ))}
     </g>
   );
+});
+
+const ProgressiveWaveformLayer = memo(function ProgressiveWaveformLayer(props: {
+  duration: number;
+  chunks: WaveformPoint[][];
+  width: number;
+  mode: WaveformDisplayMode;
+  finalizing: boolean;
+}) {
+  return (
+    <g
+      className={props.finalizing ? "waveform-progressive-layer is-finalizing" : "waveform-progressive-layer"}
+      data-waveform-chunks={props.chunks.length}
+    >
+      {props.chunks.map((chunk, index) => (
+        <ProgressiveWaveformChunk
+          key={index}
+          points={chunk}
+          duration={props.duration}
+          width={props.width}
+          mode={props.mode}
+        />
+      ))}
+    </g>
+  );
+});
+
+const ProgressiveWaveformChunk = memo(function ProgressiveWaveformChunk(props: {
+  points: WaveformPoint[];
+  duration: number;
+  width: number;
+  mode: WaveformDisplayMode;
+}) {
+  const paths = useMemo(
+    () => buildWaveformPathSpecs(props.points, props.duration, props.width, props.mode),
+    [props.points, props.duration, props.width, props.mode]
+  );
+  return paths.map((path) => (
+    <path
+      key={path.kind}
+      className={`waveform-path waveform-path-${path.kind}`}
+      data-waveform-path={`progressive-${path.kind}`}
+      d={path.d}
+      fill="none"
+      stroke="#f2cf63"
+      strokeWidth="1"
+      opacity={path.opacity}
+      pointerEvents="none"
+    />
+  ));
 });
 
 function SegmentTimeline(props: {
@@ -2871,12 +3083,40 @@ function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
 function OutputDialog(props: {
   open: boolean;
   items: OutputItem[];
+  error: string | null;
+  filenameTemplate: string;
+  createSourceFolder: boolean;
+  sourceFolderName: string;
   onClose: () => void;
   onPreview: (item: OutputItem) => void;
+  onFilenameTemplate: (value: string) => void;
+  onCreateSourceFolder: (value: boolean) => void;
   onExport: () => Promise<void>;
 }) {
   return (
     <Dialog open={props.open} title="Export Review" onClose={props.onClose}>
+      <div className="output-options">
+        <label className="output-template-field">
+          <span>Filename template</span>
+          <Input
+            value={props.filenameTemplate}
+            onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
+            aria-invalid={Boolean(props.error)}
+            placeholder={DEFAULT_FILENAME_TEMPLATE}
+          />
+        </label>
+        <div className="output-template-help">
+          {`Placeholders: ${FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ")}`}
+        </div>
+        {props.error ? <div className="output-template-error">{props.error}</div> : null}
+        <label className="output-folder-option">
+          <Checkbox
+            checked={props.createSourceFolder}
+            onChange={(event) => props.onCreateSourceFolder(event.currentTarget.checked)}
+          />
+          <span>{`Create a “${props.sourceFolderName}” folder inside the selected output folder`}</span>
+        </label>
+      </div>
       <ScrollArea className="output-list" scrollbars={["vertical"]}>
         <div className="output-list-content">
           {props.items
@@ -2900,7 +3140,7 @@ function OutputDialog(props: {
         <Button variant="secondary" onClick={props.onClose}>
           Back
         </Button>
-        <Button onClick={props.onExport}>Export</Button>
+        <Button onClick={props.onExport} disabled={Boolean(props.error) || props.items.length === 0}>Export</Button>
       </div>
     </Dialog>
   );
@@ -3122,6 +3362,22 @@ function readWaveformDisplayMode(): WaveformDisplayMode {
   }
 }
 
+function readFilenameTemplate() {
+  try {
+    return window.localStorage.getItem(FILENAME_TEMPLATE_STORAGE_KEY) || DEFAULT_FILENAME_TEMPLATE;
+  } catch {
+    return DEFAULT_FILENAME_TEMPLATE;
+  }
+}
+
+function readCreateSourceFolder() {
+  try {
+    return window.localStorage.getItem(CREATE_SOURCE_FOLDER_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
   switch (mode) {
     case "rms":
@@ -3210,6 +3466,11 @@ function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
 function extensionOf(name: string) {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+function filenameWithoutExtension(name: string) {
+  const dot = name.lastIndexOf(".");
+  return (dot > 0 ? name.slice(0, dot) : name).trim() || "video";
 }
 
 function deviceLabel(device: AnalysisDevice | WhisperDevice) {

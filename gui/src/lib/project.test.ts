@@ -7,6 +7,7 @@ import {
   createProjectDocument,
   normalizeInterruptedOperation,
   transcriptSettingsAreStale,
+  waveformFromProject,
 } from "./project";
 import type { AnalysisResult, Segment, VideoInfo } from "../types";
 
@@ -92,6 +93,7 @@ describe("project document composition", () => {
       videoPath: source.path,
       duration: 30,
       guideText: "0:01 Song",
+      waveform: analysis.waveform,
       analysis,
       segments: [segment],
       exportCandidates: analysis.export_candidates,
@@ -106,7 +108,14 @@ describe("project document composition", () => {
     expect(() => assertProjectDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
     expect(document.revision).toBe(7);
     expect(document.segments[0].transcript?.text).toBe("hello");
-    expect(document.analysis_snapshot?.waveform).toEqual(analysis.waveform);
+    expect(document.waveform_snapshot).toMatchObject({
+      schema_version: 2,
+      encoding: "f32le-4-u32le-1-v1",
+      point_count: analysis.waveform.length,
+    });
+    expect(document.waveform_snapshot).not.toHaveProperty("points");
+    expect(document.waveform_snapshot?.data_base64).toMatch(/^[A-Za-z0-9+/]+={0,2}$/);
+    expect(waveformFromProject(document)).toEqual(analysis.waveform);
     expect(document.export_candidates[0].segment_id).toBe("seg-001");
     expect(document.settings.whisper.enabled).toBe(true);
     expect(document.settings.whisper.language).toBe("ja");
@@ -155,6 +164,7 @@ describe("project document composition", () => {
       videoPath: source.path,
       duration: 2400,
       guideText: "0:37:20 MC",
+      waveform: provisionalAnalysis.waveform,
       analysis: provisionalAnalysis,
       segments: [provisional],
       exportCandidates: provisionalAnalysis.export_candidates,

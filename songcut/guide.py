@@ -11,6 +11,7 @@ from .timestamps import format_timecode, parse_timecode
 
 YOUTUBE_TIMECODE_RE = re.compile(r"(?<!\d)(\d+:\d{2}(?::\d{2})?)(?!\d)")
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
+WINDOWS_RESERVED_FILENAME_RE = re.compile(r"^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", re.IGNORECASE)
 GUIDE_DECORATION_RE = re.compile(r"^[\s　]*(?:[├└┏┗┣┃│┝┕┠┖┬┴┼─━]+|[-*・･]+)\s*")
 FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
 
@@ -122,7 +123,7 @@ def safe_filename_stem(title: str, *, fallback: str = "clip", max_length: int = 
     value = title.replace("/", " - ").replace("\\", " - ")
     value = INVALID_FILENAME_CHARS_RE.sub("", value)
     value = re.sub(r"\s+", " ", value).strip(" .")
-    if not value:
+    if not value or WINDOWS_RESERVED_FILENAME_RE.match(value):
         value = fallback
     if len(value) > max_length:
         value = value[:max_length].rstrip(" .")

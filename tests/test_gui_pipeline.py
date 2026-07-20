@@ -19,7 +19,7 @@ from songcut.timestamps import Segment
 
 
 class GuiPipelineTests(unittest.TestCase):
-    def test_explicit_guide_range_with_metadata_still_builds_waveform(self) -> None:
+    def test_explicit_guide_range_with_metadata_leaves_waveform_to_independent_job(self) -> None:
         source = Path("source.mp4")
         samples = np.array([[0.0], [0.25], [-0.5], [0.75]], dtype=np.float32)
 
@@ -43,15 +43,9 @@ class GuiPipelineTests(unittest.TestCase):
         self.assertEqual(result["timestamp_source"], "video-metadata+guide")
         self.assertEqual(result["schema_version"], 3)
         self.assertEqual(result["segments"][0]["source"], "guide-range")
-        self.assertEqual(len(result["waveform"]), len(samples))
-        self.assertTrue(all(point["sample_count"] == 1 for point in result["waveform"]))
-        read_pcm.assert_called_once_with(
-            Path("ffmpeg.exe"),
-            source,
-            sample_rate=WAVEFORM_SAMPLE_RATE,
-            channels=1,
-        )
-        pcm_to_float.assert_called_once_with(b"pcm", channels=1)
+        self.assertEqual(result["waveform"], [])
+        read_pcm.assert_not_called()
+        pcm_to_float.assert_not_called()
         compute_features.assert_not_called()
 
     def test_unmatched_guide_timestamp_completes_analysis_with_provisional_segment(self) -> None:
