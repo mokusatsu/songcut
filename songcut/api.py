@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
+from .boundary_refiner import BoundaryRefinerConfig
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
@@ -41,13 +42,38 @@ from .waveform import (
 try:
     from fastapi import FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, model_validator
 except Exception as exc:  # pragma: no cover - optional GUI dependency
     raise RuntimeError("Install songcut[gui] to run the REST API.") from exc
 
 
 class ProbeRequest(BaseModel):
     path: str
+
+
+class BoundaryRefinementRequest(BaseModel):
+    enabled: bool = True
+    search_radius_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+    rms_window_ms: int = Field(default=80, ge=50, le=100, multiple_of=10)
+    occupancy_window_seconds: float = Field(default=2.0, ge=0.5, le=10.0)
+    high_occupancy: float = Field(default=0.80, ge=0.5, le=1.0)
+    low_occupancy: float = Field(default=0.35, ge=0.0, le=0.5)
+    start_persistence_seconds: float = Field(default=2.0, ge=0.5, le=10.0)
+    end_persistence_seconds: float = Field(default=3.0, ge=0.5, le=15.0)
+    contrast_window_seconds: float = Field(default=5.0, ge=1.0, le=15.0)
+    pre_roll_seconds: float = Field(default=0.5, ge=0.3, le=1.0)
+    post_roll_seconds: float = Field(default=1.0, ge=0.3, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_hysteresis(self) -> "BoundaryRefinementRequest":
+        if self.low_occupancy >= self.high_occupancy:
+            raise ValueError("low_occupancy must be lower than high_occupancy")
+        return self
+
+    def to_config(self) -> BoundaryRefinerConfig:
+        config = BoundaryRefinerConfig(**self.model_dump())
+        config.validate()
+        return config
 
 
 class AnalyzeRequest(BaseModel):
@@ -59,6 +85,7 @@ class AnalyzeRequest(BaseModel):
     whisper_model: str = "small"
     whisper_device: str = "auto"
     whisper_language: str | None = "<|ja|>"
+    boundary_refinement: BoundaryRefinementRequest = Field(default_factory=BoundaryRefinementRequest)
 
 
 class WhisperDownloadRequest(BaseModel):
@@ -551,6 +578,7 @@ def _analysis_job(job_id: str, request: AnalyzeRequest) -> None:
             guide_text=request.guide_text,
             timestamp_source=request.timestamp_source,
             device=request.device,
+            boundary_refinement=request.boundary_refinement.to_config(),
         )
         update_job(job_id, progress=0.72, message="Singing analysis complete.")
         if request.transcribe and payload["segments"]:

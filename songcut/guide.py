@@ -40,6 +40,7 @@ class GuidedExport:
     guide_line_number: int
     guide_line: str
     distance_seconds: float | None = None
+    matched_segment_id: str | None = None
 
 
 def read_guide_file(path: Path) -> list[GuideEntry]:
@@ -148,15 +149,18 @@ def build_guided_exports(
                 raise ValueError(f"Guide line {entry.line_number} has a non-positive range: {entry.raw_line}")
             match_source = "guide-range"
             distance = None
+            matched_segment_id = None
         else:
             start = float(entry.timestamps[0])
             next_timestamp = _next_guide_timestamp(entries, start)
             try:
-                _matched_start, end, distance = find_nearby_segment(
+                matched_item, distance = _find_nearby_segment_item(
                     start,
                     segment_items,
                     max_distance_seconds=max_distance_seconds,
                 )
+                end = float(matched_item["end"])
+                matched_segment_id = str(matched_item["id"]) if matched_item.get("id") is not None else None
                 if next_timestamp is not None and start < next_timestamp < end:
                     end = next_timestamp
                 match_source = "guide-nearby-segment"
@@ -178,6 +182,7 @@ def build_guided_exports(
                     continue
                 distance = None
                 match_source = "guide-timestamp-fallback"
+                matched_segment_id = None
 
         base = safe_filename_stem(entry.title, fallback=f"clip-{entry.index:03d}")
         if numbered_filenames:
@@ -194,6 +199,7 @@ def build_guided_exports(
                 guide_line_number=entry.line_number,
                 guide_line=entry.raw_line,
                 distance_seconds=distance,
+                matched_segment_id=matched_segment_id,
             )
         )
     return sorted(exports, key=lambda item: (item.start, item.end, item.index))
@@ -258,6 +264,7 @@ def guided_exports_to_segment_dicts(exports: list[GuidedExport]) -> list[dict[st
                 "distance_seconds": None
                 if item.distance_seconds is None
                 else round(float(item.distance_seconds), 3),
+                **({"matched_segment_id": item.matched_segment_id} if item.matched_segment_id is not None else {}),
                 "flags": flags,
                 "user_edited": False,
             }
@@ -271,6 +278,20 @@ def find_nearby_segment(
     *,
     max_distance_seconds: float,
 ) -> tuple[float, float, float]:
+    best_item, distance = _find_nearby_segment_item(
+        timestamp,
+        segment_items,
+        max_distance_seconds=max_distance_seconds,
+    )
+    return float(timestamp), float(best_item["end"]), distance
+
+
+def _find_nearby_segment_item(
+    timestamp: float,
+    segment_items: list[dict[str, Any]],
+    *,
+    max_distance_seconds: float,
+) -> tuple[dict[str, Any], float]:
     if not segment_items:
         raise ValueError("Guide entries with one timestamp require at least one detected segment.")
 
@@ -297,7 +318,7 @@ def find_nearby_segment(
         raise ValueError(
             f"No detected segment is within {max_distance_seconds:.1f}s of guide timestamp {timestamp:.3f}."
         )
-    return float(timestamp), float(best_item["end"]), float(best_key[0])
+    return best_item, float(best_key[0])
 
 
 def make_unique_stem(stem: str, used: set[str]) -> str:

@@ -91,10 +91,51 @@ export type Segment = {
   guide_line_number?: number;
   guide_line?: string;
   distance_seconds?: number | null;
+  matched_segment_id?: string | null;
+  boundary_refined?: boolean;
+  boundary_refinement?: BoundarySegmentDiagnostic;
   flags: string[];
   user_edited: boolean;
   checked?: boolean;
   transcript?: Transcript;
+};
+
+export type BoundarySideDiagnostic = {
+  side: "start" | "end";
+  coarse: number;
+  search_start: number;
+  search_end: number;
+  otsu_threshold_db: number | null;
+  low_cluster_median_db: number | null;
+  high_cluster_median_db: number | null;
+  transition_candidates: number[];
+  selected_candidate: number | null;
+  contrast_point: number | null;
+  contrast_db: number | null;
+  roll_seconds: number;
+  automatic: number;
+  delta_seconds: number;
+  success: boolean;
+  reason: string | null;
+};
+
+export type BoundarySegmentDiagnostic = {
+  version: string;
+  coarse_start: number;
+  coarse_end: number;
+  automatic_start: number;
+  automatic_end: number;
+  start: BoundarySideDiagnostic;
+  end: BoundarySideDiagnostic;
+};
+
+export type BoundaryRefinementSummary = {
+  version: string;
+  settings: Record<string, boolean | number>;
+  segment_count: number;
+  applied_segments: number;
+  refined_boundaries: number;
+  skipped_reason: string | null;
 };
 
 export type ExportCandidate = {
@@ -121,6 +162,7 @@ export type AnalysisResult = {
   elapsed_seconds?: number;
   segments: Segment[];
   raw_segments?: Segment[];
+  boundary_refinement?: BoundaryRefinementSummary;
   export_candidates: ExportCandidate[];
   waveform: WaveformPoint[];
   frame_scores?: { t: number; score: number; rms: number }[];

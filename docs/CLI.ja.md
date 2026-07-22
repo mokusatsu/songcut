@@ -61,6 +61,16 @@ python -m songcut.cli analyze path\to\input.mp4 --profile intel-258v --device au
 `--device npu` と `--device gpu` は厳密なチェックで、要求したデバイスが使えない場合に
 失敗します。
 
+音響検出では、局所RMS／Otsu境界補正が既定で有効です。粗い区間数は変えず、開始・終了
+だけを補正します。比較や回帰確認のため無効化する場合は次を使います。
+
+```powershell
+python -m songcut.cli analyze path\to\input.mp4 --out out --no-boundary-refinement
+```
+
+出力には`rms-otsu-boundary-v1`の設定スナップショット、集計、区間ごとの診断が含まれます。
+メタデータ由来のタイムスタンプは補正しません。
+
 ## 評価とレビュー
 
 既存の `segments.json` を正解タイムスタンプと比較します。

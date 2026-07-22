@@ -61,6 +61,18 @@ uses the current DSP baseline unless a compatible singing model is configured.
 `--device npu` and `--device gpu` are strict checks and fail when the requested
 device is unavailable.
 
+Acoustic detections use local RMS/Otsu boundary refinement by default. It keeps
+the coarse segment count unchanged and only adjusts starts and ends. Disable it
+for comparison or regression checks with:
+
+```powershell
+python -m songcut.cli analyze path\to\input.mp4 --out out --no-boundary-refinement
+```
+
+The output includes the `rms-otsu-boundary-v1` settings snapshot, summary, and
+per-segment diagnostics. Metadata timestamps are never passed through this
+refiner.
+
 ## Evaluate And Review
 
 Evaluate an existing `segments.json` file against timestamp truth:

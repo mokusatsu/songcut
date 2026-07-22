@@ -1006,6 +1006,61 @@ tr.selected:hover {
   color: #aebbc2;
 }
 
+.help-tooltip-label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  width: fit-content;
+}
+
+.help-tooltip-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: #9fb2ba;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: help;
+}
+
+.help-tooltip-trigger:hover,
+.help-tooltip-trigger:focus-visible {
+  color: #d9f5ff;
+  outline: 1px solid #6b96a7;
+}
+
+.help-tooltip {
+  position: fixed;
+  z-index: 10000;
+  width: min(340px, calc(100vw - 16px));
+  padding: 9px 11px;
+  color: #eef6f8;
+  background: #071014;
+  border: 1px solid #52717d;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  font-size: var(--font-size-meta);
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.boundary-diagnostic-scroll { height: min(68vh, 650px); }
+.boundary-diagnostic-content { display: grid; gap: 14px; padding-right: 12px; }
+.boundary-diagnostic-content h3 { margin: 0 0 8px; font-size: var(--font-size-base); }
+.boundary-diagnostic-overview { width: 100%; border-collapse: collapse; }
+.boundary-diagnostic-overview th,
+.boundary-diagnostic-overview td { padding: 7px 9px; border: 1px solid #354850; text-align: left; }
+.boundary-diagnostic-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.boundary-diagnostic-sides section { padding: 12px; background: #10171a; border: 1px solid #354850; border-radius: 6px; }
+.boundary-diagnostic-sides dl { display: grid; grid-template-columns: minmax(110px, max-content) 1fr; gap: 6px 10px; margin: 0; }
+.boundary-diagnostic-sides dt { color: #91a4ad; }
+.boundary-diagnostic-sides dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.boundary-diagnostic-settings { max-height: 220px; margin: 0; overflow: auto; padding: 10px; background: #0d1215; border: 1px solid #354850; }
+@media (max-width: 760px) { .boundary-diagnostic-sides { grid-template-columns: 1fr; } }
+
 .settings-field-help,
 .settings-field-error {
   font-size: var(--font-size-meta);

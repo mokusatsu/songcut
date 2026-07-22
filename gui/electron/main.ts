@@ -66,6 +66,7 @@ const e2eMenuCommandTypes = new Set([
   "check-all-segments",
   "uncheck-all-segments",
   "invert-segment-selection",
+  "show-boundary-refinement-details",
   "open-settings",
 ]);
 
@@ -103,7 +104,8 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-timestamp"; format: TimestampExportFormat }
-  | { type: "open-settings" };
+  | { type: "open-settings" }
+  | { type: "show-boundary-refinement-details" };
 
 type SongcutMenuState = {
   apiReady: boolean;
@@ -111,6 +113,7 @@ type SongcutMenuState = {
   hasVideo: boolean;
   hasSegments: boolean;
   hasSelectedSegment: boolean;
+  hasBoundaryDiagnostic: boolean;
   hasCheckedSegments: boolean;
   hasUncheckedSegments: boolean;
   hasMultipleSegments: boolean;
@@ -131,6 +134,7 @@ let menuState: SongcutMenuState = {
   hasVideo: false,
   hasSegments: false,
   hasSelectedSegment: false,
+  hasBoundaryDiagnostic: false,
   hasCheckedSegments: false,
   hasUncheckedSegments: false,
   hasMultipleSegments: false,
@@ -514,6 +518,12 @@ function applicationMenuTemplate(): Electron.MenuItemConstructorOptions[] {
           label: mainI18n.t("menu.sortSegments"),
           enabled: menuState.hasProject && menuState.hasMultipleSegments,
           click: send({ type: "sort-segments" })
+        },
+        {
+          id: "segment.boundary-refinement-details",
+          label: mainI18n.t("menu.boundaryRefinementDetails"),
+          enabled: menuState.hasBoundaryDiagnostic,
+          click: send({ type: "show-boundary-refinement-details" })
         },
         { type: "separator" },
         { id: "segment.export-heading", label: mainI18n.t("menu.exportSelectionHeading"), enabled: false },

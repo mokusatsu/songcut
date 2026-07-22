@@ -8,6 +8,7 @@ import type {
   VideoInfo,
   WaveformUpdate
 } from "@/types";
+import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -90,13 +91,15 @@ export function startAnalysis(
   baseUrl: string,
   filePath: string,
   guideText: string,
-  analysisDevice: AnalysisDevice
+  analysisDevice: AnalysisDevice,
+  boundaryRefinement: BoundaryRefinementSettings
 ) {
   return postJson<JobRecord>(baseUrl, "/analysis/jobs", {
     path: filePath,
     guide_text: guideText,
     timestamp_source: "auto",
     device: analysisDevice,
+    boundary_refinement: boundaryRefinement,
     transcribe: false
   });
 }

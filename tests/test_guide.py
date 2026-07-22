@@ -22,6 +22,15 @@ class GuideTests(unittest.TestCase):
         self.assertEqual(exports[0].end, 810.0)
         self.assertEqual(exports[0].match_source, "guide-range")
         self.assertEqual(exports[0].filename_stem, "01_Song C")
+        self.assertIsNone(exports[0].matched_segment_id)
+
+    def test_single_timestamp_keeps_matched_raw_segment_id(self) -> None:
+        segments, _candidates, _applied = build_gui_segments_and_exports(
+            "0:00:10 Song\n",
+            [{"id": "seg-007", "start": 8.0, "end": 30.0}],
+            media_duration=40.0,
+        )
+        self.assertEqual(segments[0]["matched_segment_id"], "seg-007")
 
     def test_numbered_multiline_guide_uses_first_content_line_as_title(self) -> None:
         entries = parse_guide_text(

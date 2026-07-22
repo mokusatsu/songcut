@@ -26,6 +26,44 @@ export type ProjectTranscript = {
   error?: string | null;
 };
 
+export type ProjectBoundarySideDiagnostic = {
+  side: "start" | "end";
+  coarse: number;
+  search_start: number;
+  search_end: number;
+  otsu_threshold_db: number | null;
+  low_cluster_median_db: number | null;
+  high_cluster_median_db: number | null;
+  transition_candidates: number[];
+  selected_candidate: number | null;
+  contrast_point: number | null;
+  contrast_db: number | null;
+  roll_seconds: number;
+  automatic: number;
+  delta_seconds: number;
+  success: boolean;
+  reason: string | null;
+};
+
+export type ProjectBoundarySegmentDiagnostic = {
+  version: string;
+  coarse_start: number;
+  coarse_end: number;
+  automatic_start: number;
+  automatic_end: number;
+  start: ProjectBoundarySideDiagnostic;
+  end: ProjectBoundarySideDiagnostic;
+};
+
+export type ProjectBoundaryRefinementSummary = {
+  version: string;
+  settings: Record<string, boolean | number>;
+  segment_count: number;
+  applied_segments: number;
+  refined_boundaries: number;
+  skipped_reason: string | null;
+};
+
 export type ProjectSegment = {
   id: string;
   title?: string;
@@ -41,6 +79,9 @@ export type ProjectSegment = {
   guide_line_number?: number;
   guide_line?: string;
   distance_seconds?: number | null;
+  matched_segment_id?: string | null;
+  boundary_refined?: boolean;
+  boundary_refinement?: ProjectBoundarySegmentDiagnostic;
   flags: string[];
   user_edited: boolean;
   checked?: boolean;
@@ -125,6 +166,7 @@ export type ProjectDocumentV1 = {
     elapsed_seconds: number;
     frame_scores: { t: number; score: number; rms: number }[];
     raw_segments: ProjectSegment[];
+    boundary_refinement?: ProjectBoundaryRefinementSummary;
   } | null;
   segments: ProjectSegment[];
   export_candidates: ProjectExportCandidate[];
@@ -253,6 +295,7 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
       finiteValue(row.rms, `analysis_snapshot.frame_scores[${index}].rms`);
     });
     validateSegments(snapshot.raw_segments, "analysis_snapshot.raw_segments", true);
+    if (snapshot.boundary_refinement !== undefined) validateBoundaryRefinementSummary(snapshot.boundary_refinement, "analysis_snapshot.boundary_refinement");
   }
 
   validateSegments(root.segments, "segments", false);
@@ -321,6 +364,11 @@ function validateSegments(value: unknown, label: string, requireSorted: boolean)
     if (row.distance_seconds !== undefined && row.distance_seconds !== null) {
       nonNegativeFinite(row.distance_seconds, `${label}[${index}].distance_seconds`);
     }
+    if (row.matched_segment_id !== undefined && row.matched_segment_id !== null) {
+      stringValue(row.matched_segment_id, `${label}[${index}].matched_segment_id`);
+    }
+    if (row.boundary_refined !== undefined) booleanValue(row.boundary_refined, `${label}[${index}].boundary_refined`);
+    if (row.boundary_refinement !== undefined) validateBoundarySegmentDiagnostic(row.boundary_refinement, `${label}[${index}].boundary_refinement`);
     arrayValue(row.flags, `${label}[${index}].flags`).forEach((flag, flagIndex) =>
       stringValue(flag, `${label}[${index}].flags[${flagIndex}]`, true)
     );
@@ -353,6 +401,49 @@ function validateTranscript(value: unknown, label: string, segmentId: string) {
     if (end < start) throw new Error(`Invalid transcript chunk in ${label}.`);
     stringValue(item.text, `${label}.chunks[${index}].text`, true);
   });
+}
+
+function validateBoundaryRefinementSummary(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  stringValue(row.version, `${label}.version`);
+  const settings = objectValue(row.settings, `${label}.settings`);
+  Object.entries(settings).forEach(([key, setting]) => {
+    if (typeof setting !== "boolean") finiteValue(setting, `${label}.settings.${key}`);
+  });
+  nonNegativeInteger(row.segment_count, `${label}.segment_count`);
+  nonNegativeInteger(row.applied_segments, `${label}.applied_segments`);
+  nonNegativeInteger(row.refined_boundaries, `${label}.refined_boundaries`);
+  if (row.skipped_reason !== null) stringValue(row.skipped_reason, `${label}.skipped_reason`);
+}
+
+function validateBoundarySegmentDiagnostic(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  stringValue(row.version, `${label}.version`);
+  for (const key of ["coarse_start", "coarse_end", "automatic_start", "automatic_end"] as const) {
+    nonNegativeFinite(row[key], `${label}.${key}`);
+  }
+  validateBoundarySideDiagnostic(row.start, `${label}.start`, "start");
+  validateBoundarySideDiagnostic(row.end, `${label}.end`, "end");
+}
+
+function validateBoundarySideDiagnostic(value: unknown, label: string, expectedSide: "start" | "end") {
+  const row = objectValue(value, label);
+  if (row.side !== expectedSide) throw new Error(`${label}.side must be ${expectedSide}.`);
+  for (const key of ["coarse", "search_start", "search_end", "roll_seconds", "automatic"] as const) {
+    nonNegativeFinite(row[key], `${label}.${key}`);
+  }
+  for (const key of ["otsu_threshold_db", "low_cluster_median_db", "high_cluster_median_db", "contrast_db"] as const) {
+    if (row[key] !== null) finiteValue(row[key], `${label}.${key}`);
+  }
+  for (const key of ["selected_candidate", "contrast_point"] as const) {
+    if (row[key] !== null) nonNegativeFinite(row[key], `${label}.${key}`);
+  }
+  arrayValue(row.transition_candidates, `${label}.transition_candidates`).forEach((candidate, index) =>
+    nonNegativeFinite(candidate, `${label}.transition_candidates[${index}]`)
+  );
+  finiteValue(row.delta_seconds, `${label}.delta_seconds`);
+  booleanValue(row.success, `${label}.success`);
+  if (row.reason !== null) stringValue(row.reason, `${label}.reason`);
 }
 
 function whisperSettings(value: unknown, label: string) {

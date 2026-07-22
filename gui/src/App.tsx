@@ -44,6 +44,7 @@ import {
 } from "@/lib/api";
 import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import {
   DEFAULT_WHISPER_SETTINGS,
   analysisFromProject,
@@ -85,6 +86,12 @@ import {
   type SegmentCollection,
 } from "@/lib/segmentManagement";
 import { boundaryNudgePlaybackRange, nearestBoundaryTarget } from "@/lib/boundaries";
+import {
+  normalizeBoundaryRefinementSettings,
+  readBoundaryRefinementSettings,
+  writeBoundaryRefinementSettings,
+  type BoundaryRefinementSettings,
+} from "@/lib/boundaryRefinement";
 import {
   applyTimestampCommentToGuide,
   backToTimestampCommentSelection,
@@ -235,6 +242,7 @@ export default function App(props: {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [boundaryDiagnosticOpen, setBoundaryDiagnosticOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
@@ -257,6 +265,9 @@ export default function App(props: {
   const [ffmpegCheckPending, setFfmpegCheckPending] = useState(false);
   const [ffmpegCheckResult, setFfmpegCheckResult] = useState<FfmpegCheckResult | null>(null);
   const [analysisDevice, setAnalysisDevice] = useState<AnalysisDevice>("auto");
+  const [boundaryRefinementSettings, setBoundaryRefinementSettings] = useState<BoundaryRefinementSettings>(
+    readBoundaryRefinementSettings
+  );
   const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
   const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
@@ -295,6 +306,12 @@ export default function App(props: {
     [segments, selectedSegmentId]
   );
   const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
+  const selectedBoundaryDiagnostic = useMemo(() => {
+    if (!selectedSegment) return null;
+    if (selectedSegment.boundary_refinement) return selectedSegment.boundary_refinement;
+    const rawId = selectedSegment.matched_segment_id;
+    return rawId ? analysis?.raw_segments?.find((segment) => segment.id === rawId)?.boundary_refinement ?? null : null;
+  }, [analysis?.raw_segments, selectedSegment]);
   const canSelectPreviousSegment = selectedSegmentIndex > 0;
   const canSelectNextSegment = selectedSegmentIndex >= 0 && selectedSegmentIndex < segments.length - 1;
   const duration = videoInfo?.duration ?? analysis?.duration ?? projectBase?.source.duration_seconds ?? videoRef.current?.duration ?? 0;
@@ -1097,7 +1114,13 @@ export default function App(props: {
     taskRegistry.updateTask("transcription", null);
     setProjectOperation({ kind: "analysis", status: "running" });
     markProjectChanged();
-    const started = await startAnalysis(apiBaseUrl, videoPath, guideText, analysisDevice);
+    const started = await startAnalysis(
+      apiBaseUrl,
+      videoPath,
+      guideText,
+      analysisDevice,
+      boundaryRefinementSettings
+    );
     taskRegistry.updateTask("analysis", started);
     try {
       const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) =>
@@ -1671,6 +1694,7 @@ export default function App(props: {
       hasVideo: Boolean(videoUrl),
       hasSegments: segments.length > 0,
       hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      hasBoundaryDiagnostic: Boolean(selectedBoundaryDiagnostic),
       hasCheckedSegments: checkedCount > 0,
       hasUncheckedSegments: uncheckedCount > 0,
       hasMultipleSegments: segments.length > 1,
@@ -1690,6 +1714,7 @@ export default function App(props: {
     videoUrl,
     segments.length,
     selectedSegment?.id,
+    selectedBoundaryDiagnostic,
     selectedSegmentId,
     checkedCount,
     uncheckedCount,
@@ -1790,6 +1815,9 @@ export default function App(props: {
           break;
         case "open-settings":
           openSettings();
+          break;
+        case "show-boundary-refinement-details":
+          if (selectedBoundaryDiagnostic) setBoundaryDiagnosticOpen(true);
           break;
       }
     });
@@ -2127,6 +2155,7 @@ export default function App(props: {
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
         waveformDisplayMode={waveformDisplayMode}
         analysisDevice={analysisDevice}
+        boundaryRefinementSettings={boundaryRefinementSettings}
         filenameTemplate={filenameTemplate}
         filenameTemplateError={localizeFilenameTemplateError(outputPlan.error)}
         whisperSettings={whisperSettings}
@@ -2151,6 +2180,11 @@ export default function App(props: {
           setAnalysisDevice(device);
           markProjectChanged();
           setMessage(tr("app.analysisDeviceSet", { device: deviceLabel(device) }));
+        }}
+        onBoundaryRefinementSettings={(settings) => {
+          const normalized = normalizeBoundaryRefinementSettings(settings);
+          setBoundaryRefinementSettings(normalized);
+          writeBoundaryRefinementSettings(normalized);
         }}
         onFilenameTemplate={updateFilenameTemplate}
         onWhisperSettings={(settings) => {
@@ -2177,6 +2211,13 @@ export default function App(props: {
             setMessage(localizedError(error));
           });
         }}
+      />
+      <BoundaryRefinementDialog
+        open={boundaryDiagnosticOpen}
+        segment={selectedSegment}
+        diagnostic={selectedBoundaryDiagnostic}
+        summary={analysis?.boundary_refinement ?? null}
+        onClose={() => setBoundaryDiagnosticOpen(false)}
       />
       <ExportProgressDialog
         open={exportProgressOpen}

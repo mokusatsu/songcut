@@ -8,11 +8,20 @@ import tempfile
 import unittest
 from unittest import mock
 
-from songcut.cli import main
+from songcut.cli import build_parser, main
 from songcut.io import read_segments_json
 
 
 class CliIntegrationTests(unittest.TestCase):
+    def test_boundary_refinement_is_on_by_default_and_can_be_disabled(self) -> None:
+        parser = build_parser()
+        defaults = parser.parse_args(["analyze", "source.mp4", "--out", "out"])
+        disabled = parser.parse_args(
+            ["analyze", "source.mp4", "--out", "out", "--no-boundary-refinement"]
+        )
+        self.assertFalse(defaults.no_boundary_refinement)
+        self.assertTrue(disabled.no_boundary_refinement)
+
     def test_metadata_analyze_on_fixture_if_present(self) -> None:
         videos = list(Path("testdata").glob("*.mp4"))
         truth_files = list(Path("testdata").glob("*.txt"))

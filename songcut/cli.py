@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .boundary_refiner import BOUNDARY_REFINER_VERSION, BoundaryRefinerConfig, refine_segments
 from .evaluate import evaluate_segments
 from .features import FeatureConfig, compute_features, pcm_bytes_to_float_stereo
 from .ffmpeg_tools import FfmpegPaths, export_clip, find_ffmpeg, probe_duration, read_pcm_s16le
@@ -55,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--timestamp-source", choices=("auto", "metadata", "acoustic"), default="auto")
     analyze.add_argument("--threshold", type=float, default=None)
     analyze.add_argument("--min-segment-seconds", type=float, default=75.0)
+    analyze.add_argument(
+        "--no-boundary-refinement",
+        action="store_true",
+        help="Disable local RMS/Otsu refinement of acoustic segment boundaries.",
+    )
     analyze.add_argument("--guide", type=Path, default=None, help="Guide text with YouTube timestamp tags.")
     analyze.add_argument(
         "--guide-max-distance",
@@ -108,6 +114,16 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     selected_source = "acoustic-dsp"
     segments: list[Segment] = []
     frame_scores: list[dict[str, float]] = []
+    boundary_config = BoundaryRefinerConfig(enabled=not args.no_boundary_refinement)
+    boundary_summary = {
+        "version": BOUNDARY_REFINER_VERSION,
+        "settings": boundary_config.to_dict(),
+        "segment_count": 0,
+        "applied_segments": 0,
+        "refined_boundaries": 0,
+        "skipped_reason": "metadata-source",
+    }
+    boundary_diagnostics: list[dict[str, object]] = []
 
     if args.timestamp_source in {"auto", "metadata"}:
         segments = metadata_segments(ffmpeg_paths.ffprobe, args.source)
@@ -129,6 +145,16 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             pad_seconds=1.0,
         )
         segments = segments_from_features(features, profile)
+        refinement = refine_segments(
+            samples,
+            segments,
+            sample_rate=config.sample_rate,
+            media_duration=duration,
+            config=boundary_config,
+        )
+        segments = refinement.segments
+        boundary_diagnostics = refinement.segment_diagnostics
+        boundary_summary = refinement.summary
         frame_scores = [
             {
                 "t": round(float(t), 3),
@@ -150,6 +176,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             )
         ]
 
+    segment_items = segments_to_dicts(segments)
+    if selected_source == "video-metadata":
+        boundary_summary["segment_count"] = len(segments)
+    for item, diagnostic in zip(segment_items, boundary_diagnostics):
+        item["boundary_refinement"] = diagnostic
+        if bool(diagnostic["start"]["success"]) or bool(diagnostic["end"]["success"]):
+            item["boundary_refined"] = True
+            item["flags"].append("boundary_refined")
+
     payload = {
         "schema_version": 1,
         "source_path": str(args.source),
@@ -159,6 +194,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         "model_versions": {
             "songcut": __version__,
             "singing_detector": "metadata-parser" if selected_source == "video-metadata" else "numpy-dsp-v1",
+            "boundary_refiner": BOUNDARY_REFINER_VERSION,
         },
         "backend": backend.backend,
         "device_requested": backend.device_requested,
@@ -173,7 +209,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             "platform": platform.platform(),
         },
         "elapsed_seconds": round(time.perf_counter() - started, 3),
-        "segments": segments_to_dicts(segments),
+        "segments": segment_items,
+        "raw_segments": segment_items,
+        "boundary_refinement": boundary_summary,
         "frame_scores": frame_scores,
     }
     target = args.out / "segments.json"

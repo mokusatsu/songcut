@@ -36,7 +36,8 @@ type SongcutMenuCommand =
   | { type: "play-end-boundary" }
   | { type: "export-movie" }
   | { type: "export-timestamp"; format: TimestampExportFormat }
-  | { type: "open-settings" };
+  | { type: "open-settings" }
+  | { type: "show-boundary-refinement-details" };
 
 type SongcutMenuState = {
   apiReady: boolean;
@@ -44,6 +45,7 @@ type SongcutMenuState = {
   hasVideo: boolean;
   hasSegments: boolean;
   hasSelectedSegment: boolean;
+  hasBoundaryDiagnostic: boolean;
   hasCheckedSegments: boolean;
   hasUncheckedSegments: boolean;
   hasMultipleSegments: boolean;

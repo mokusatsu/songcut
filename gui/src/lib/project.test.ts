@@ -80,6 +80,14 @@ const analysis: AnalysisResult = {
   elapsed_seconds: 2,
   segments: [segment],
   raw_segments: [segment],
+  boundary_refinement: {
+    version: "rms-otsu-boundary-v1",
+    settings: { enabled: true, search_radius_seconds: 30 },
+    segment_count: 1,
+    applied_segments: 1,
+    refined_boundaries: 2,
+    skipped_reason: null,
+  },
   export_candidates: [
     {
       id: "candidate-001",
@@ -134,6 +142,7 @@ describe("project document composition", () => {
     expect(document.settings.export?.filename_template).toBe("{title}_{start}");
     expect(filenameTemplateFromProject(document)).toBe("{title}_{start}");
     expect(analysisFromProject(document)?.segments[0].title).toBe("Song");
+    expect(analysisFromProject(document)?.boundary_refinement?.version).toBe("rms-otsu-boundary-v1");
   });
 
   it("round-trips a provisional guide timestamp segment with its guide metadata", () => {

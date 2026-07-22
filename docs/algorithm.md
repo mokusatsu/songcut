@@ -37,6 +37,36 @@ score = 0.60 * energy
 - Smooth scores with a 9-frame moving average.
 - Keep regions above threshold, merge gaps up to 12 seconds, discard candidates shorter than 75 seconds, and add 1 second of padding.
 
+## Local RMS boundary refinement
+
+Acoustic DSP candidates are refined after coarse detection without changing the
+number of segments. Metadata ranges and explicit guide ranges are not refined.
+The existing 16 kHz stereo PCM is reused and converted to the same mid channel
+as the coarse detector.
+
+- Analyze each coarse boundary within ±30 seconds using an 80 ms RMS window, a
+  fixed 20 ms hop, and 200 ms median smoothing.
+- Convert RMS to dBFS and derive a local threshold with 128-bin Otsu
+  thresholding over the 1st–99th percentile range. Both clusters must contain
+  at least 10% of frames and their medians must differ by at least 6 dB.
+- Measure high-level occupancy over 2 seconds. A value of 80% enters the high
+  state and 35% exits it; values between them retain the prior state.
+- Require 2 seconds of high state for a start or 3 seconds of low state for an
+  end. When several transitions exist, choose the one nearest the coarse
+  boundary.
+- Search around that candidate and maximize the directional median-RMS contrast
+  between the preceding and following 5 seconds. Contrasts below 3 dB are
+  rejected.
+- Retain 0.5 seconds before a start and 1.0 second after an end. Either side can
+  fail independently. Overlapping adjacent refinements revert both conflicting
+  boundaries to their coarse values.
+
+The GUI exposes the practical parameters under **Settings > Local boundary
+refinement**. The app-wide settings default to enabled and apply to the next
+analysis. Analysis JSON and `.songcut` schema v3 store the settings snapshot and
+per-boundary diagnostics under `boundary_refinement`; the algorithm version is
+`rms-otsu-boundary-v1`.
+
 This intentionally favors recall for full songs. Short humming and incidental singing should use a future short-form profile with lower minimum duration and a stronger learned model.
 
 ## Intel/OpenVINO path
@@ -78,6 +108,9 @@ high-accuracy mode.
 OpenVINO outputs: `profile`, `timestamp_source`, `model_versions`, `backend`,
 `device_requested`, `device_used`, `available_devices`, `fallbacks`,
 `backend_note`, `ffmpeg_path`, and `ffprobe_path`.
+It also records the local boundary-refinement summary, original coarse values,
+Otsu clusters, transition candidates, contrast result, roll, movement, and a
+machine-readable success or fallback reason.
 
 The GUI analysis endpoint uses schema version 3. Waveform generation is a
 separate load-time job and is not part of this analysis response or the CLI

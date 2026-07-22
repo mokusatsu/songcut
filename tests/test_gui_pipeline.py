@@ -6,6 +6,7 @@ from unittest import mock
 import numpy as np
 
 from songcut.ffmpeg_tools import FfmpegPaths
+from songcut.boundary_refiner import BoundaryRefinementResult
 from songcut.gui_pipeline import (
     WAVEFORM_MAX_POINTS,
     WAVEFORM_MIN_POINTS,
@@ -37,6 +38,7 @@ class GuiPipelineTests(unittest.TestCase):
             mock.patch("songcut.gui_pipeline.read_pcm_s16le", return_value=b"pcm") as read_pcm,
             mock.patch("songcut.gui_pipeline.pcm_bytes_to_float_stereo", return_value=samples) as pcm_to_float,
             mock.patch("songcut.gui_pipeline.compute_features") as compute_features,
+            mock.patch("songcut.gui_pipeline.refine_segments") as refine_segments,
         ):
             result = analyze_for_gui(source, guide_text="0:00 Smoke Song 0:02")
 
@@ -47,6 +49,40 @@ class GuiPipelineTests(unittest.TestCase):
         read_pcm.assert_not_called()
         pcm_to_float.assert_not_called()
         compute_features.assert_not_called()
+        refine_segments.assert_not_called()
+
+    def test_acoustic_analysis_runs_boundary_refinement_and_persists_diagnostics(self) -> None:
+        source = Path("source.mp4")
+        samples = np.zeros((32000, 2), dtype=np.float32)
+        coarse = Segment(1.0, 5.0, confidence=0.8, source="acoustic-dsp")
+        refined = Segment(0.5, 6.0, confidence=0.8, source="acoustic-dsp")
+        side = {
+            "success": True,
+            "reason": "refined",
+        }
+        diagnostic = {"start": side, "end": side, "coarse_start": 1.0, "coarse_end": 5.0}
+        summary = {"version": "rms-otsu-boundary-v1", "settings": {}, "applied_segments": 1, "refined_boundaries": 2}
+        features = mock.Mock()
+        features.times = features.smoothed_score = features.rms = np.array([], dtype=np.float32)
+        with (
+            mock.patch("songcut.gui_pipeline.find_ffmpeg", return_value=FfmpegPaths(Path("ffmpeg.exe"), Path("ffprobe.exe"))),
+            mock.patch("songcut.gui_pipeline.select_backend", return_value=BackendInfo("numpy-dsp", "auto", "CPU")),
+            mock.patch("songcut.gui_pipeline.probe_duration", return_value=8.0),
+            mock.patch("songcut.gui_pipeline.metadata_segments", return_value=[]),
+            mock.patch("songcut.gui_pipeline.read_pcm_s16le", return_value=b"pcm"),
+            mock.patch("songcut.gui_pipeline.pcm_bytes_to_float_stereo", return_value=samples),
+            mock.patch("songcut.gui_pipeline.compute_features", return_value=features),
+            mock.patch("songcut.gui_pipeline.segments_from_features", return_value=[coarse]),
+            mock.patch(
+                "songcut.gui_pipeline.refine_segments",
+                return_value=BoundaryRefinementResult([refined], [diagnostic], summary),
+            ) as refine_segments,
+        ):
+            result = analyze_for_gui(source, timestamp_source="acoustic")
+        refine_segments.assert_called_once()
+        self.assertEqual(result["raw_segments"][0]["start"], 0.5)
+        self.assertTrue(result["raw_segments"][0]["boundary_refined"])
+        self.assertEqual(result["boundary_refinement"], summary)
 
     def test_unmatched_guide_timestamp_completes_analysis_with_provisional_segment(self) -> None:
         source = Path("source.mp4")

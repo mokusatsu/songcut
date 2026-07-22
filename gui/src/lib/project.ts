@@ -136,6 +136,7 @@ export function composeProjectDocument(
           elapsed_seconds: analysis.elapsed_seconds ?? 0,
           frame_scores: analysis.frame_scores ?? [],
           raw_segments: analysis.raw_segments ?? [],
+          boundary_refinement: analysis.boundary_refinement,
         }
       : null,
     segments: state.segments,
@@ -164,6 +165,7 @@ export function analysisFromProject(document: ProjectDocumentV1): AnalysisResult
     elapsed_seconds: snapshot.elapsed_seconds,
     segments: document.segments,
     raw_segments: snapshot.raw_segments,
+    boundary_refinement: snapshot.boundary_refinement as AnalysisResult["boundary_refinement"],
     export_candidates: document.export_candidates.map(stripProjectCandidate),
     waveform: [],
     frame_scores: snapshot.frame_scores,

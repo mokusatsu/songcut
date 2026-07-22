@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .boundary_refiner import BOUNDARY_REFINER_VERSION, BoundaryRefinerConfig, refine_segments
 from .features import FeatureConfig, compute_features, pcm_bytes_to_float_stereo
 from .ffmpeg_tools import FfmpegPaths, ffprobe_json, find_ffmpeg, probe_duration, read_pcm_s16le
 from .guide import build_guided_exports, guided_exports_to_segment_dicts, parse_guide_text
@@ -65,6 +66,7 @@ def analyze_for_gui(
     device: str = "auto",
     min_segment_seconds: float = 75.0,
     threshold: float | None = None,
+    boundary_refinement: BoundaryRefinerConfig | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     ffmpeg_paths = find_ffmpeg()
@@ -74,6 +76,16 @@ def analyze_for_gui(
     selected_source = "acoustic-dsp"
     frame_scores: list[dict[str, float]] = []
     segments = []
+    boundary_config = boundary_refinement or BoundaryRefinerConfig()
+    boundary_refinement_result: dict[str, Any] = {
+        "version": BOUNDARY_REFINER_VERSION,
+        "settings": boundary_config.to_dict(),
+        "segment_count": 0,
+        "applied_segments": 0,
+        "refined_boundaries": 0,
+        "skipped_reason": "metadata-source",
+    }
+    boundary_diagnostics: list[dict[str, Any]] = []
     if timestamp_source in {"auto", "metadata"}:
         segments = metadata_segments(ffmpeg_paths.ffprobe, source)
         if segments:
@@ -94,6 +106,16 @@ def analyze_for_gui(
             pad_seconds=1.0,
         )
         segments = segments_from_features(features, profile)
+        refinement = refine_segments(
+            samples,
+            segments,
+            sample_rate=config.sample_rate,
+            media_duration=duration,
+            config=boundary_config,
+        )
+        segments = refinement.segments
+        boundary_diagnostics = refinement.segment_diagnostics
+        boundary_refinement_result = refinement.summary
         frame_scores = [
             {
                 "t": round(float(t), 3),
@@ -105,6 +127,13 @@ def analyze_for_gui(
         selected_source = "acoustic-dsp"
 
     raw_segment_items = segments_to_dicts(segments)
+    if selected_source == "video-metadata":
+        boundary_refinement_result["segment_count"] = len(segments)
+    for item, diagnostic in zip(raw_segment_items, boundary_diagnostics):
+        item["boundary_refinement"] = diagnostic
+        if diagnostic["start"]["success"] or diagnostic["end"]["success"]:
+            item["boundary_refined"] = True
+            item["flags"].append("boundary_refined")
     segment_items, export_candidates, guide_applied = build_gui_segments_and_exports(
         guide_text,
         raw_segment_items,
@@ -121,6 +150,7 @@ def analyze_for_gui(
         "model_versions": {
             "songcut": __version__,
             "singing_detector": "metadata-parser" if selected_source == "video-metadata" else "numpy-dsp-v1",
+            "boundary_refiner": BOUNDARY_REFINER_VERSION,
         },
         "backend": backend.backend,
         "device_requested": backend.device_requested,
@@ -137,6 +167,7 @@ def analyze_for_gui(
         "elapsed_seconds": round(time.perf_counter() - started, 3),
         "segments": segment_items,
         "raw_segments": raw_segment_items,
+        "boundary_refinement": boundary_refinement_result,
         "export_candidates": export_candidates,
         "frame_scores": frame_scores,
         # Kept as an empty compatibility field while GUI clients migrate to the
@@ -177,6 +208,7 @@ def guided_exports_to_export_candidates(guided: list[Any]) -> list[dict[str, Any
             "guide_line_number": item.guide_line_number,
             "guide_line": item.guide_line,
             "distance_seconds": None if item.distance_seconds is None else round(item.distance_seconds, 3),
+            **({"matched_segment_id": item.matched_segment_id} if item.matched_segment_id is not None else {}),
             "checked": True,
         }
         for item in guided

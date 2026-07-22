@@ -8,6 +8,7 @@ import unittest
 from songcut.api import (
     FFMPEG_DOWNLOAD_URL,
     AnalyzeRequest,
+    BoundaryRefinementRequest,
     ExportItem,
     ExportPlanRequest,
     ExportRequest,
@@ -35,6 +36,7 @@ from songcut.api import (
     update_job,
     waveform_job_updates,
 )
+from pydantic import ValidationError
 from fastapi import HTTPException
 from songcut.gui_pipeline import build_gui_segments_and_exports
 
@@ -46,6 +48,10 @@ class ApiJobTests(unittest.TestCase):
             _job_cancel_events.clear()
             _waveform_points.clear()
             _waveform_finished_at.clear()
+
+    def test_boundary_refinement_request_rejects_invalid_hysteresis(self) -> None:
+        with self.assertRaises(ValidationError):
+            BoundaryRefinementRequest(low_occupancy=0.5, high_occupancy=0.5)
 
     def test_analysis_starts_transcription_job_without_waiting_for_it(self) -> None:
         now = time.time()

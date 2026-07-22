@@ -1458,6 +1458,7 @@ function cleanup(processHandle, cdp) {
       "segment.remove",
       "segment.remove-unchecked",
       "segment.sort",
+      "segment.boundary-refinement-details",
       "segment.export-heading",
       "segment.check-all",
       "segment.uncheck-all",
@@ -1602,10 +1603,50 @@ function cleanup(processHandle, cdp) {
       settingsScrollArea
     );
     log("SETTINGS_SCROLL_AREA_OK", settingsScrollArea);
+    const boundarySettings = await evaluate(
+      cdp,
+      `(() => {
+        const ids = [
+          "search_radius_seconds", "rms_window_ms", "occupancy_window_seconds", "high_occupancy",
+          "low_occupancy", "start_persistence_seconds", "end_persistence_seconds",
+          "contrast_window_seconds", "pre_roll_seconds", "post_roll_seconds"
+        ].map((name) => "boundary-" + name);
+        const inputs = ids.map((id) => document.getElementById(id));
+        const enabled = [...document.querySelectorAll('.settings-checkbox input[type="checkbox"]')]
+          .find((input) => input.closest("section")?.innerText.includes("Local boundary refinement"));
+        return { present: inputs.every(Boolean), enabled: enabled?.checked ?? null, values: inputs.map((input) => input?.value) };
+      })()`
+    );
+    assertPass(boundarySettings?.present && boundarySettings.enabled === true, "Boundary refinement settings were not present or enabled by default.", boundarySettings);
+    const boundaryTooltip = await evaluate(
+      cdp,
+      `(() => {
+        const trigger = document.querySelector('label[for="boundary-search_radius_seconds"] .help-tooltip-trigger');
+        if (!trigger) return false;
+        trigger.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+        return true;
+      })()`
+    );
+    assertPass(boundaryTooltip, "Boundary refinement help trigger was not found.");
+    await waitFor(cdp, `document.querySelector('[role="tooltip"]')?.innerText.includes("Seconds searched") || false`, 5000, "boundary refinement tooltip");
+    const boundaryPostRollChanged = await evaluate(
+      cdp,
+      `(() => {
+        const input = document.getElementById("boundary-post_roll_seconds");
+        if (!input) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, "0.7");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return input.value === "0.7";
+      })()`
+    );
+    assertPass(boundaryPostRollChanged, "Boundary refinement value was not editable.");
+    log("BOUNDARY_REFINEMENT_SETTINGS_OK", boundarySettings);
     assertPass(
       await evaluate(cdp, `!document.querySelector('input[list], datalist')`),
       "Settings still uses the native language datalist."
     );
+    await evaluate(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.scrollIntoView({ block: "center" }); true`);
     await clickAt(cdp, '.language-combobox input[role="combobox"]');
     await waitFor(cdp, `document.querySelector('.language-combobox input[role="combobox"]')?.getAttribute('aria-expanded') === 'true'`, 5000, "language combobox open");
     const initialLanguageOptions = await evaluate(
