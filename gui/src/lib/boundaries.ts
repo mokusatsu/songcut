@@ -7,6 +7,22 @@ export type BoundaryTarget = {
   edge: BoundaryEdge;
 };
 
+export type BoundaryPlaybackRange = {
+  start: number;
+  stopAt: number;
+};
+
+export function boundaryNudgePlaybackRange(
+  segment: Pick<Segment, "start" | "end">,
+  edge: BoundaryEdge,
+  nudgeSeconds: number,
+): BoundaryPlaybackRange {
+  return {
+    start: edge === "start" ? segment.start : Math.max(segment.start, segment.end - nudgeSeconds * 2),
+    stopAt: segment.end,
+  };
+}
+
 export function nearestBoundaryTarget(
   segments: readonly Segment[],
   time: number,

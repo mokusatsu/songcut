@@ -84,7 +84,7 @@ import {
   sortSegmentsByStart,
   type SegmentCollection,
 } from "@/lib/segmentManagement";
-import { nearestBoundaryTarget } from "@/lib/boundaries";
+import { boundaryNudgePlaybackRange, nearestBoundaryTarget } from "@/lib/boundaries";
 import {
   applyTimestampCommentToGuide,
   backToTimestampCommentSelection,
@@ -1626,11 +1626,13 @@ export default function App(props: {
         : clamp(segment.end + direction * seconds, segment.start + MIN_SEGMENT_SECONDS, maxDuration);
 
     setSelectedSegmentId(segment.id);
-    updateSegment(
-      segment.id,
-      target.edge === "start" ? { start: nextTime, user_edited: true } : { end: nextTime, user_edited: true }
-    );
-    seek(nextTime);
+    const patch = target.edge === "start"
+      ? { start: nextTime, user_edited: true }
+      : { end: nextTime, user_edited: true };
+    const nextSegment = { ...segment, ...patch };
+    updateSegment(segment.id, patch);
+    const playbackRange = boundaryNudgePlaybackRange(nextSegment, target.edge, seconds);
+    playFrom(playbackRange.start, playbackRange.stopAt);
   }
 
   function onDrop(event: React.DragEvent<HTMLElement>) {

@@ -763,18 +763,59 @@ async function runShortcutChecks(cdp) {
   await dispatchShortcut(cdp, "KeyE");
   const nudgedRight = await shortcutState(cdp);
   assertPass(
-    nudgedRight.currentTime >= 0.48 && nudgedRight.currentTime <= 0.55,
-    "E did not nudge the nearest boundary right.",
+    nudgedRight.paused === false && nudgedRight.currentTime >= 0.48 && nudgedRight.currentTime < 1,
+    "E did not nudge the nearest boundary right and start playback from the new boundary.",
     nudgedRight
   );
   await dispatchShortcut(cdp, "KeyQ");
   const nudgedLeft = await shortcutState(cdp);
   assertPass(
-    nudgedLeft.currentTime >= 0 && nudgedLeft.currentTime <= 0.04,
-    "Q did not nudge the nearest boundary left.",
+    nudgedLeft.paused === false && nudgedLeft.currentTime >= 0 && nudgedLeft.currentTime < 0.5,
+    "Q did not nudge the nearest boundary left and restart playback from the new boundary.",
     nudgedLeft
   );
-  log("SHORTCUT_BOUNDARY_NUDGE_OK", { nudgedRight, nudgedLeft });
+  const nudgeStoppedAtEnd = await waitFor(
+    cdp,
+    `(() => { const video = document.querySelector("video"); return video?.paused && video.currentTime > 1 ? { currentTime: video.currentTime } : false; })()`,
+    10_000,
+    "boundary nudge playback stop"
+  );
+  await dispatchShortcut(cdp, "KeyQ");
+  const shortenedEnd = await shortcutState(cdp);
+  assertPass(
+    shortenedEnd.paused === false && shortenedEnd.currentTime >= 0.45 && shortenedEnd.currentTime < 1,
+    "Q did not shorten the end boundary and preview from twice the nudge width before it.",
+    shortenedEnd
+  );
+  const shortenedEndStop = await waitFor(
+    cdp,
+    `(() => { const video = document.querySelector("video"); return video?.paused && video.currentTime > 1.4 && video.currentTime < 1.7 ? { currentTime: video.currentTime } : false; })()`,
+    10_000,
+    "shortened end boundary stop"
+  );
+  await dispatchShortcut(cdp, "Space");
+  await dispatchShortcut(cdp, "KeyE");
+  const extendedEnd = await shortcutState(cdp);
+  assertPass(
+    extendedEnd.paused === false && extendedEnd.currentTime >= 0.95 && extendedEnd.currentTime < 1.5,
+    "E did not extend the end boundary and restart its preview while playback was active.",
+    extendedEnd
+  );
+  const extendedEndStop = await waitFor(
+    cdp,
+    `(() => { const video = document.querySelector("video"); return video?.paused && video.currentTime > 1.9 && video.currentTime < 2.2 ? { currentTime: video.currentTime } : false; })()`,
+    10_000,
+    "extended end boundary stop"
+  );
+  log("SHORTCUT_BOUNDARY_NUDGE_OK", {
+    nudgedRight,
+    nudgedLeft,
+    nudgeStoppedAtEnd,
+    shortenedEnd,
+    shortenedEndStop,
+    extendedEnd,
+    extendedEndStop
+  });
 
   await dispatchShortcut(cdp, "KeyC");
   const zoom200 = await shortcutState(cdp);

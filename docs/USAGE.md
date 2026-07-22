@@ -159,6 +159,10 @@ chooses the nearer start or end boundary of the currently selected segment
 based on the current playback position. A closer boundary belonging to another
 segment is not adjusted. The default is 0.5 seconds, and the value is restored
 the next time the application starts.
+Nudging the start plays from the new start to the segment end. Nudging the end
+plays from twice the nudge width before the new end (clamped to the segment
+start) and stops at the new end. This preview starts whether playback was
+previously playing or paused.
 
 ## Timeline Zoom
 

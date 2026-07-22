@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nearestBoundaryTarget } from "./boundaries";
+import { boundaryNudgePlaybackRange, nearestBoundaryTarget } from "./boundaries";
 import type { Segment } from "../types";
 
 const segments: Segment[] = [
@@ -61,5 +61,28 @@ describe("nearestBoundaryTarget", () => {
 
   it("returns null when there are no segments", () => {
     expect(nearestBoundaryTarget([], 10, "selected")).toBeNull();
+  });
+});
+
+describe("boundaryNudgePlaybackRange", () => {
+  it("plays a start nudge from the new start through the segment end", () => {
+    expect(boundaryNudgePlaybackRange({ start: 4.5, end: 10 }, "start", 0.5)).toEqual({
+      start: 4.5,
+      stopAt: 10,
+    });
+  });
+
+  it("plays an end nudge from twice the nudge width before the new end", () => {
+    expect(boundaryNudgePlaybackRange({ start: 4, end: 10.5 }, "end", 0.5)).toEqual({
+      start: 9.5,
+      stopAt: 10.5,
+    });
+  });
+
+  it("clamps an end-nudge preview to the segment start", () => {
+    expect(boundaryNudgePlaybackRange({ start: 9.8, end: 10 }, "end", 0.5)).toEqual({
+      start: 9.8,
+      stopAt: 10,
+    });
   });
 });
