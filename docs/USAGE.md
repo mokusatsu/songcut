@@ -48,6 +48,12 @@ Click **Analyze** to start detecting singing segments. When timestamp guide text
 is provided, the start time of each segment is taken from the timestamps and
 its end time is detected automatically.
 
+For acoustic detections, local boundary refinement is enabled by default. It
+automatically aligns the start and end of each singing segment to local level
+changes. Enable, disable, or tune it under **Settings > Local boundary
+refinement**. To inspect the result, select a segment and open **Segment >
+Boundary Refinement Details...**.
+
 Waveform generation starts independently when a video is loaded. Completed
 parts appear from left to right while generation continues, so seeking becomes
 available before analysis finishes. A saved waveform is reused when the same
@@ -159,10 +165,8 @@ chooses the nearer start or end boundary of the currently selected segment
 based on the current playback position. A closer boundary belonging to another
 segment is not adjusted. The default is 0.5 seconds, and the value is restored
 the next time the application starts.
-Nudging the start plays from the new start to the segment end. Nudging the end
-plays from twice the nudge width before the new end (clamped to the segment
-start) and stops at the new end. This preview starts whether playback was
-previously playing or paused.
+After a nudge, songcut automatically previews the changed boundary so you can
+check the result immediately.
 
 ## Timeline Zoom
 
@@ -210,7 +214,15 @@ In Export Review, customize filenames with `{index}`, `{title}`, `{id}`,
 `{start}`, and `{end}` placeholders. The default is `{index}_{title}`, and the
 preview shows the actual sanitized filenames before export. The same template
 is available in **Settings > Export** and is saved separately in each `.songcut`
-project. Enable **Create a
+project.
+
+Video export uses smart rendering by default. Reusable video portions are
+copied directly while only clip boundaries are re-encoded, reducing export time
+without needlessly re-encoding the whole clip. Choose **Check smart rendering
+details** to inspect the planned mode for each clip. Unsupported sources and
+clips without a reusable portion automatically fall back to a full re-encode.
+
+Enable **Create a
 "<source>" folder inside the selected output folder** to place clips and the
 optional timestamp-comment file in a source-video-named child folder. The folder
 choice is an application-wide preference restored the next time the application starts.
