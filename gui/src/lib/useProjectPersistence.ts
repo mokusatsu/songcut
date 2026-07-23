@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectDocumentV1, ProjectSaveStatus, RecoverySnapshot } from "@/lib/project";
 
-export function useProjectPersistence(projectPath: string, document: ProjectDocumentV1 | null) {
+export function useProjectPersistence(
+  projectPath: string,
+  document: ProjectDocumentV1 | null,
+  autoSaveSuspended = false
+) {
   const documentRef = useRef(document);
   const projectPathRef = useRef(projectPath);
   const sessionIdRef = useRef(crypto.randomUUID());
@@ -76,16 +80,17 @@ export function useProjectPersistence(projectPath: string, document: ProjectDocu
       setStatus("idle");
       return;
     }
+    if (autoSaveSuspended) return;
     const timer = window.setTimeout(() => void saveRecoveryNow().catch(() => undefined), 250);
     return () => window.clearTimeout(timer);
-  }, [document, saveRecoveryNow]);
+  }, [autoSaveSuspended, document, saveRecoveryNow]);
 
   useEffect(() => {
-    if (!document || !projectPath || document.revision === lastSavedRevisionRef.current) return;
+    if (autoSaveSuspended || !document || !projectPath || document.revision === lastSavedRevisionRef.current) return;
     setStatus("saving");
     const timer = window.setTimeout(() => void saveSidecarNow().catch(() => undefined), 750);
     return () => window.clearTimeout(timer);
-  }, [document?.revision, projectPath, saveSidecarNow]);
+  }, [autoSaveSuspended, document?.revision, projectPath, saveSidecarNow]);
 
   const clearRecovery = useCallback(async () => {
     await window.songcut.clearRecovery();

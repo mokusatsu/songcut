@@ -405,7 +405,11 @@ export default function App(props: {
       projectOperation
     ]
   );
-  const persistence = useProjectPersistence(projectReadOnly ? "" : projectPath, projectReadOnly ? null : projectDocument);
+  const persistence = useProjectPersistence(
+    projectReadOnly ? "" : projectPath,
+    projectReadOnly ? null : projectDocument,
+    handleEditing
+  );
   const transcriptStale = useMemo(
     () => segments.some((segment) => transcriptSettingsAreStale(segment, whisperSettings)),
     [segments, whisperSettings]
@@ -1336,6 +1340,10 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  function previewSegmentUpdate(id: string, patch: Partial<Segment>) {
+    setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
+  }
+
   function addNewSegment() {
     if (!projectBase) return;
     const pair = createManualSegment(segments, currentTime, duration, tr("segments.newTitle"));
@@ -2047,7 +2055,8 @@ export default function App(props: {
           onScrub={scratchPreview}
           onSeekingChange={setWaveformSeeking}
           onHandleEditingChange={setHandleEditing}
-          onChange={(patch) => selectedSegment && updateSegment(selectedSegment.id, patch)}
+          onChange={(patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch)}
+          onChangeCommitted={markProjectChanged}
         />
         <SegmentList
           segments={segments}
@@ -2641,6 +2650,7 @@ function TimelineStack(props: {
   onSeekingChange: (seeking: boolean) => void;
   onHandleEditingChange: (editing: boolean) => void;
   onChange: (patch: Partial<Segment>) => void;
+  onChangeCommitted: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const handledFocusRequestRef = useRef(0);
@@ -2745,6 +2755,7 @@ function TimelineStack(props: {
           width={width}
           viewportRef={viewportRef}
           onChange={props.onChange}
+          onChangeCommitted={props.onChangeCommitted}
           onEditingChange={props.onHandleEditingChange}
         />
       </div>
@@ -3053,6 +3064,7 @@ function SegmentTimeline(props: {
   width: number;
   viewportRef: React.RefObject<HTMLDivElement>;
   onChange: (patch: Partial<Segment>) => void;
+  onChangeCommitted: () => void;
   onEditingChange: (editing: boolean) => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
@@ -3073,6 +3085,7 @@ function SegmentTimeline(props: {
               viewportRef={props.viewportRef}
               onEditingChange={props.onEditingChange}
               onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
+              onChangeCommitted={props.onChangeCommitted}
             />
             <DragHandle
               left={endX}
@@ -3082,6 +3095,7 @@ function SegmentTimeline(props: {
               viewportRef={props.viewportRef}
               onEditingChange={props.onEditingChange}
               onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
+              onChangeCommitted={props.onChangeCommitted}
             />
           </>
         ) : null}
@@ -3098,6 +3112,7 @@ function DragHandle(props: {
   viewportRef: React.RefObject<HTMLDivElement>;
   onEditingChange: (editing: boolean) => void;
   onChange: (time: number) => void;
+  onChangeCommitted: () => void;
 }) {
   const pointerIdRef = useRef<number | null>(null);
   const mouseDraggingRef = useRef(false);
@@ -3114,6 +3129,7 @@ function DragHandle(props: {
     }
     pointerIdRef.current = null;
     props.onEditingChange(false);
+    props.onChangeCommitted();
   };
 
   return (
@@ -3143,6 +3159,7 @@ function DragHandle(props: {
         finishDrag(event.currentTarget, event.pointerId);
       }}
       onMouseDown={(event) => {
+        if (pointerIdRef.current !== null) return;
         event.preventDefault();
         event.stopPropagation();
         mouseDraggingRef.current = true;
@@ -3155,6 +3172,7 @@ function DragHandle(props: {
         const up = () => {
           mouseDraggingRef.current = false;
           props.onEditingChange(false);
+          props.onChangeCommitted();
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
         };
