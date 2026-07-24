@@ -122,8 +122,70 @@ export type WhisperSettings = {
   device: InferenceDevice;
 };
 
+export type ProjectSubtitleStyle = {
+  font_name: string;
+  font_size: number;
+  primary_color: string;
+  outline_color: string;
+  background_color: string;
+  bold: boolean;
+  italic: boolean;
+  outline: number;
+  shadow: number;
+  alignment: number;
+  margin_l: number;
+  margin_r: number;
+  margin_v: number;
+};
+
+export type ProjectLyricsSegment = {
+  id: string;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: "lyrics" | "title" | "manual";
+  low_confidence_outlier: boolean;
+  user_edited: boolean;
+  render_cache?: {
+    signature: string;
+    png_base64: string;
+    width: number;
+    height: number;
+  };
+};
+
+export type ProjectLyricsLane = {
+  id: string;
+  name: string;
+  style: ProjectSubtitleStyle;
+  effect?: {
+    name: string;
+    start_duration_ms: number;
+    end_duration_ms: number;
+    params: Record<string, string | number>;
+  };
+  segments: ProjectLyricsSegment[];
+};
+
+export type ProjectSubtitleState = {
+  lanes: ProjectLyricsLane[];
+  active_lane_id: string;
+  selected_segment_id: string | null;
+  tempo_bpm: number;
+  beat_times: number[];
+  rhythm_grid: Array<{
+    time: number;
+    grid: "beat" | "half-beat" | "quarter-beat";
+    attraction_radius: number;
+    grid_penalty: number;
+  }>;
+  beat_warning: string | null;
+  confidence_statistics: Record<string, unknown> | null;
+};
+
 export type ProjectOperation = {
-  kind: "analysis" | "transcription" | "export";
+  kind: "analysis" | "transcription" | "export" | "lyrics-analysis" | "subtitle-export";
   status: "running" | "interrupted";
   settings?: WhisperSettings;
   pending_segment_ids?: string[];
@@ -136,6 +198,7 @@ export type ProjectDocumentV1 = {
   revision: number;
   created_at: string;
   updated_at: string;
+  mode?: "cut" | "sub";
   source: {
     absolute_path: string;
     relative_path: string;
@@ -176,6 +239,7 @@ export type ProjectDocumentV1 = {
     zoom_index: number;
   };
   operation: ProjectOperation;
+  subtitle?: ProjectSubtitleState;
 };
 
 export type SourceIdentity = {
@@ -213,8 +277,8 @@ export type RecoverySnapshot = {
 const inferenceDevices = new Set<InferenceDevice>(["auto", "npu", "gpu", "cpu"]);
 const whisperModels = new Set<WhisperModelKey>(["tiny", "base", "small"]);
 
-export function sidecarPathForVideo(videoPath: string) {
-  return `${videoPath}.songcut`;
+export function sidecarPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
+  return mode === "sub" ? `${videoPath}.sub.songcut` : `${videoPath}.songcut`;
 }
 
 export function parseProjectText(text: string): ProjectDocumentV1 {
@@ -241,6 +305,9 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
   nonNegativeInteger(root.revision, "revision");
   dateValue(root.created_at, "created_at");
   dateValue(root.updated_at, "updated_at");
+  if (root.mode !== undefined && root.mode !== "cut" && root.mode !== "sub") {
+    throw new Error("Invalid project mode.");
+  }
 
   const source = objectValue(root.source, "source");
   stringValue(source.absolute_path, "source.absolute_path");
@@ -320,6 +387,8 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
   nonNegativeFinite(view.current_time, "view_state.current_time");
   nonNegativeInteger(view.zoom_index, "view_state.zoom_index");
   validateOperation(root.operation);
+  if (root.subtitle !== undefined) validateSubtitleState(root.subtitle, "subtitle");
+  if (root.mode === "sub" && root.subtitle === undefined) throw new Error("Sub project is missing subtitle state.");
 }
 
 export function assertRecoverySnapshot(value: unknown): asserts value is RecoverySnapshot {
@@ -378,6 +447,106 @@ function validateSegments(value: unknown, label: string, requireSorted: boolean)
     if (row.filename_stem !== undefined) stringValue(row.filename_stem, `${label}[${index}].filename_stem`, true);
     if (row.transcript !== undefined) validateTranscript(row.transcript, `${label}[${index}].transcript`, id);
   });
+}
+
+function validateSubtitleState(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  const lanes = arrayValue(row.lanes, `${label}.lanes`);
+  if (lanes.length < 1 || lanes.length > 3) throw new Error(`${label}.lanes must contain 1 through 3 lanes.`);
+  const laneIds = new Set<string>();
+  const segmentIds = new Set<string>();
+  lanes.forEach((value, laneIndex) => {
+    const lane = objectValue(value, `${label}.lanes[${laneIndex}]`);
+    const laneId = stringValue(lane.id, `${label}.lanes[${laneIndex}].id`);
+    if (laneIds.has(laneId)) throw new Error(`Duplicate subtitle lane id: ${laneId}`);
+    laneIds.add(laneId);
+    stringValue(lane.name, `${label}.lanes[${laneIndex}].name`, true);
+    validateSubtitleStyle(lane.style, `${label}.lanes[${laneIndex}].style`);
+    if (lane.effect !== undefined) validateSubtitleEffect(lane.effect, `${label}.lanes[${laneIndex}].effect`);
+    let previousEnd = -1;
+    arrayValue(lane.segments, `${label}.lanes[${laneIndex}].segments`).forEach((value, segmentIndex) => {
+      const segmentLabel = `${label}.lanes[${laneIndex}].segments[${segmentIndex}]`;
+      const segment = objectValue(value, segmentLabel);
+      const id = stringValue(segment.id, `${segmentLabel}.id`);
+      if (segmentIds.has(id)) throw new Error(`Duplicate subtitle segment id: ${id}`);
+      segmentIds.add(id);
+      stringValue(segment.text, `${segmentLabel}.text`, true);
+      const start = nonNegativeFinite(segment.start, `${segmentLabel}.start`);
+      const end = nonNegativeFinite(segment.end, `${segmentLabel}.end`);
+      if (end <= start) throw new Error(`Invalid subtitle segment range: ${id}`);
+      if (start < previousEnd - 1e-6) throw new Error(`Overlapping subtitle segments in lane: ${laneId}`);
+      previousEnd = end;
+      finiteValue(segment.confidence, `${segmentLabel}.confidence`);
+      if (segment.source !== "lyrics" && segment.source !== "title" && segment.source !== "manual") {
+        throw new Error(`Invalid ${segmentLabel}.source.`);
+      }
+      booleanValue(segment.low_confidence_outlier, `${segmentLabel}.low_confidence_outlier`);
+      booleanValue(segment.user_edited, `${segmentLabel}.user_edited`);
+      if (segment.render_cache !== undefined) {
+        const cache = objectValue(segment.render_cache, `${segmentLabel}.render_cache`);
+        stringValue(cache.signature, `${segmentLabel}.render_cache.signature`);
+        stringValue(cache.png_base64, `${segmentLabel}.render_cache.png_base64`);
+        const width = nonNegativeInteger(cache.width, `${segmentLabel}.render_cache.width`);
+        const height = nonNegativeInteger(cache.height, `${segmentLabel}.render_cache.height`);
+        if (width < 1 || height < 1) throw new Error(`${segmentLabel}.render_cache dimensions must be positive.`);
+      }
+    });
+  });
+  const activeLaneId = stringValue(row.active_lane_id, `${label}.active_lane_id`);
+  if (!laneIds.has(activeLaneId)) throw new Error(`Unknown active subtitle lane: ${activeLaneId}`);
+  if (row.selected_segment_id !== null) {
+    const selectedId = stringValue(row.selected_segment_id, `${label}.selected_segment_id`);
+    if (!segmentIds.has(selectedId)) throw new Error(`Unknown selected subtitle segment: ${selectedId}`);
+  }
+  nonNegativeFinite(row.tempo_bpm, `${label}.tempo_bpm`);
+  arrayValue(row.beat_times, `${label}.beat_times`).forEach((time, index) =>
+    nonNegativeFinite(time, `${label}.beat_times[${index}]`)
+  );
+  let priorGridTime = -1;
+  arrayValue(row.rhythm_grid, `${label}.rhythm_grid`).forEach((value, index) => {
+    const point = objectValue(value, `${label}.rhythm_grid[${index}]`);
+    const time = nonNegativeFinite(point.time, `${label}.rhythm_grid[${index}].time`);
+    if (time < priorGridTime) throw new Error(`${label}.rhythm_grid must be sorted.`);
+    priorGridTime = time;
+    if (point.grid !== "beat" && point.grid !== "half-beat" && point.grid !== "quarter-beat") {
+      throw new Error(`Invalid ${label}.rhythm_grid[${index}].grid.`);
+    }
+    nonNegativeFinite(point.attraction_radius, `${label}.rhythm_grid[${index}].attraction_radius`);
+    nonNegativeFinite(point.grid_penalty, `${label}.rhythm_grid[${index}].grid_penalty`);
+  });
+  if (row.beat_warning !== null) stringValue(row.beat_warning, `${label}.beat_warning`, true);
+  if (row.confidence_statistics !== null) objectValue(row.confidence_statistics, `${label}.confidence_statistics`);
+}
+
+function validateSubtitleEffect(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  stringValue(row.name, `${label}.name`);
+  nonNegativeInteger(row.start_duration_ms, `${label}.start_duration_ms`);
+  nonNegativeInteger(row.end_duration_ms, `${label}.end_duration_ms`);
+  const params = objectValue(row.params, `${label}.params`);
+  Object.entries(params).forEach(([name, parameter]) => {
+    if (typeof parameter !== "string" && (typeof parameter !== "number" || !Number.isFinite(parameter))) {
+      throw new Error(`${label}.params.${name} must be a finite number or string.`);
+    }
+  });
+}
+
+function validateSubtitleStyle(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  stringValue(row.font_name, `${label}.font_name`);
+  nonNegativeFinite(row.font_size, `${label}.font_size`);
+  stringValue(row.primary_color, `${label}.primary_color`);
+  stringValue(row.outline_color, `${label}.outline_color`);
+  stringValue(row.background_color, `${label}.background_color`);
+  booleanValue(row.bold, `${label}.bold`);
+  booleanValue(row.italic, `${label}.italic`);
+  nonNegativeFinite(row.outline, `${label}.outline`);
+  nonNegativeFinite(row.shadow, `${label}.shadow`);
+  const alignment = nonNegativeInteger(row.alignment, `${label}.alignment`);
+  if (alignment < 1 || alignment > 9) throw new Error(`${label}.alignment must be from 1 through 9.`);
+  nonNegativeInteger(row.margin_l, `${label}.margin_l`);
+  nonNegativeInteger(row.margin_r, `${label}.margin_r`);
+  nonNegativeInteger(row.margin_v, `${label}.margin_v`);
 }
 
 function validateTranscript(value: unknown, label: string, segmentId: string) {

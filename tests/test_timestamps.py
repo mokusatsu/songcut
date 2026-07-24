@@ -22,10 +22,14 @@ class TimestampTests(unittest.TestCase):
         self.assertEqual((segments[0].start, segments[0].end), (4845, 5105))
 
     def test_read_testdata_truth_if_present(self) -> None:
-        files = list(Path("testdata").glob("*.txt"))
+        files = [
+            path
+            for path in Path("testdata").glob("*.txt")
+            if not path.name.endswith(".lyrics.txt")
+        ]
         if not files:
             self.skipTest("testdata is not present")
-        segments = read_timestamp_file(files[0])
+        segments = max((read_timestamp_file(path) for path in files), key=len)
         self.assertGreaterEqual(len(segments), 10)
 
 

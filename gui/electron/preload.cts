@@ -2,6 +2,7 @@ import { clipboard, contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("songcut", {
   apiBaseUrl: () => ipcRenderer.invoke("songcut:apiBaseUrl") as Promise<string>,
+  listSystemFonts: () => ipcRenderer.invoke("songcut:listSystemFonts") as Promise<string[]>,
   getLocaleSettings: () => ipcRenderer.invoke("songcut:get-locale-settings"),
   setLocalePreference: (preference: unknown) => ipcRenderer.invoke("songcut:set-locale-preference", preference),
   onCloseRequested: (callback: () => void) => {
@@ -27,7 +28,8 @@ contextBridge.exposeInMainWorld("songcut", {
   selectVideo: () => ipcRenderer.invoke("songcut:selectVideo") as Promise<string | null>,
   openProject: () => ipcRenderer.invoke("songcut:openProject"),
   loadProject: (projectPath: string) => ipcRenderer.invoke("songcut:loadProject", projectPath),
-  projectPathForVideo: (videoPath: string) => ipcRenderer.invoke("songcut:projectPathForVideo", videoPath) as Promise<string>,
+  projectPathForVideo: (videoPath: string, mode: "cut" | "sub" = "cut") =>
+    ipcRenderer.invoke("songcut:projectPathForVideo", videoPath, mode) as Promise<string>,
   saveProject: (projectPath: string, document: unknown) => ipcRenderer.invoke("songcut:saveProject", projectPath, document),
   loadRecovery: () => ipcRenderer.invoke("songcut:loadRecovery"),
   saveRecovery: (snapshot: unknown) => ipcRenderer.invoke("songcut:saveRecovery", snapshot) as Promise<void>,

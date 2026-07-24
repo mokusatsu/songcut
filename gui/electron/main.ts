@@ -19,6 +19,7 @@ import {
 } from "./project-store.js";
 import type { ProjectDocumentV1, RecoverySnapshot, SourceIdentity, WhisperModelKey } from "./project-schema.js";
 import { initializeMainI18n, mainI18n } from "./i18n.js";
+import { listSystemFonts } from "./system-fonts.js";
 import {
   loadLocalePreference,
   normalizeUiLanguage,
@@ -206,6 +207,7 @@ app.on("before-quit", () => {
 });
 
 ipcMain.handle("songcut:apiBaseUrl", () => apiBaseUrl);
+ipcMain.handle("songcut:listSystemFonts", () => listSystemFonts());
 ipcMain.handle("songcut:get-locale-settings", () => ({ language: uiLanguage, preference: localePreference }));
 ipcMain.handle("songcut:set-locale-preference", async (_event, value: unknown) => {
   localePreference = normalizeUiLanguagePreference(value);
@@ -248,7 +250,10 @@ ipcMain.handle("songcut:openProject", async () => {
 });
 
 ipcMain.handle("songcut:loadProject", (_event, projectPath: string) => loadProject(projectPath));
-ipcMain.handle("songcut:projectPathForVideo", (_event, videoPath: string) => projectPathForVideo(videoPath));
+ipcMain.handle(
+  "songcut:projectPathForVideo",
+  (_event, videoPath: string, mode: "cut" | "sub" = "cut") => projectPathForVideo(videoPath, mode)
+);
 ipcMain.handle(
   "songcut:saveProject",
   (_event, projectPath: string, document: ProjectDocumentV1) => saveProject(projectPath, document)

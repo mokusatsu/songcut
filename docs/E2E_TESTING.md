@@ -120,6 +120,26 @@ node packaging\e2e_scratch_proxy.js
 既定ではCDPポート9231と9232を使います。最後の成功マーカーは
 `SCRATCH_PROXY_E2E_OK` です。
 
+### Subモード実データE2E
+
+```powershell
+node packaging\e2e_sub_mode.js
+```
+
+`testdata\02_「星の消えた夜に」 - Aimer.webm` と対応する
+`.lyrics.txt` を `out\e2e-sub-mode` へコピーし、実Whisper Smallモデルを使って
+次を検証します。
+
+- Cut/Subタブ切替と `.sub.songcut` の自動作成
+- 歌詞貼り付け、実音声との整列、拍グリッド、タイトル用左上lane
+- confidence統計と低い外れ値の警告色
+- 再生位置に応じた動画上字幕オーバーレイ
+- 3×3の9象限ボタンによる第3タイムライン追加
+- lane別SRT/`.srt.style` と全尺字幕焼き込み動画
+
+最後の成功マーカーは `SUB_E2E_OK` です。成果物とログは
+`out\e2e-sub-mode` 以下に保存されます。
+
 ## 実行環境の上書き
 
 | 環境変数 | 既定値 | 用途 |
@@ -128,6 +148,7 @@ node packaging\e2e_scratch_proxy.js
 | `SONGCUT_E2E_DEBUG_PORT` | `9230` | スモークE2EのCDPポート |
 | `SONGCUT_E2E_AAC_PORT` | `9231` | AACスクラッチE2EのCDPポート |
 | `SONGCUT_E2E_OPUS_PORT` | `9232` | OpusスクラッチE2EのCDPポート |
+| `SONGCUT_E2E_SUB_PORT` | `9240` | Subモード実データE2EのCDPポート |
 | `SONGCUT_E2E_SEGMENT_MENU_ONLY` | 未設定 | Segment重点モードを有効にする |
 | `SONGCUT_E2E_EXPORT_NAMING_ONLY` | 未設定 | ファイル名設定重点モードを有効にする |
 

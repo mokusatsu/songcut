@@ -1,0 +1,220 @@
+﻿[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Noto Sans JP Thin,64,&H00FFFFFF,&H00FFFFFF,&H00302010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,5,0,0,0,1
+Style: Title,Noto Sans JP Thin,24,&H00FFD742,&H00FFD742,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,0,0,7,40,40,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 10,0:00:00.00,0:00:04.00,Title,,0,0,0,,01  カットイン／カットアウト
+Dialogue: 0,0:00:00.00,0:00:04.00,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 10,0:00:04.00,0:00:08.00,Title,,0,0,0,,02  通常フェードイン／フェードアウト
+Dialogue: 0,0:00:04.00,0:00:08.00,Default,,0,0,0,,{\an5\pos(640,360)\fad(650,650)}字幕テキスト
+Dialogue: 10,0:00:08.00,0:00:12.00,Title,,0,0,0,,03  多段階フェード
+Dialogue: 0,0:00:08.00,0:00:12.00,Default,,0,0,0,,{\an5\pos(640,360)\fade(255,0,255,0,650,3350,4000)}字幕テキスト
+Dialogue: 10,0:00:12.00,0:00:16.00,Title,,0,0,0,,04  透明度アニメーション
+Dialogue: 0,0:00:12.00,0:00:16.00,Default,,0,0,0,,{\an5\pos(640,360)\alpha&HFF&\t(0,650,\alpha&H00&)\t(3350,4000,\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:16.00,0:00:20.00,Title,,0,0,0,,05  ズームイン／ズームアウト
+Dialogue: 0,0:00:16.00,0:00:20.00,Default,,0,0,0,,{\an5\pos(640,360)\fscx0\fscy0\alpha&HFF&\t(0,650,\fscx100\fscy100\alpha&H00&)\t(3350,4000,\fscx0\fscy0\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:20.00,0:00:24.00,Title,,0,0,0,,06  ポップイン／ポップアウト
+Dialogue: 0,0:00:20.00,0:00:24.00,Default,,0,0,0,,{\an5\pos(640,360)\fscx0\fscy0\alpha&HFF&\t(0,403,\fscx122\fscy122\alpha&H00&)\t(403,650,\fscx100\fscy100)\t(3350,3577,\fscx122\fscy122)\t(3577,4000,\fscx0\fscy0\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:24.00,0:00:28.00,Title,,0,0,0,,07  バウンス表示
+Dialogue: 0,0:00:24.00,0:00:28.00,Default,,0,0,0,,{\an5\pos(640,360)\fscx0\fscy0\alpha&HFF&\t(0,221,\fscx128\fscy128\alpha&H00&)\t(221,364,\fscx88\fscy88)\t(364,494,\fscx108\fscy108)\t(494,650,\fscx100\fscy100)\t(3350,3512,\fscx108\fscy108)\t(3512,3662,\fscx88\fscy88)\t(3662,4000,\fscx0\fscy0\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:28.00,0:00:32.00,Title,,0,0,0,,08  スライドイン／スライドアウト
+Dialogue: 0,0:00:28.00,0:00:28.65,Default,,0,0,0,,{\an5\move(-240,360,640,360,0,650)}字幕テキスト
+Dialogue: 0,0:00:28.65,0:00:31.35,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:00:31.35,0:00:32.00,Default,,0,0,0,,{\an5\move(640,360,1520,360,0,650)}字幕テキスト
+Dialogue: 10,0:00:32.00,0:00:36.00,Title,,0,0,0,,09  ワイプ表示／マスク消去
+Dialogue: 0,0:00:32.00,0:00:36.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(349,285,350,435)\t(0,650,\clip(350,285,930,435))\t(3350,4000,\clip(929,285,930,435))}字幕テキスト
+Dialogue: 10,0:00:36.00,0:00:40.00,Title,,0,0,0,,10  ブラーイン／ブラーアウト
+Dialogue: 0,0:00:36.00,0:00:40.00,Default,,0,0,0,,{\an5\pos(640,360)\blur14\alpha&HFF&\t(0,650,\blur0\alpha&H00&)\t(3350,4000,\blur14\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:40.00,0:00:44.00,Title,,0,0,0,,11  回転イン／回転アウト
+Dialogue: 0,0:00:40.00,0:00:44.00,Default,,0,0,0,,{\an5\pos(640,360)\frz-120\fscx0\fscy0\alpha&HFF&\t(0,650,\frz0\fscx100\fscy100\alpha&H00&)\t(3350,4000,\frz120\fscx0\fscy0\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:44.00,0:00:48.00,Title,,0,0,0,,12  3Dフリップイン／フリップアウト
+Dialogue: 0,0:00:44.00,0:00:48.00,Default,,0,0,0,,{\an5\pos(640,360)\fry90\fscx5\alpha&HFF&\t(0,650,\fry0\fscx100\alpha&H00&)\t(3350,4000,\fry-90\fscx5\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:48.00,0:00:52.00,Title,,0,0,0,,13  文字間隔を広げて出現／収束して消失
+Dialogue: 0,0:00:48.00,0:00:52.00,Default,,0,0,0,,{\an5\pos(640,360)\fsp42\alpha&HFF&\t(0,650,\fsp0\alpha&H00&)\t(3350,4000,\fsp42\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:52.00,0:00:56.00,Title,,0,0,0,,14  縦伸び／横伸び表示
+Dialogue: 0,0:00:52.00,0:00:56.00,Default,,0,0,0,,{\an5\pos(640,360)\fscx0\fscy100\alpha&HFF&\t(0,650,\fscx100\fscy100\alpha&H00&)\t(3350,4000,\fscx0\fscy100\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:00:56.00,0:01:00.00,Title,,0,0,0,,15  輪郭から塗りが現れる
+Dialogue: 0,0:00:56.00,0:01:00.00,Default,,0,0,0,,{\an5\pos(640,360)\bord4\1a&HFF&\3a&H00&\t(0,650,\1a&H00&)\t(3350,3805,\1a&HFF&)\t(3805,4000,\3a&HFF&)}字幕テキスト
+Dialogue: 10,0:01:00.00,0:01:04.00,Title,,0,0,0,,16  グローイン／発光しながら消失
+Dialogue: 0,0:01:00.00,0:01:04.00,Default,,0,0,0,,{\an5\pos(640,360)\bord16\blur16\1a&HFF&\3c&HFFD742&\3a&H20&\t(0,650,\bord3\blur1\3a&H80&)\t(3350,4000,\bord24\blur24\3a&HFF&)}字幕テキスト
+Dialogue: 1,0:01:00.00,0:01:04.00,Default,,0,0,0,,{\an5\pos(640,360)\fad(650,650)}字幕テキスト
+Dialogue: 10,0:01:04.00,0:01:08.00,Title,,0,0,0,,17  点滅／フリッカー
+Dialogue: 0,0:01:04.09,0:01:04.18,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:04.27,0:01:04.34,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:04.40,0:01:04.52,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:04.58,0:01:04.65,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:04.65,0:01:07.35,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:07.35,0:01:07.48,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:07.60,0:01:07.68,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:07.74,0:01:07.80,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:07.91,0:01:07.97,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 10,0:01:08.00,0:01:12.00,Title,,0,0,0,,18  タイプライター表示
+Dialogue: 0,0:01:08.00,0:01:08.11,Default,,0,0,0,,{\an5\pos(640,360)}字
+Dialogue: 0,0:01:08.11,0:01:08.22,Default,,0,0,0,,{\an5\pos(640,360)}字幕
+Dialogue: 0,0:01:08.22,0:01:08.33,Default,,0,0,0,,{\an5\pos(640,360)}字幕テ
+Dialogue: 0,0:01:08.33,0:01:08.43,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキ
+Dialogue: 0,0:01:08.43,0:01:08.54,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキス
+Dialogue: 0,0:01:08.54,0:01:08.65,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:08.65,0:01:11.35,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:11.35,0:01:11.46,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 0,0:01:11.46,0:01:11.57,Default,,0,0,0,,{\an5\pos(640,360)}幕テキスト
+Dialogue: 0,0:01:11.57,0:01:11.68,Default,,0,0,0,,{\an5\pos(640,360)}テキスト
+Dialogue: 0,0:01:11.68,0:01:11.78,Default,,0,0,0,,{\an5\pos(640,360)}キスト
+Dialogue: 0,0:01:11.78,0:01:11.89,Default,,0,0,0,,{\an5\pos(640,360)}スト
+Dialogue: 0,0:01:11.89,0:01:12.00,Default,,0,0,0,,{\an5\pos(640,360)}ト
+Dialogue: 10,0:01:12.00,0:01:16.00,Title,,0,0,0,,19  カラオケ・スイープ表示
+Dialogue: 0,0:01:12.00,0:01:16.00,Default,,0,0,0,,{\an5\pos(640,360)\2a&HFF&\kf65\clip(350,285,930,435)\t(3350,4000,\clip(929,285,930,435))}字幕テキスト
+Dialogue: 10,0:01:16.00,0:01:20.00,Title,,0,0,0,,20  スキャンライン表示
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,285,374,435)\alpha&HFF&\t(0,70,\alpha&H00&)\t(3350,3420,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(374,285,398,435)\alpha&HFF&\t(27,97,\alpha&H00&)\t(3377,3447,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,285,422,435)\alpha&HFF&\t(54,124,\alpha&H00&)\t(3404,3474,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(422,285,447,435)\alpha&HFF&\t(81,151,\alpha&H00&)\t(3431,3501,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,285,471,435)\alpha&HFF&\t(108,178,\alpha&H00&)\t(3458,3528,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(471,285,495,435)\alpha&HFF&\t(135,205,\alpha&H00&)\t(3485,3555,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,285,519,435)\alpha&HFF&\t(162,232,\alpha&H00&)\t(3512,3582,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(519,285,543,435)\alpha&HFF&\t(190,260,\alpha&H00&)\t(3540,3610,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,285,568,435)\alpha&HFF&\t(217,287,\alpha&H00&)\t(3567,3637,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(568,285,592,435)\alpha&HFF&\t(244,314,\alpha&H00&)\t(3594,3664,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,285,616,435)\alpha&HFF&\t(271,341,\alpha&H00&)\t(3621,3691,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(616,285,640,435)\alpha&HFF&\t(298,368,\alpha&H00&)\t(3648,3718,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,285,664,435)\alpha&HFF&\t(325,395,\alpha&H00&)\t(3675,3745,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(664,285,688,435)\alpha&HFF&\t(352,422,\alpha&H00&)\t(3702,3772,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,285,712,435)\alpha&HFF&\t(379,449,\alpha&H00&)\t(3729,3799,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(712,285,737,435)\alpha&HFF&\t(406,476,\alpha&H00&)\t(3756,3826,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,285,761,435)\alpha&HFF&\t(433,503,\alpha&H00&)\t(3783,3853,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(761,285,785,435)\alpha&HFF&\t(460,530,\alpha&H00&)\t(3810,3880,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,285,809,435)\alpha&HFF&\t(488,558,\alpha&H00&)\t(3838,3908,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(809,285,833,435)\alpha&HFF&\t(515,585,\alpha&H00&)\t(3865,3935,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,285,858,435)\alpha&HFF&\t(542,612,\alpha&H00&)\t(3892,3962,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(858,285,882,435)\alpha&HFF&\t(569,639,\alpha&H00&)\t(3919,3989,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,285,906,435)\alpha&HFF&\t(596,650,\alpha&H00&)\t(3946,4000,\alpha&HFF&)}字幕テキスト
+Dialogue: 0,0:01:16.00,0:01:20.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(906,285,930,435)\alpha&HFF&\t(623,650,\alpha&H00&)\t(3973,4000,\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:01:20.00,0:01:24.00,Title,,0,0,0,,21  歪みながら出現
+Dialogue: 0,0:01:20.00,0:01:24.00,Default,,0,0,0,,{\an5\pos(640,360)\fax-1.25\fay0.25\fscx145\alpha&HFF&\t(0,650,\fax0\fay0\fscx100\alpha&H00&)\t(3350,4000,\fax1.25\fay-0.25\fscx145\alpha&HFF&)}字幕テキスト
+Dialogue: 10,0:01:24.00,0:01:28.00,Title,,0,0,0,,22  グリッチ表示
+Dialogue: 1,0:01:24.00,0:01:24.07,Default,,0,0,0,,{\an5\pos(625,360)\clip(350,371,930,395)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.02,0:01:24.06,Default,,0,0,0,,{\an5\pos(643,360)\clip(350,301,930,309)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.05,0:01:24.08,Default,,0,0,0,,{\an5\pos(615,360)\clip(350,394,930,424)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.07,0:01:24.14,Default,,0,0,0,,{\an5\pos(644,360)\clip(350,307,930,328)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.09,0:01:24.13,Default,,0,0,0,,{\an5\pos(628,360)\clip(350,313,930,344)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.12,0:01:24.19,Default,,0,0,0,,{\an5\pos(645,360)\clip(350,395,930,427)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.14,0:01:24.17,Default,,0,0,0,,{\an5\pos(638,360)\clip(350,389,930,410)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.16,0:01:24.20,Default,,0,0,0,,{\an5\pos(635,360)\clip(350,313,930,340)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.19,0:01:24.26,Default,,0,0,0,,{\an5\pos(661,360)\clip(350,343,930,361)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.21,0:01:24.28,Default,,0,0,0,,{\an5\pos(635,360)\clip(350,347,930,377)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.23,0:01:24.27,Default,,0,0,0,,{\an5\pos(636,360)\clip(350,395,930,431)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.26,0:01:24.30,Default,,0,0,0,,{\an5\pos(645,360)\clip(350,319,930,351)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.28,0:01:24.31,Default,,0,0,0,,{\an5\pos(641,360)\clip(350,307,930,342)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.30,0:01:24.36,Default,,0,0,0,,{\an5\pos(624,360)\clip(350,315,930,333)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.33,0:01:24.37,Default,,0,0,0,,{\an5\pos(623,360)\clip(350,312,930,349)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.35,0:01:24.38,Default,,0,0,0,,{\an5\pos(642,360)\clip(350,300,930,332)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.37,0:01:24.45,Default,,0,0,0,,{\an5\pos(628,360)\clip(350,319,930,333)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.40,0:01:24.45,Default,,0,0,0,,{\an5\pos(650,360)\clip(350,381,930,408)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.42,0:01:24.45,Default,,0,0,0,,{\an5\pos(614,360)\clip(350,384,930,410)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.44,0:01:24.47,Default,,0,0,0,,{\an5\pos(637,360)\clip(350,311,930,329)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.46,0:01:24.49,Default,,0,0,0,,{\an5\pos(630,360)\clip(350,356,930,386)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.49,0:01:24.54,Default,,0,0,0,,{\an5\pos(656,360)\clip(350,353,930,384)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.51,0:01:24.59,Default,,0,0,0,,{\an5\pos(652,360)\clip(350,319,930,336)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.53,0:01:24.61,Default,,0,0,0,,{\an5\pos(633,360)\clip(350,341,930,350)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:24.56,0:01:24.62,Default,,0,0,0,,{\an5\pos(637,360)\clip(350,293,930,324)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.58,0:01:24.62,Default,,0,0,0,,{\an5\pos(615,360)\clip(350,374,930,406)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:24.60,0:01:24.65,Default,,0,0,0,,{\an5\pos(637,360)\clip(350,334,930,365)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:24.63,0:01:24.65,Default,,0,0,0,,{\an5\pos(663,360)\clip(350,423,930,435)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 0,0:01:24.65,0:01:27.35,Default,,0,0,0,,{\an5\pos(640,360)}字幕テキスト
+Dialogue: 1,0:01:27.35,0:01:27.39,Default,,0,0,0,,{\an5\pos(665,360)\clip(350,396,930,405)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.37,0:01:27.44,Default,,0,0,0,,{\an5\pos(639,360)\clip(350,295,930,307)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.40,0:01:27.43,Default,,0,0,0,,{\an5\pos(633,360)\clip(350,409,930,417)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.42,0:01:27.50,Default,,0,0,0,,{\an5\pos(648,360)\clip(350,376,930,395)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.44,0:01:27.51,Default,,0,0,0,,{\an5\pos(644,360)\clip(350,400,930,419)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.47,0:01:27.52,Default,,0,0,0,,{\an5\pos(655,360)\clip(350,291,930,320)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.49,0:01:27.54,Default,,0,0,0,,{\an5\pos(656,360)\clip(350,292,930,318)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.51,0:01:27.55,Default,,0,0,0,,{\an5\pos(635,360)\clip(350,290,930,321)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.54,0:01:27.61,Default,,0,0,0,,{\an5\pos(642,360)\clip(350,358,930,384)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.56,0:01:27.60,Default,,0,0,0,,{\an5\pos(627,360)\clip(350,363,930,381)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.58,0:01:27.64,Default,,0,0,0,,{\an5\pos(632,360)\clip(350,371,930,387)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.61,0:01:27.65,Default,,0,0,0,,{\an5\pos(649,360)\clip(350,301,930,335)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.63,0:01:27.66,Default,,0,0,0,,{\an5\pos(665,360)\clip(350,405,930,435)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.65,0:01:27.71,Default,,0,0,0,,{\an5\pos(627,360)\clip(350,368,930,388)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.68,0:01:27.76,Default,,0,0,0,,{\an5\pos(631,360)\clip(350,384,930,398)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.70,0:01:27.77,Default,,0,0,0,,{\an5\pos(649,360)\clip(350,383,930,400)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.72,0:01:27.75,Default,,0,0,0,,{\an5\pos(660,360)\clip(350,289,930,322)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.75,0:01:27.80,Default,,0,0,0,,{\an5\pos(651,360)\clip(350,346,930,378)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.77,0:01:27.82,Default,,0,0,0,,{\an5\pos(664,360)\clip(350,411,930,424)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.79,0:01:27.83,Default,,0,0,0,,{\an5\pos(654,360)\clip(350,288,930,318)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.81,0:01:27.87,Default,,0,0,0,,{\an5\pos(632,360)\clip(350,367,930,399)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.84,0:01:27.89,Default,,0,0,0,,{\an5\pos(643,360)\clip(350,421,930,435)\1c&H4A62FF&\3c&H4A62FF&}字幕テキスト
+Dialogue: 1,0:01:27.86,0:01:27.90,Default,,0,0,0,,{\an5\pos(660,360)\clip(350,302,930,314)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.88,0:01:27.95,Default,,0,0,0,,{\an5\pos(666,360)\clip(350,401,930,414)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 1,0:01:27.91,0:01:27.98,Default,,0,0,0,,{\an5\pos(663,360)\clip(350,394,930,419)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.93,0:01:27.96,Default,,0,0,0,,{\an5\pos(666,360)\clip(350,335,930,343)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.95,0:01:27.99,Default,,0,0,0,,{\an5\pos(665,360)\clip(350,433,930,435)\1c&HFFFFFF&\3c&HFFFFFF&}字幕テキスト
+Dialogue: 1,0:01:27.98,0:01:28.00,Default,,0,0,0,,{\an5\pos(617,360)\clip(350,354,930,391)\1c&HFFD64A&\3c&HFFD64A&}字幕テキスト
+Dialogue: 10,0:01:28.00,0:01:32.00,Title,,0,0,0,,23  ディゾルブ／粒子消失
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,285,398,315)\alpha&HFF&\t(70,336,\alpha&H00&\blur0)\t(3482,3648,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,285,447,315)\alpha&HFF&\t(77,220,\alpha&H00&\blur0)\t(3387,3648,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,285,495,315)\alpha&HFF&\t(366,521,\alpha&H00&\blur0)\t(3649,3885,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,285,543,315)\alpha&HFF&\t(165,308,\alpha&H00&\blur0)\t(3783,3931,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,285,592,315)\alpha&HFF&\t(20,161,\alpha&H00&\blur0)\t(3738,3941,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,285,640,315)\alpha&HFF&\t(137,345,\alpha&H00&\blur0)\t(3574,3761,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,285,688,315)\alpha&HFF&\t(247,467,\alpha&H00&\blur0)\t(3721,3962,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,285,737,315)\alpha&HFF&\t(366,530,\alpha&H00&\blur0)\t(3768,4000,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,285,785,315)\alpha&HFF&\t(114,251,\alpha&H00&\blur0)\t(3672,3827,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,285,833,315)\alpha&HFF&\t(55,255,\alpha&H00&\blur0)\t(3654,3846,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,285,882,315)\alpha&HFF&\t(323,552,\alpha&H00&\blur0)\t(3764,3908,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,285,930,315)\alpha&HFF&\t(76,225,\alpha&H00&\blur0)\t(3440,3633,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,315,398,345)\alpha&HFF&\t(164,397,\alpha&H00&\blur0)\t(3474,3724,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,315,447,345)\alpha&HFF&\t(434,596,\alpha&H00&\blur0)\t(3558,3828,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,315,495,345)\alpha&HFF&\t(309,514,\alpha&H00&\blur0)\t(3753,3893,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,315,543,345)\alpha&HFF&\t(220,420,\alpha&H00&\blur0)\t(3530,3688,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,315,592,345)\alpha&HFF&\t(307,546,\alpha&H00&\blur0)\t(3803,3959,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,315,640,345)\alpha&HFF&\t(389,528,\alpha&H00&\blur0)\t(3712,3894,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,315,688,345)\alpha&HFF&\t(30,240,\alpha&H00&\blur0)\t(3437,3613,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,315,737,345)\alpha&HFF&\t(286,430,\alpha&H00&\blur0)\t(3364,3553,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,315,785,345)\alpha&HFF&\t(396,586,\alpha&H00&\blur0)\t(3749,3986,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,315,833,345)\alpha&HFF&\t(119,278,\alpha&H00&\blur0)\t(3605,3868,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,315,882,345)\alpha&HFF&\t(150,289,\alpha&H00&\blur0)\t(3673,3823,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,315,930,345)\alpha&HFF&\t(150,328,\alpha&H00&\blur0)\t(3389,3647,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,345,398,375)\alpha&HFF&\t(326,497,\alpha&H00&\blur0)\t(3465,3683,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,345,447,375)\alpha&HFF&\t(135,352,\alpha&H00&\blur0)\t(3676,3838,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,345,495,375)\alpha&HFF&\t(165,379,\alpha&H00&\blur0)\t(3395,3613,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,345,543,375)\alpha&HFF&\t(98,278,\alpha&H00&\blur0)\t(3533,3794,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,345,592,375)\alpha&HFF&\t(54,304,\alpha&H00&\blur0)\t(3602,3757,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,345,640,375)\alpha&HFF&\t(171,343,\alpha&H00&\blur0)\t(3417,3550,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,345,688,375)\alpha&HFF&\t(17,242,\alpha&H00&\blur0)\t(3646,3772,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,345,737,375)\alpha&HFF&\t(196,366,\alpha&H00&\blur0)\t(3544,3803,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,345,785,375)\alpha&HFF&\t(303,551,\alpha&H00&\blur0)\t(3567,3692,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,345,833,375)\alpha&HFF&\t(251,454,\alpha&H00&\blur0)\t(3403,3560,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,345,882,375)\alpha&HFF&\t(375,509,\alpha&H00&\blur0)\t(3451,3702,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,345,930,375)\alpha&HFF&\t(54,297,\alpha&H00&\blur0)\t(3575,3714,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,375,398,405)\alpha&HFF&\t(247,410,\alpha&H00&\blur0)\t(3661,3804,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,375,447,405)\alpha&HFF&\t(186,332,\alpha&H00&\blur0)\t(3443,3663,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,375,495,405)\alpha&HFF&\t(450,571,\alpha&H00&\blur0)\t(3714,3896,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,375,543,405)\alpha&HFF&\t(14,183,\alpha&H00&\blur0)\t(3366,3609,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,375,592,405)\alpha&HFF&\t(44,272,\alpha&H00&\blur0)\t(3601,3853,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,375,640,405)\alpha&HFF&\t(248,460,\alpha&H00&\blur0)\t(3363,3560,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,375,688,405)\alpha&HFF&\t(113,281,\alpha&H00&\blur0)\t(3649,3816,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,375,737,405)\alpha&HFF&\t(125,262,\alpha&H00&\blur0)\t(3776,4000,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,375,785,405)\alpha&HFF&\t(222,489,\alpha&H00&\blur0)\t(3627,3785,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,375,833,405)\alpha&HFF&\t(237,439,\alpha&H00&\blur0)\t(3371,3637,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,375,882,405)\alpha&HFF&\t(353,552,\alpha&H00&\blur0)\t(3463,3669,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,375,930,405)\alpha&HFF&\t(80,213,\alpha&H00&\blur0)\t(3594,3865,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(350,405,398,435)\alpha&HFF&\t(45,168,\alpha&H00&\blur0)\t(3441,3613,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(398,405,447,435)\alpha&HFF&\t(68,198,\alpha&H00&\blur0)\t(3699,3856,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(447,405,495,435)\alpha&HFF&\t(395,539,\alpha&H00&\blur0)\t(3500,3628,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(495,405,543,435)\alpha&HFF&\t(39,161,\alpha&H00&\blur0)\t(3709,3888,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(543,405,592,435)\alpha&HFF&\t(158,347,\alpha&H00&\blur0)\t(3597,3732,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(592,405,640,435)\alpha&HFF&\t(37,201,\alpha&H00&\blur0)\t(3505,3747,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(640,405,688,435)\alpha&HFF&\t(218,385,\alpha&H00&\blur0)\t(3543,3781,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(688,405,737,435)\alpha&HFF&\t(304,470,\alpha&H00&\blur0)\t(3402,3629,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(737,405,785,435)\alpha&HFF&\t(445,650,\alpha&H00&\blur0)\t(3373,3506,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(785,405,833,435)\alpha&HFF&\t(302,514,\alpha&H00&\blur0)\t(3718,3837,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(833,405,882,435)\alpha&HFF&\t(219,464,\alpha&H00&\blur0)\t(3558,3747,\alpha&HFF&\blur4)}字幕テキスト
+Dialogue: 0,0:01:28.00,0:01:32.00,Default,,0,0,0,,{\an5\pos(640,360)\clip(882,405,930,435)\alpha&HFF&\t(345,509,\alpha&H00&\blur0)\t(3412,3635,\alpha&HFF&\blur4)}字幕テキスト

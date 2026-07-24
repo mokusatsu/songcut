@@ -15,8 +15,23 @@ from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .boundary_refiner import BoundaryRefinerConfig
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
+from .lyrics_alignment import align_lyrics_to_chunks, parse_lyrics, transcribe_whisper_chunks
+from .rhythm_alignment import (
+    adjust_lines_to_rhythm,
+    build_extended_rhythm_grid,
+    confidence_statistics,
+    detect_beat_times,
+)
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
+from .subtitle_export import (
+    SubtitleEffect,
+    SubtitleLane,
+    SubtitleSegment,
+    export_subtitle_bundle,
+    render_subtitle_png_base64,
+    subtitle_style_from_mapping,
+)
 from .transcription import (
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
@@ -134,6 +149,79 @@ class ScratchProxyRequest(BaseModel):
 
 class WaveformRequest(BaseModel):
     path: str
+
+
+class LyricsAnalysisRequest(BaseModel):
+    source_path: str
+    lyrics_text: str = Field(min_length=1)
+    model: str = "small"
+    language: str | None = "ja"
+    device: str = "auto"
+
+
+class SubtitleStyleRequest(BaseModel):
+    font_name: str = "Yu Gothic UI"
+    font_size: float = Field(default=48.0, gt=0, le=400)
+    primary_color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    background_color: str = "#00000080"
+    bold: bool = False
+    italic: bool = False
+    outline: float = Field(default=2.0, ge=0, le=30)
+    shadow: float = Field(default=0.0, ge=0, le=30)
+    alignment: int = Field(default=2, ge=1, le=9)
+    margin_l: int = Field(default=60, ge=0, le=4000)
+    margin_r: int = Field(default=60, ge=0, le=4000)
+    margin_v: int = Field(default=54, ge=0, le=4000)
+
+
+class SubtitleSegmentRequest(BaseModel):
+    id: str
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SubtitleSegmentRequest":
+        if self.end <= self.start:
+            raise ValueError("subtitle segment end must be after start")
+        return self
+
+
+class SubtitleEffectRequest(BaseModel):
+    name: str = "cut"
+    start_duration_ms: int = Field(default=300, ge=0, le=60000)
+    end_duration_ms: int = Field(default=300, ge=0, le=60000)
+    params: dict[str, str | int | float] = Field(default_factory=dict)
+
+
+class SubtitleLaneRequest(BaseModel):
+    id: str
+    name: str = ""
+    style: SubtitleStyleRequest = Field(default_factory=SubtitleStyleRequest)
+    effect: SubtitleEffectRequest = Field(default_factory=SubtitleEffectRequest)
+    segments: list[SubtitleSegmentRequest] = Field(default_factory=list)
+
+
+class SubtitleExportRequest(BaseModel):
+    source_path: str
+    output_dir: str
+    play_res_x: int = Field(gt=0)
+    play_res_y: int = Field(gt=0)
+    lanes: list[SubtitleLaneRequest] = Field(min_length=1, max_length=3)
+
+
+class SubtitleRenderItemRequest(BaseModel):
+    segment_id: str
+    signature: str = Field(min_length=1, max_length=4096)
+    text: str
+    style: SubtitleStyleRequest = Field(default_factory=SubtitleStyleRequest)
+
+
+class SubtitleRenderRequest(BaseModel):
+    play_res_x: int = Field(gt=0, le=7680)
+    play_res_y: int = Field(gt=0, le=4320)
+    items: list[SubtitleRenderItemRequest] = Field(min_length=1, max_length=1000)
 
 
 class JobRecord(BaseModel):
@@ -357,6 +445,21 @@ def create_transcription_job(request: TranscriptionRequest) -> JobRecord:
 @app.post("/export/jobs")
 def create_export_job(request: ExportRequest) -> JobRecord:
     return start_job("export", lambda job_id: _export_job(job_id, request))
+
+
+@app.post("/lyrics-analysis/jobs")
+def create_lyrics_analysis_job(request: LyricsAnalysisRequest) -> JobRecord:
+    return start_job("lyrics-analysis", lambda job_id: _lyrics_analysis_job(job_id, request))
+
+
+@app.post("/subtitle-export/jobs")
+def create_subtitle_export_job(request: SubtitleExportRequest) -> JobRecord:
+    return start_job("subtitle-export", lambda job_id: _subtitle_export_job(job_id, request))
+
+
+@app.post("/subtitle-render/jobs")
+def create_subtitle_render_job(request: SubtitleRenderRequest) -> JobRecord:
+    return start_job("subtitle-render", lambda job_id: _subtitle_render_job(job_id, request))
 
 
 @app.post("/export/plan")
@@ -754,6 +857,161 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
         if timestamp_comment_path:
             result["timestamp_comment_path"] = timestamp_comment_path
         update_job(job_id, status="completed", progress=1.0, message="Export complete.", result=result)
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
+    started = time.perf_counter()
+    try:
+        source = require_file(request.source_path)
+        document = parse_lyrics(request.lyrics_text)
+        update_job(job_id, status="running", progress=0.05, message="Transcribing lyrics source.")
+        chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
+            source,
+            model_key=request.model,
+            device=request.device,
+            language=request.language or "auto",
+        )
+        update_job(job_id, status="running", progress=0.65, message="Aligning lyrics.")
+        alignment = align_lyrics_to_chunks(document, chunks, media_duration=duration)
+        beat_warning: str | None = None
+        tempo_bpm = 0.0
+        beat_times: list[float] = []
+        rhythm_grid = []
+        adjusted_lines = alignment.lines
+        try:
+            update_job(job_id, status="running", progress=0.76, message="Detecting rhythm grid.")
+            tempo_bpm, beat_times, _ = detect_beat_times(source)
+            if len(beat_times) < 2:
+                raise RuntimeError("No stable beat sequence was detected.")
+            adjusted_lines = adjust_lines_to_rhythm(
+                alignment.lines,
+                beat_times,
+                tempo_bpm=tempo_bpm,
+            ).lines
+            rhythm_grid = build_extended_rhythm_grid(beat_times, media_duration=duration)
+        except Exception as exc:
+            beat_warning = str(exc)
+        stats = confidence_statistics(adjusted_lines)
+        low_indexes = set(stats.low_outlier_indexes)
+        result = {
+            "title": alignment.title,
+            "duration": duration,
+            "device_used": device_used,
+            "whisper_text": whisper_text,
+            "tempo_bpm": round(float(tempo_bpm), 3),
+            "beat_times": beat_times,
+            "rhythm_grid": [asdict(point) for point in rhythm_grid],
+            "beat_warning": beat_warning,
+            "confidence_statistics": asdict(stats),
+            "lines": [
+                {**asdict(line), "low_confidence_outlier": line.index in low_indexes}
+                for line in adjusted_lines
+            ],
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+        }
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Lyrics analysis complete.",
+            result=result,
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _subtitle_export_job(job_id: str, request: SubtitleExportRequest) -> None:
+    try:
+        source = require_file(request.source_path)
+        lanes = [
+            SubtitleLane(
+                id=lane.id,
+                name=lane.name,
+                style=subtitle_style_from_mapping(lane.style.model_dump()),
+                effect=SubtitleEffect(
+                    name=lane.effect.name,
+                    start_duration_ms=lane.effect.start_duration_ms,
+                    end_duration_ms=lane.effect.end_duration_ms,
+                    params=lane.effect.params,
+                ),
+                segments=[
+                    SubtitleSegment(
+                        id=segment.id,
+                        text=segment.text,
+                        start=segment.start,
+                        end=segment.end,
+                    )
+                    for segment in lane.segments
+                ],
+            )
+            for lane in request.lanes
+        ]
+
+        def on_progress(progress: float, message: str) -> None:
+            update_job(
+                job_id,
+                status="running",
+                progress=max(0.01, min(0.99, progress)),
+                message=message,
+            )
+
+        result = export_subtitle_bundle(
+            source,
+            Path(request.output_dir),
+            lanes,
+            play_res_x=request.play_res_x,
+            play_res_y=request.play_res_y,
+            on_progress=on_progress,
+        )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Subtitle export complete.",
+            result=result,
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _subtitle_render_job(job_id: str, request: SubtitleRenderRequest) -> None:
+    try:
+        rendered: list[dict[str, object]] = []
+        total = len(request.items)
+        ffmpeg_paths = find_ffmpeg()
+        for index, item in enumerate(request.items):
+            update_job(
+                job_id,
+                status="running",
+                progress=max(0.01, index / total),
+                message=f"Rendering subtitle image {index + 1}/{total}.",
+            )
+            png_base64 = render_subtitle_png_base64(
+                item.text,
+                subtitle_style_from_mapping(item.style.model_dump()),
+                play_res_x=request.play_res_x,
+                play_res_y=request.play_res_y,
+                ffmpeg_paths=ffmpeg_paths,
+                verify_ass_filter=index == 0,
+            )
+            rendered.append(
+                {
+                    "segment_id": item.segment_id,
+                    "signature": item.signature,
+                    "png_base64": png_base64,
+                    "width": request.play_res_x,
+                    "height": request.play_res_y,
+                }
+            )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Subtitle images rendered.",
+            result={"items": rendered},
+        )
     except Exception as exc:
         fail_job(job_id, exc)
 

@@ -9,6 +9,10 @@ __pycache__/
 .hf-xet/
 .ov-cache/
 third_party/
+!third_party/
+third_party/*
+!third_party/ass-effects23/
+!third_party/ass-effects23/**
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/

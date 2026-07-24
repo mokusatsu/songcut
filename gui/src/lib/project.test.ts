@@ -7,6 +7,8 @@ import {
   createProjectDocument,
   filenameTemplateFromProject,
   normalizeInterruptedOperation,
+  projectMode,
+  subtitleStateFromProject,
   transcriptSettingsAreStale,
   waveformFromProject,
 } from "./project";
@@ -67,6 +69,22 @@ const segment: Segment = {
     device_requested: "auto",
   },
 };
+
+describe("sub-mode project", () => {
+  it("creates a separate document with one default lyrics lane", () => {
+    const document = createProjectDocument(
+      "C:\\media\\archive.mp4.sub.songcut",
+      source,
+      videoInfo,
+      "sub"
+    );
+
+    expect(projectMode(document)).toBe("sub");
+    expect(subtitleStateFromProject(document).lanes).toHaveLength(1);
+    expect(subtitleStateFromProject(document).lanes[0].style.alignment).toBe(2);
+    expect(() => assertProjectDocument(document)).not.toThrow();
+  });
+});
 
 const analysis: AnalysisResult = {
   schema_version: 3,

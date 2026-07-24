@@ -13,19 +13,23 @@ from songcut.api import (
     ExportPlanRequest,
     ExportRequest,
     JobRecord,
+    LyricsAnalysisRequest,
     ProbeRequest,
     ScratchProxyRequest,
+    SubtitleRenderRequest,
     TranscriptionRequest,
     TranscriptionSegmentRequest,
     WhisperDownloadRequest,
     _analysis_job,
     _export_job,
+    _lyrics_analysis_job,
     _job_cancel_events,
     _jobs,
     _jobs_lock,
     _waveform_finished_at,
     _waveform_points,
     _scratch_proxy_job,
+    _subtitle_render_job,
     cancel_scratch_proxy_job,
     create_transcription_job,
     create_export_plan,
@@ -39,6 +43,7 @@ from songcut.api import (
 from pydantic import ValidationError
 from fastapi import HTTPException
 from songcut.gui_pipeline import build_gui_segments_and_exports
+from songcut.lyrics_alignment import AlignedLyricsLine
 
 
 class ApiJobTests(unittest.TestCase):
@@ -52,6 +57,55 @@ class ApiJobTests(unittest.TestCase):
     def test_boundary_refinement_request_rejects_invalid_hysteresis(self) -> None:
         with self.assertRaises(ValidationError):
             BoundaryRefinementRequest(low_occupancy=0.5, high_occupancy=0.5)
+
+    def test_subtitle_render_job_returns_cache_identity_with_png(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["subtitle-render-001"] = JobRecord(
+                id="subtitle-render-001",
+                kind="subtitle-render",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        request = SubtitleRenderRequest.model_validate(
+            {
+                "play_res_x": 1920,
+                "play_res_y": 1080,
+                "items": [
+                    {
+                        "segment_id": "lyrics-001",
+                        "signature": "static-signature",
+                        "text": "歌詞",
+                        "style": {},
+                    }
+                ],
+            }
+        )
+
+        with (
+            mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg")),
+            mock.patch(
+                "songcut.api.render_subtitle_png_base64",
+                return_value="iVBORw0KGgo=",
+            ) as render,
+        ):
+            _subtitle_render_job("subtitle-render-001", request)
+
+        with _jobs_lock:
+            completed = _jobs["subtitle-render-001"]
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(
+            completed.result["items"][0],
+            {
+                "segment_id": "lyrics-001",
+                "signature": "static-signature",
+                "png_base64": "iVBORw0KGgo=",
+                "width": 1920,
+                "height": 1080,
+            },
+        )
+        render.assert_called_once()
 
     def test_analysis_starts_transcription_job_without_waiting_for_it(self) -> None:
         now = time.time()
@@ -87,6 +141,53 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["segments"][0]["id"], "guide-001")
         start_job.assert_called_once()
         transcribe_segments.assert_not_called()
+
+    def test_lyrics_analysis_returns_rhythm_grid_and_confidence_outliers(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["lyrics-001"] = JobRecord(
+                id="lyrics-001",
+                kind="lyrics-analysis",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        confidences = [0.1, 1.0, 1.0, 1.0, 1.0]
+        lines = [
+            AlignedLyricsLine(
+                index=index,
+                text=f"line {index}",
+                start=float(index),
+                end=float(index) + 0.5,
+                confidence=confidence,
+                source="whisper-chunk",
+                matched_characters=1,
+                exact_characters=1,
+                total_characters=1,
+            )
+            for index, confidence in enumerate(confidences, start=1)
+        ]
+        alignment = SimpleNamespace(title="title", lines=lines)
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch(
+                "songcut.api.transcribe_whisper_chunks",
+                return_value=([], "recognized", 10.0, "CPU"),
+            ),
+            mock.patch("songcut.api.align_lyrics_to_chunks", return_value=alignment),
+            mock.patch("songcut.api.detect_beat_times", return_value=(120.0, [0.0, 0.5, 1.0], 10.0)),
+        ):
+            _lyrics_analysis_job(
+                "lyrics-001",
+                LyricsAnalysisRequest(source_path="source.mp4", lyrics_text="title\n\nline"),
+            )
+
+        completed = _jobs["lyrics-001"]
+        self.assertEqual(completed.status, "completed")
+        self.assertTrue(completed.result["rhythm_grid"])
+        self.assertEqual(completed.result["confidence_statistics"]["low_outlier_indexes"], [1])
+        self.assertTrue(completed.result["lines"][0]["low_confidence_outlier"])
 
     def test_job_messages_keep_english_and_add_localization_metadata(self) -> None:
         now = time.time()

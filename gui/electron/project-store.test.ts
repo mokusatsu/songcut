@@ -25,6 +25,9 @@ describe("songcut project storage", () => {
   it("uses the complete video filename for the sidecar", () => {
     expect(projectPathForVideo("C:\\media\\archive.mp4")).toBe(path.resolve("C:\\media\\archive.mp4.songcut"));
     expect(projectPathForVideo("C:\\media\\archive.mkv")).not.toBe(projectPathForVideo("C:\\media\\archive.mp4"));
+    expect(projectPathForVideo("C:\\media\\archive.mp4", "sub")).toBe(
+      path.resolve("C:\\media\\archive.mp4.sub.songcut")
+    );
   });
 
   it("round-trips a project through an atomic save", async () => {
@@ -49,6 +52,18 @@ describe("songcut project storage", () => {
     const loaded = await loadProject(projectPath);
 
     expect(loaded.document).toEqual(document);
+    expect(loaded.recoveredFrom).toBe("target");
+  });
+
+  it("serializes concurrent saves that share atomic temporary files", async () => {
+    const directory = await tempDirectory();
+    const projectPath = path.join(directory, "video.mp4.sub.songcut");
+    const revisions = Array.from({ length: 12 }, (_, index) => index + 1);
+
+    await Promise.all(revisions.map((revision) => saveProject(projectPath, projectDocument(revision))));
+
+    const loaded = await loadProject(projectPath);
+    expect(loaded.document.revision).toBe(revisions.at(-1));
     expect(loaded.recoveredFrom).toBe("target");
   });
 

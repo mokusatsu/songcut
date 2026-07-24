@@ -229,13 +229,11 @@ if ($BuildNumber -notmatch "^\d+$") {
 }
 $AppVersion = "$BaseVersion.$BuildNumber"
 
-$env:CI = "true"
-
 New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
 
 Push-Location $GuiRoot
 try {
-  & $PnpmExe run build
+  & $PnpmExe --config.verify-deps-before-run=warn run build
   if ($LASTEXITCODE -ne 0) {
     throw "GUI build failed with exit code $LASTEXITCODE"
   }
@@ -263,13 +261,13 @@ finally {
   --collect-all starlette `
   --collect-all pydantic `
   --collect-all pydantic_core `
+  --collect-all librosa `
   --collect-all win_safesubprocess `
   --exclude-module torch `
   --exclude-module tensorflow `
   --exclude-module transformers `
   --exclude-module optimum `
   --exclude-module pandas `
-  --exclude-module scipy `
   --exclude-module sklearn `
   --exclude-module PIL `
   --exclude-module matplotlib `

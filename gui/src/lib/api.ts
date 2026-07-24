@@ -9,6 +9,7 @@ import type {
   WaveformUpdate
 } from "@/types";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
+import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -160,6 +161,66 @@ export function startExport(
     items,
     timestamp_comment_text: timestampCommentText,
     create_source_folder: createSourceFolder
+  });
+}
+
+export function startLyricsAnalysis(
+  baseUrl: string,
+  sourcePath: string,
+  lyricsText: string,
+  settings: WhisperSettings
+) {
+  return postJson<JobRecord>(baseUrl, "/lyrics-analysis/jobs", {
+    source_path: sourcePath,
+    lyrics_text: lyricsText,
+    model: settings.model,
+    language: settings.language,
+    device: settings.device,
+  });
+}
+
+export function startSubtitleExport(
+  baseUrl: string,
+  sourcePath: string,
+  outputDir: string,
+  videoWidth: number,
+  videoHeight: number,
+  lanes: LyricsLane[]
+) {
+  return postJson<JobRecord>(baseUrl, "/subtitle-export/jobs", {
+    source_path: sourcePath,
+    output_dir: outputDir,
+    play_res_x: videoWidth,
+    play_res_y: videoHeight,
+    lanes: lanes.map((lane) => ({ ...lane, style: normalizeSubtitleStyle(lane.style) })),
+  });
+}
+
+export type SubtitleRenderRequestItem = {
+  segment_id: string;
+  signature: string;
+  text: string;
+  style: LyricsLane["style"];
+};
+
+export type SubtitleRenderResultItem = {
+  segment_id: string;
+  signature: string;
+  png_base64: string;
+  width: number;
+  height: number;
+};
+
+export function startSubtitleRender(
+  baseUrl: string,
+  videoWidth: number,
+  videoHeight: number,
+  items: SubtitleRenderRequestItem[]
+) {
+  return postJson<JobRecord>(baseUrl, "/subtitle-render/jobs", {
+    play_res_x: videoWidth,
+    play_res_y: videoHeight,
+    items: items.map((item) => ({ ...item, style: normalizeSubtitleStyle(item.style) })),
   });
 }
 

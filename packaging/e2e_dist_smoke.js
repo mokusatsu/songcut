@@ -411,6 +411,10 @@ async function shortcutState(cdp) {
       const video = document.querySelector("video");
       const selected = document.querySelector(".segment-list tbody tr.selected");
       const handles = [...document.querySelectorAll(".drag-handle")].map((handle) => handle.style.left);
+      const timelineWidth = document.querySelector(".timeline-content")?.getBoundingClientRect().width || 0;
+      const handleRatios = [...document.querySelectorAll(".drag-handle")].map(
+        (handle) => timelineWidth > 0 ? Number.parseFloat(handle.style.left) / timelineWidth : 0
+      );
       const zoom = [...document.querySelectorAll("button")]
         .map((button) => button.innerText.trim())
         .find((text) => /^\\d+%$/.test(text)) || "";
@@ -419,6 +423,7 @@ async function shortcutState(cdp) {
         currentTime: video?.currentTime ?? null,
         paused: video?.paused ?? null,
         handles,
+        handleRatios,
         zoom
       };
     })()`
@@ -430,7 +435,8 @@ function assertShortcutStateEqual(before, after, message) {
     before.selectedId === after.selectedId &&
     before.paused === after.paused &&
     before.zoom === after.zoom &&
-    JSON.stringify(before.handles) === JSON.stringify(after.handles) &&
+    before.handleRatios.length === after.handleRatios.length &&
+    before.handleRatios.every((value, index) => Math.abs(value - after.handleRatios[index]) <= 0.0001) &&
     Math.abs((before.currentTime ?? 0) - (after.currentTime ?? 0)) <= 0.04;
   assertPass(same, message, { before, after });
 }

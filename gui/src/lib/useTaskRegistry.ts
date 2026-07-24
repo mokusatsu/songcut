@@ -6,22 +6,33 @@ export type TaskSlot =
   | "waveform"
   | "scratch-proxy"
   | "analysis"
+  | "lyrics-analysis"
   | "transcription"
   | "export"
+  | "subtitle-export"
   | "download-whisper";
 
 export type TaskRegistryState = Partial<Record<TaskSlot, JobRecord>>;
 
 const DISPLAY_PRIORITY: Record<TaskSlot, number> = {
   export: 600,
+  "subtitle-export": 600,
   transcription: 500,
   analysis: 400,
+  "lyrics-analysis": 400,
   "download-whisper": 300,
   waveform: 200,
   "scratch-proxy": 100
 };
 
-const BLOCKS_QUIT = new Set<TaskSlot>(["analysis", "transcription", "export", "download-whisper"]);
+const BLOCKS_QUIT = new Set<TaskSlot>([
+  "analysis",
+  "lyrics-analysis",
+  "transcription",
+  "export",
+  "subtitle-export",
+  "download-whisper",
+]);
 
 export function isTaskRunning(job: JobRecord | null | undefined) {
   return job?.status === "queued" || job?.status === "running";
