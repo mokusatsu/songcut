@@ -21,6 +21,7 @@ from songcut.api import (
     TranscriptionSegmentRequest,
     WhisperDownloadRequest,
     _analysis_job,
+    _download_whisper_job,
     _export_job,
     _lyrics_analysis_job,
     _job_cancel_events,
@@ -276,6 +277,50 @@ class ApiJobTests(unittest.TestCase):
             result = download_whisper_model(None)
         self.assertIs(result, sentinel)
         self.assertEqual(start_job.call_args.args[0], "download-whisper")
+
+    def test_whisper_download_job_reports_byte_progress(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["download-001"] = JobRecord(
+                id="download-001",
+                kind="download-whisper",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        updates: list[dict[str, object]] = []
+        original_update_job = update_job
+
+        def capture_update(job_id: str, **changes: object) -> bool:
+            updates.append(dict(changes))
+            return original_update_job(job_id, **changes)
+
+        def fake_ensure_whisper_model(**kwargs: object) -> Path:
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(50, 100)
+            progress_callback(100, 100)
+            return Path("model")
+
+        with (
+            mock.patch("songcut.api.update_job", side_effect=capture_update),
+            mock.patch("songcut.api.ensure_whisper_model", side_effect=fake_ensure_whisper_model),
+            mock.patch("songcut.api.resolve_whisper_model_dir", return_value=(Path("model"), "downloaded")),
+            mock.patch("songcut.api.directory_size", return_value=100),
+        ):
+            _download_whisper_job("download-001", "small")
+
+        progress_updates = [
+            update
+            for update in updates
+            if isinstance(update.get("result"), dict)
+            and "downloaded_bytes" in update["result"]
+        ]
+        self.assertTrue(progress_updates)
+        self.assertEqual(progress_updates[0]["progress"], 0.5)
+        self.assertEqual(progress_updates[-1]["result"]["downloaded_bytes"], 100)
+        self.assertEqual(progress_updates[-1]["result"]["total_bytes"], 100)
+        self.assertEqual(progress_updates[-1]["progress"], 1.0)
+        self.assertEqual(_jobs["download-001"].status, "completed")
 
     def test_transcription_job_requires_installed_selected_model(self) -> None:
         request = TranscriptionRequest(

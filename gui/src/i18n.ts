@@ -98,6 +98,11 @@ const en = {
   dialogs: {
     whisperNotReady: "Whisper model is not ready", whisperMissing: "The selected {{model}} model is not installed. Downloading is always an explicit action.",
     analyzeWithout: "Analyze without transcription", downloadAnalyze: "Download & Analyze",
+    whisperDownloadTitle: "Download Whisper model",
+    whisperDownloadDescription: "Downloading the Whisper model (speech-to-text AI). This is required only once; subsequent operations use the downloaded model.",
+    whisperDownloadPreparing: "Preparing the Whisper model download…",
+    whisperDownloadFailed: "Whisper model download failed.",
+    whisperDownloadComplete: "Whisper model download complete.",
     recoveryTitle: "Recover unsaved songcut edits?", recoveryAvailable: "A recovery snapshot is available.",
     recoveryDetail: "{{filename}} has a recovery snapshot from {{date}} at revision {{revision}}.",
     saveFailedTitle: "Could not save the current project", saveFailed: "The current project could not be saved.",
@@ -239,6 +244,11 @@ const ja: TranslationShape<typeof en> = {
   dialogs: {
     whisperNotReady: "Whisper モデルの準備ができていません", whisperMissing: "選択した {{model}} モデルは未インストールです。ダウンロードは明示的な操作でのみ行います。",
     analyzeWithout: "文字起こしなしで解析", downloadAnalyze: "ダウンロードして解析",
+    whisperDownloadTitle: "Whisperモデルをダウンロード",
+    whisperDownloadDescription: "Whisperモデル（音声文字起こしAI）をダウンロードしています。この作業は初回のみで、以降はダウンロード済みのモデルが使用されます",
+    whisperDownloadPreparing: "Whisperモデルのダウンロードを準備しています…",
+    whisperDownloadFailed: "Whisperモデルのダウンロードに失敗しました。",
+    whisperDownloadComplete: "Whisperモデルのダウンロードが完了しました。",
     recoveryTitle: "未保存の songcut 編集を復元しますか？", recoveryAvailable: "復元用スナップショットがあります。",
     recoveryDetail: "{{filename}} には {{date}}、リビジョン {{revision}} の復元用スナップショットがあります。",
     saveFailedTitle: "現在のプロジェクトを保存できませんでした", saveFailed: "現在のプロジェクトを保存できませんでした。",

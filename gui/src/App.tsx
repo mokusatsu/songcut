@@ -238,6 +238,7 @@ export default function App(props: {
   const videoPathRef = useRef("");
   const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
+  const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
@@ -288,6 +289,8 @@ export default function App(props: {
   const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
   const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
+  const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
+  const [whisperDownloadJob, setWhisperDownloadJob] = useState<JobRecord | null>(null);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -1139,13 +1142,90 @@ export default function App(props: {
     await loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  async function ensureWhisper() {
+  async function ensureWhisper(options: { showReadyState?: boolean } = {}) {
     if (!apiBaseUrl) return;
-    const started = await startWhisperDownload(apiBaseUrl, whisperSettings.model);
-    taskRegistry.updateTask("download-whisper", started);
-    await waitForJob(apiBaseUrl, started.id, (nextJob) => taskRegistry.updateTask("download-whisper", nextJob));
-    await refreshWhisperStatus();
-    setMessage(`Whisper ${whisperSettings.model} model is ready.`);
+    if (whisperDownloadPromiseRef.current) return whisperDownloadPromiseRef.current;
+
+    const modelKey = whisperSettings.model;
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshWhisperStatus();
+        const currentModel = currentStatus?.models.find((model) => model.key === modelKey) ?? null;
+        if (currentModel?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentModel.installed_bytes;
+            setWhisperDownloadJob({
+              id: "already-ready",
+              kind: "download-whisper",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.whisperDownloadComplete"),
+              result: {
+                model: currentModel.key,
+                model_dir: currentModel.model_dir,
+                source: currentModel.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setWhisperDownloadOpen(true);
+            setMessage(`Whisper ${modelKey} model is ready.`);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setWhisperDownloadOpen(true);
+        setWhisperDownloadJob({
+          id: "starting",
+          kind: "download-whisper",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.whisperDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startWhisperDownload(apiBaseUrl, modelKey);
+        setWhisperDownloadJob(started);
+        taskRegistry.updateTask("download-whisper", started);
+        await waitForJob(
+          apiBaseUrl,
+          started.id,
+          (nextJob) => {
+            setWhisperDownloadJob(nextJob);
+            taskRegistry.updateTask("download-whisper", nextJob);
+          },
+          250
+        );
+        await refreshWhisperStatus();
+        setMessage(`Whisper ${modelKey} model is ready.`);
+      } catch (error) {
+        setWhisperDownloadOpen(true);
+        setWhisperDownloadJob((current) =>
+          current?.status === "failed"
+            ? current
+            : {
+                id: current?.id ?? "failed",
+                kind: "download-whisper",
+                status: "failed",
+                progress: current?.progress ?? 0,
+                message: tr("dialogs.whisperDownloadFailed"),
+                error: String(error),
+                created_at: current?.created_at ?? Date.now() / 1000,
+                updated_at: Date.now() / 1000,
+              }
+        );
+        throw error;
+      } finally {
+        whisperDownloadPromiseRef.current = null;
+      }
+    })();
+    whisperDownloadPromiseRef.current = operation;
+    return operation;
   }
 
   async function runFfmpegCheck(showSuccess: boolean) {
@@ -2326,6 +2406,10 @@ export default function App(props: {
             editing={waveformSeeking || handleEditing}
             state={subtitleState}
             whisperSettings={whisperSettings}
+            onPrepareWhisperModel={async () => {
+              await ensureWhisper();
+              setWhisperDownloadOpen(false);
+            }}
             saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
             message={message}
             onStateChange={(state) => {
@@ -2525,7 +2609,10 @@ export default function App(props: {
           setWhisperSettings(settings);
           markProjectChanged();
         }}
-        onPrepareWhisperModel={() => void ensureWhisper().catch((error) => setMessage(String(error)))}
+        onPrepareWhisperModel={() => {
+          closeSettings();
+          void ensureWhisper({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
         onTranscribe={() => {
           closeSettings();
           void runTranscription().catch((error) => setMessage(String(error)));
@@ -2560,6 +2647,11 @@ export default function App(props: {
         renderPlanState={exportPlanState}
         onClose={() => setExportProgressOpen(false)}
       />
+      <WhisperDownloadProgressDialog
+        open={whisperDownloadOpen}
+        job={whisperDownloadJob}
+        onClose={() => setWhisperDownloadOpen(false)}
+      />
       <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
           {tr("dialogs.whisperMissing", { model: whisperSettings.model })}
@@ -2581,7 +2673,10 @@ export default function App(props: {
             onClick={() => {
               setWhisperPreflightOpen(false);
               void ensureWhisper()
-                .then(() => runAnalysis(true))
+                .then(() => {
+                  setWhisperDownloadOpen(false);
+                  return runAnalysis(true);
+                })
                 .catch((error) => setMessage(String(error)));
             }}
           >
@@ -3915,6 +4010,66 @@ function exportRenderDetail(plan: ExportRenderPlanItem) {
 
 function formatDuration(seconds: number) {
   return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
+function WhisperDownloadProgressDialog(props: {
+  open: boolean;
+  job: JobRecord | null;
+  onClose: () => void;
+}) {
+  const status = props.job?.status ?? "queued";
+  const result =
+    props.job?.result && typeof props.job.result === "object"
+      ? props.job.result as {
+          downloaded_bytes?: number;
+          total_bytes?: number;
+          installed_bytes?: number | null;
+        }
+      : null;
+  const downloadedBytes = result?.downloaded_bytes ?? (status === "completed" ? result?.installed_bytes : null);
+  const totalBytes = result?.total_bytes ?? (status === "completed" ? result?.installed_bytes : null);
+  const progress =
+    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
+      ? clamp(downloadedBytes / totalBytes, 0, 1)
+      : clamp(props.job?.progress ?? 0, 0, 1);
+  const transferLabel =
+    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
+      ? `${formatDownloadBytes(downloadedBytes)} / ${formatDownloadBytes(totalBytes)}`
+      : null;
+  return (
+    <Dialog open={props.open} title={tr("dialogs.whisperDownloadTitle")} onClose={props.onClose}>
+      <div className="export-progress">
+        <p className="dialog-message">{tr("dialogs.whisperDownloadDescription")}</p>
+        <div className={`export-progress-status export-progress-status-${status}`}>
+          <span>
+            {status === "completed"
+              ? tr("dialogs.whisperDownloadComplete")
+              : status === "failed"
+                ? tr("dialogs.whisperDownloadFailed")
+                : tr("dialogs.whisperDownloadPreparing")}
+          </span>
+          <strong>{Math.round(progress * 100)}%</strong>
+        </div>
+        <progress value={progress} max={1} />
+        {transferLabel ? <div className="export-progress-note">{transferLabel}</div> : null}
+        {props.job?.error ? <div className="warning-text">{props.job.error}</div> : null}
+      </div>
+      {status === "completed" || status === "failed" ? (
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={props.onClose}>
+            {tr("common.close")}
+          </Button>
+        </div>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function formatDownloadBytes(value: number) {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${Math.max(0, Math.round(value))} B`;
 }
 
 function ExportProgressDialog(props: {

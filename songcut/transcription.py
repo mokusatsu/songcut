@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 import tempfile
+import threading
 import win_safesubprocess as subprocess
 import wave
 from dataclasses import dataclass, field
@@ -61,6 +62,18 @@ WHISPER_MODELS: dict[str, WhisperModelSpec] = {
 WHISPER_MODEL_ID = WHISPER_MODELS["small"].model_id
 WHISPER_MODEL_NAME = WHISPER_MODELS["small"].directory_name
 WHISPER_OPENVINO_REPO_ID = WHISPER_MODELS["small"].openvino_repo_id
+WHISPER_REQUIRED_FILES = (
+    "config.json",
+    "generation_config.json",
+    "openvino_encoder_model.xml",
+    "openvino_encoder_model.bin",
+    "openvino_decoder_model.xml",
+    "openvino_decoder_model.bin",
+    "openvino_tokenizer.xml",
+    "openvino_tokenizer.bin",
+    "openvino_detokenizer.xml",
+    "openvino_detokenizer.bin",
+)
 
 # The multilingual Whisper vocabulary. The API exposes stable language codes and
 # converts them to OpenVINO GenAI's token form only at the inference boundary.
@@ -196,7 +209,13 @@ def resolve_whisper_model_dir(model_key: str = "small") -> tuple[Path, str] | No
 
 def whisper_model_ready(model_dir: Path | None = None) -> bool:
     target = model_dir or whisper_model_dir()
-    return (target / "openvino_encoder_model.xml").exists() and (target / "generation_config.json").exists()
+    try:
+        return all(
+            (target / filename).is_file() and (target / filename).stat().st_size > 0
+            for filename in WHISPER_REQUIRED_FILES
+        )
+    except OSError:
+        return False
 
 
 def ensure_whisper_model(
@@ -204,6 +223,7 @@ def ensure_whisper_model(
     *,
     model_key: str = "small",
     quantized_int8: bool = False,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path:
     del quantized_int8  # The selectable models are fixed official FP16 artifacts.
     spec = require_whisper_model(model_key)
@@ -219,7 +239,11 @@ def ensure_whisper_model(
     if tmp_target.exists():
         shutil.rmtree(tmp_target)
 
-    download_preconverted_whisper(tmp_target, repo_id=spec.openvino_repo_id)
+    download_preconverted_whisper(
+        tmp_target,
+        repo_id=spec.openvino_repo_id,
+        progress_callback=progress_callback,
+    )
 
     if target.exists():
         shutil.rmtree(target)
@@ -227,25 +251,95 @@ def ensure_whisper_model(
     return target
 
 
-def download_preconverted_whisper(target: Path, *, repo_id: str = WHISPER_OPENVINO_REPO_ID) -> None:
+def _download_progress_tqdm(
+    progress_callback: Callable[[int, int], None] | None,
+):
+    from huggingface_hub.utils import tqdm as huggingface_tqdm
+
+    callback_lock = threading.RLock()
+
+    class SongcutDownloadTqdm(huggingface_tqdm):
+        """Headless-safe tqdm that reports aggregate reconstructed bytes."""
+
+        def __init__(self, *args, **kwargs) -> None:
+            self._songcut_progress_name = kwargs.get("name")
+            kwargs["disable"] = True
+            super().__init__(*args, **kwargs)
+
+        def _notify_songcut(self) -> None:
+            if (
+                progress_callback is None
+                or self._songcut_progress_name != "huggingface_hub.snapshot_download"
+            ):
+                return
+            with callback_lock:
+                progress_callback(int(self.n or 0), int(self.total or 0))
+
+        def update(self, n: int | float | None = 1):
+            # tqdm deliberately ignores updates while disabled. Maintain the
+            # counters ourselves because this class is always headless.
+            increment = float(n or 0)
+            with callback_lock:
+                self.n = float(self.n or 0) + increment
+                self._notify_songcut()
+            return True
+
+        def refresh(self, *args, **kwargs):
+            self._notify_songcut()
+            return True
+
+        def set_description(self, desc=None, refresh=True):
+            self.desc = desc or ""
+            if refresh:
+                self.refresh()
+
+    return SongcutDownloadTqdm
+
+
+def download_preconverted_whisper(
+    target: Path,
+    *,
+    repo_id: str = WHISPER_OPENVINO_REPO_ID,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> None:
     try:
         from huggingface_hub import snapshot_download
     except Exception as exc:
         raise RuntimeError("huggingface-hub is required to download the OpenVINO Whisper model.") from exc
 
+    allow_patterns = [
+        "*.json",
+        "*.txt",
+        "*.model",
+        "*.xml",
+        "*.bin",
+        "*.tiktoken",
+    ]
+    dry_run_files = snapshot_download(
+        repo_id=repo_id,
+        local_dir=target,
+        cache_dir=huggingface_cache_dir(),
+        tqdm_class=_download_progress_tqdm(None),
+        allow_patterns=allow_patterns,
+        dry_run=True,
+    )
+    total_bytes = sum(int(file.file_size) for file in dry_run_files)
+    if progress_callback is not None:
+        progress_callback(0, total_bytes)
+
+    def report_fixed_total(downloaded_bytes: int, _dynamic_total_bytes: int) -> None:
+        if progress_callback is not None:
+            progress_callback(min(downloaded_bytes, total_bytes), total_bytes)
+
     snapshot_download(
         repo_id=repo_id,
         local_dir=target,
         cache_dir=huggingface_cache_dir(),
-        allow_patterns=[
-            "*.json",
-            "*.txt",
-            "*.model",
-            "*.xml",
-            "*.bin",
-            "*.tiktoken",
-        ],
+        tqdm_class=_download_progress_tqdm(report_fixed_total),
+        allow_patterns=allow_patterns,
     )
+    if progress_callback is not None:
+        progress_callback(total_bytes, total_bytes)
     if not whisper_model_ready(target):
         raise RuntimeError(f"Downloaded {repo_id}, but required OpenVINO Whisper files were not found.")
 

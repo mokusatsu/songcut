@@ -81,6 +81,7 @@ type Props = {
   editing: boolean;
   state: SubtitleProjectState;
   whisperSettings: WhisperSettings;
+  onPrepareWhisperModel: () => Promise<void> | undefined;
   saveStatus: string;
   message: string;
   onStateChange: (state: SubtitleProjectState) => void;
@@ -119,6 +120,7 @@ export function SubModePanel(props: Props) {
   const [styleLaneId, setStyleLaneId] = useState<string | null>(null);
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [busy, setBusy] = useState<"analysis" | "export" | null>(null);
+  const [preparingModel, setPreparingModel] = useState(false);
   const [analysisJob, setAnalysisJob] = useState<JobRecord | null>(null);
   const [analysisProgressOpen, setAnalysisProgressOpen] = useState(false);
   const [exportJob, setExportJob] = useState<JobRecord | null>(null);
@@ -263,6 +265,18 @@ export function SubModePanel(props: Props) {
     }
   }
 
+  async function openLyricsDialog() {
+    setPreparingModel(true);
+    try {
+      await props.onPrepareWhisperModel();
+      setLyricsOpen(true);
+    } catch (error) {
+      props.onMessage(`Whisperモデルのダウンロードに失敗しました: ${String(error)}`);
+    } finally {
+      setPreparingModel(false);
+    }
+  }
+
   async function exportSubtitles() {
     if (!props.apiBaseUrl || !props.videoPath || !props.videoInfo) return;
     const outputDir = await window.songcut.selectOutputDirectory();
@@ -362,8 +376,8 @@ export function SubModePanel(props: Props) {
           読み込む
         </Button>
         <Button
-          onClick={() => setLyricsOpen(true)}
-          disabled={!props.sourceAvailable || !props.apiBaseUrl || Boolean(busy)}
+          onClick={() => void openLyricsDialog()}
+          disabled={!props.sourceAvailable || !props.apiBaseUrl || Boolean(busy) || preparingModel}
         >
           <Wand2 size={16} />
           解析

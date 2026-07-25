@@ -9,18 +9,57 @@ import numpy as np
 
 from songcut.transcription import (
     WHISPER_MODELS,
+    WHISPER_REQUIRED_FILES,
     WhisperRuntime,
+    download_preconverted_whisper,
     huggingface_cache_dir,
     normalize_whisper_language,
     resolve_whisper_model_dir,
     select_whisper_runtime,
     transcribe_segments,
     whisper_language_options,
+    whisper_model_ready,
     whisper_model_statuses,
 )
 
 
 class TranscriptionRuntimeTests(unittest.TestCase):
+    @staticmethod
+    def write_ready_model(target: Path) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        for filename in WHISPER_REQUIRED_FILES:
+            (target / filename).write_text("model", encoding="utf-8")
+
+    def test_headless_model_download_reports_bytes_without_console_stream(self) -> None:
+        progress: list[tuple[int, int]] = []
+
+        def fake_snapshot_download(**kwargs: object):
+            if kwargs.get("dry_run"):
+                return [SimpleNamespace(file_size=100)]
+            target = Path(str(kwargs["local_dir"]))
+            self.write_ready_model(target)
+            tqdm_class = kwargs["tqdm_class"]
+            bar = tqdm_class(
+                name="huggingface_hub.snapshot_download",
+                desc="Reconstructing",
+                total=100,
+                initial=0,
+                unit="B",
+            )
+            bar.update(25)
+            bar.update(75)
+            bar.close()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with mock.patch("huggingface_hub.snapshot_download", side_effect=fake_snapshot_download):
+                download_preconverted_whisper(
+                    Path(temp_dir),
+                    progress_callback=lambda downloaded, total: progress.append((downloaded, total)),
+                )
+
+        self.assertIn((25, 100), progress)
+        self.assertIn((100, 100), progress)
+
     def test_model_registry_is_fixed_to_official_tiny_base_small(self) -> None:
         self.assertEqual(list(WHISPER_MODELS), ["tiny", "base", "small"])
         self.assertEqual(WHISPER_MODELS["base"].openvino_repo_id, "OpenVINO/whisper-base-fp16-ov")
@@ -43,9 +82,7 @@ class TranscriptionRuntimeTests(unittest.TestCase):
             bundled = root / "bundled"
             for model_root in (writable, bundled):
                 ready = model_root / "openvino" / "whisper-small"
-                ready.mkdir(parents=True)
-                (ready / "openvino_encoder_model.xml").write_text("model", encoding="utf-8")
-                (ready / "generation_config.json").write_text("{}", encoding="utf-8")
+                self.write_ready_model(ready)
             with mock.patch.dict(
                 "os.environ",
                 {"SONGCUT_MODEL_DIR": str(writable), "SONGCUT_BUNDLED_MODEL_DIR": str(bundled)},
@@ -57,6 +94,20 @@ class TranscriptionRuntimeTests(unittest.TestCase):
         small = next(row for row in statuses if row["key"] == "small")
         self.assertTrue(small["ready"])
         self.assertEqual(small["source"], "downloaded")
+
+    def test_model_is_not_ready_when_a_required_binary_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "whisper-small"
+            self.write_ready_model(target)
+            (target / "openvino_encoder_model.bin").unlink()
+            self.assertFalse(whisper_model_ready(target))
+
+    def test_model_is_not_ready_when_a_required_file_is_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "whisper-small"
+            self.write_ready_model(target)
+            (target / "openvino_decoder_model.bin").write_bytes(b"")
+            self.assertFalse(whisper_model_ready(target))
 
     def test_huggingface_cache_defaults_beside_the_writable_model_root(self) -> None:
         with mock.patch.dict("os.environ", {"SONGCUT_MODEL_DIR": "C:\\local\\songcut\\models"}, clear=True):

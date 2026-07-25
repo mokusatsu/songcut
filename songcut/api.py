@@ -652,8 +652,42 @@ def _check_executable_runs(label: str, executable: Path) -> None:
 def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
     try:
         spec = require_whisper_model(model_key)
-        update_job(job_id, status="running", progress=0.05, message=f"Downloading Whisper {spec.display_name}.")
-        model_dir = ensure_whisper_model(model_key=model_key)
+        update_job(job_id, status="running", progress=0.0, message=f"Downloading Whisper {spec.display_name}.")
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message=f"Downloading Whisper {spec.display_name}.",
+                    result={
+                        "model": model_key,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_dir = ensure_whisper_model(
+            model_key=model_key,
+            progress_callback=on_download_progress,
+        )
         resolved = resolve_whisper_model_dir(model_key)
         source = resolved[1] if resolved is not None else "downloaded"
         update_job(
