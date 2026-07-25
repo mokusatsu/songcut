@@ -1,4 +1,6 @@
+import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,15 +11,39 @@ from songcut.smart_export import (
     SmartRenderPlan,
     SmartRenderSpan,
     SourceMediaInfo,
+    VideoFramePoint,
     estimate_reencode_bitrate,
     estimate_smart_render,
     export_smart_clip,
     plan_smart_render,
     probe_keyframes,
+    snap_video_range_to_frames,
 )
 
 
 class SmartExportTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.snap_patcher = mock.patch(
+            "songcut.smart_export.snap_video_range_to_frames",
+            side_effect=lambda _ffprobe, _source, *, start, end: (start, end),
+        )
+        self.span_validation_patcher = mock.patch("songcut.smart_export._validate_video_span")
+        self.keyframe_packet_patcher = mock.patch(
+            "songcut.smart_export._probe_keyframe_packet",
+            side_effect=lambda _ffprobe, _source, pts: VideoFramePoint(
+                pts=pts,
+                dts=max(0.0, pts - 0.02),
+                duration=1 / 60,
+                keyframe=True,
+            ),
+        )
+        self.snap_patcher.start()
+        self.span_validation_patcher.start()
+        self.keyframe_packet_patcher.start()
+        self.addCleanup(self.snap_patcher.stop)
+        self.addCleanup(self.span_validation_patcher.stop)
+        self.addCleanup(self.keyframe_packet_patcher.stop)
+
     def test_estimate_smart_render_uses_only_container_and_video_codec(self) -> None:
         supported = estimate_smart_render("matroska,webm", "vp9", Path("source.webm"))
         unsupported = estimate_smart_render("mov,mp4", "hevc", Path("source.mp4"))
@@ -102,6 +128,28 @@ class SmartExportTests(unittest.TestCase):
             keyframes = probe_keyframes(Path("ffprobe"), Path("source.webm"), start=0.0, end=4.0)
 
         self.assertEqual(keyframes, [2.0, 3.0])
+
+    def test_snap_video_range_uses_nearest_frame_pts_boundaries(self) -> None:
+        start_frames = [
+            VideoFramePoint(pts=10.000, dts=9.983, duration=0.017, keyframe=False),
+            VideoFramePoint(pts=10.017, dts=10.000, duration=0.016, keyframe=False),
+        ]
+        end_frames = [
+            VideoFramePoint(pts=19.983, dts=19.966, duration=0.017, keyframe=False),
+            VideoFramePoint(pts=20.000, dts=19.983, duration=0.017, keyframe=True),
+        ]
+        with mock.patch(
+            "songcut.smart_export.probe_video_frames",
+            side_effect=[start_frames, end_frames],
+        ):
+            snapped = snap_video_range_to_frames(
+                Path("ffprobe"),
+                Path("source.mkv"),
+                start=10.012,
+                end=19.995,
+            )
+
+        self.assertEqual(snapped, (10.017, 20.000))
 
     def test_plan_vp9_webm_uses_webm_profile(self) -> None:
         info = SourceMediaInfo(
@@ -358,6 +406,7 @@ class SmartExportTests(unittest.TestCase):
         self.assertEqual(result["target"], str(expected_target))
         self.assertTrue(any("libsvtav1" in command for command in commands))
         self.assertTrue(any("libopus" in command for command in commands))
+        self.assertNotIn("-shortest", commands[-1])
         self.assertEqual(commands[-1][-1], str(expected_target))
 
     def test_export_smart_clip_changes_target_suffix_for_mkv(self) -> None:
@@ -403,8 +452,10 @@ class SmartExportTests(unittest.TestCase):
 
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(result["target"], str(expected_target))
-        self.assertTrue(any("h264_mp4toannexb" in command for command in commands))
-        self.assertTrue(any(["-f", "mpegts"] == command[index : index + 2] for command in commands for index in range(len(command) - 1)))
+        self.assertFalse(any("h264_mp4toannexb" in command for command in commands))
+        self.assertFalse(any(["-f", "mpegts"] == command[index : index + 2] for command in commands for index in range(len(command) - 1)))
+        copy_command = next(command for command in commands if ["-c:v", "copy"] in [command[index : index + 2] for index in range(len(command) - 1)] and "-f" not in command)
+        self.assertLess(copy_command.index("-i"), copy_command.index("-ss"))
         self.assertEqual(commands[-1][-1], str(expected_target))
 
     def test_export_smart_clip_falls_back_when_smart_pipeline_fails(self) -> None:
@@ -440,6 +491,86 @@ class SmartExportTests(unittest.TestCase):
         result_plan = result["smart_render_plan"]
         self.assertIn("smart render failed", result_plan["fallback_reason"])
         self.assertEqual([(span["mode"], span["start"], span["end"]) for span in result_plan["spans"]], [("encode", 10.0, 20.0)])
+
+
+class SmartExportFfmpegIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_h264_mkv_smart_render_preserves_frame_count_without_ts_fallback(self) -> None:
+        ffmpeg = Path(shutil.which("ffmpeg") or "ffmpeg")
+        ffprobe = Path(shutil.which("ffprobe") or "ffprobe")
+        with tempfile.TemporaryDirectory() as tmp_name:
+            tmp = Path(tmp_name)
+            source = tmp / "source.mkv"
+            target = tmp / "clip.mkv"
+            subprocess.run(
+                [
+                    str(ffmpeg),
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=320x180:rate=60:duration=6",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=48000:duration=6",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-g",
+                    "60",
+                    "-keyint_min",
+                    "60",
+                    "-sc_threshold",
+                    "0",
+                    "-bf",
+                    "1",
+                    "-c:a",
+                    "aac",
+                    source,
+                ],
+                check=True,
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
+
+            result = export_smart_clip(
+                ffmpeg,
+                ffprobe,
+                source,
+                target,
+                start=0.35,
+                end=5.65,
+            )
+            probe = subprocess.run(
+                [
+                    str(ffprobe),
+                    "-v",
+                    "error",
+                    "-count_frames",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=nb_read_frames",
+                    "-of",
+                    "json",
+                    target,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
+
+        self.assertIsNone(result["smart_render_plan"]["fallback_reason"])
+        self.assertEqual(result["smart_render_plan"]["container_family"], "mkv")
+        self.assertEqual(result["smart_render_plan"]["expected_video_frames"], 318)
+        self.assertEqual(json.loads(probe.stdout)["streams"][0]["nb_read_frames"], "318")
 
 
 if __name__ == "__main__":
