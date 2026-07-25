@@ -169,15 +169,24 @@ class ApiJobTests(unittest.TestCase):
             for index, confidence in enumerate(confidences, start=1)
         ]
         alignment = SimpleNamespace(title="title", lines=lines)
+        separated = SimpleNamespace(
+            vocals=Path("temporary/vocals.wav"),
+            no_vocals=Path("temporary/no_vocals.wav"),
+            model="htdemucs",
+        )
 
         with (
             mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.separate_vocals", return_value=separated) as separate,
             mock.patch(
                 "songcut.api.transcribe_whisper_chunks",
                 return_value=([], "recognized", 10.0, "CPU"),
-            ),
+            ) as transcribe,
             mock.patch("songcut.api.align_lyrics_to_chunks", return_value=alignment),
-            mock.patch("songcut.api.detect_beat_times", return_value=(120.0, [0.0, 0.5, 1.0], 10.0)),
+            mock.patch(
+                "songcut.api.detect_beat_times",
+                return_value=(120.0, [0.0, 0.5, 1.0], 10.0),
+            ) as detect_beats,
         ):
             _lyrics_analysis_job(
                 "lyrics-001",
@@ -187,6 +196,11 @@ class ApiJobTests(unittest.TestCase):
         completed = _jobs["lyrics-001"]
         self.assertEqual(completed.status, "completed")
         self.assertTrue(completed.result["rhythm_grid"])
+        self.assertEqual(completed.result["lyrics_audio_source"], "demucs-vocals")
+        separate.assert_called_once()
+        transcribe.assert_called_once()
+        self.assertEqual(transcribe.call_args.args[0], separated.vocals)
+        detect_beats.assert_called_once_with(Path("source.mp4"))
         self.assertEqual(completed.result["confidence_statistics"]["low_outlier_indexes"], [1])
         self.assertTrue(completed.result["lines"][0]["low_confidence_outlier"])
 
@@ -208,6 +222,13 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(updated.message, "Transcribed 2/5 segments.")
         self.assertEqual(updated.message_code, "transcriptionProgress")
         self.assertEqual(updated.message_args, {"current": 2, "total": 5})
+
+        update_job("job-001", message="Separating vocals with Demucs.")
+
+        with _jobs_lock:
+            updated = _jobs["job-001"]
+        self.assertEqual(updated.message_code, "lyricsSeparatingVocals")
+        self.assertIsNone(updated.message_args)
 
     def test_waveform_updates_return_only_points_after_the_cursor(self) -> None:
         now = time.time()

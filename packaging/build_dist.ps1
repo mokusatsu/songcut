@@ -262,8 +262,11 @@ finally {
   --collect-all pydantic `
   --collect-all pydantic_core `
   --collect-all librosa `
+  --collect-all demucs `
+  --collect-all julius `
+  --collect-all lameenc `
+  --collect-all safetensors `
   --collect-all win_safesubprocess `
-  --exclude-module torch `
   --exclude-module tensorflow `
   --exclude-module transformers `
   --exclude-module optimum `

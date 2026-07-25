@@ -19,6 +19,7 @@ openvino = [
   "openvino>=2026.0",
 ]
 gui = [
+  "demucs>=4.1,<4.2",
   "fastapi>=0.116",
   "uvicorn[standard]>=0.35",
   "librosa>=0.11,<0.12",
@@ -27,6 +28,7 @@ gui = [
   "openvino-tokenizers>=2026.0",
   "huggingface-hub>=0.30",
   "pyinstaller>=6.0",
+  "torch>=2.13,<2.14",
 ]
 
 [project.scripts]

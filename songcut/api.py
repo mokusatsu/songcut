@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import socket
+import tempfile
 import threading
 import time
 import traceback
@@ -23,6 +24,7 @@ from .rhythm_alignment import (
     detect_beat_times,
 )
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
+from .source_separation import separate_vocals
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
 from .subtitle_export import (
     SubtitleEffect,
@@ -578,6 +580,11 @@ _MESSAGE_CODES = {
     "Scratch proxy ready.": "proxyReady",
     "Scratch proxy generation cancelled.": "proxyCancelled",
     "Creating AAC scratch proxy.": "proxyCreating",
+    "Separating vocals with Demucs.": "lyricsSeparatingVocals",
+    "Transcribing isolated vocals.": "lyricsTranscribingVocals",
+    "Aligning lyrics.": "lyricsAligning",
+    "Detecting rhythm grid.": "lyricsDetectingRhythm",
+    "Lyrics analysis complete.": "lyricsComplete",
 }
 
 
@@ -900,14 +907,31 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
     try:
         source = require_file(request.source_path)
         document = parse_lyrics(request.lyrics_text)
-        update_job(job_id, status="running", progress=0.05, message="Transcribing lyrics source.")
-        chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
-            source,
-            model_key=request.model,
-            device=request.device,
-            language=request.language or "auto",
-        )
-        update_job(job_id, status="running", progress=0.65, message="Aligning lyrics.")
+        update_job(job_id, status="running", progress=0.03, message="Separating vocals with Demucs.")
+        with tempfile.TemporaryDirectory(prefix="songcut-demucs-") as temporary_directory:
+            separated = separate_vocals(
+                source,
+                Path(temporary_directory),
+                progress_callback=lambda progress: update_job(
+                    job_id,
+                    status="running",
+                    progress=0.03 + 0.37 * progress,
+                    message="Separating vocals with Demucs.",
+                ),
+            )
+            update_job(
+                job_id,
+                status="running",
+                progress=0.42,
+                message="Transcribing isolated vocals.",
+            )
+            chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
+                separated.vocals,
+                model_key=request.model,
+                device=request.device,
+                language=request.language or "auto",
+            )
+        update_job(job_id, status="running", progress=0.70, message="Aligning lyrics.")
         alignment = align_lyrics_to_chunks(document, chunks, media_duration=duration)
         beat_warning: str | None = None
         tempo_bpm = 0.0
@@ -915,7 +939,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
         rhythm_grid = []
         adjusted_lines = alignment.lines
         try:
-            update_job(job_id, status="running", progress=0.76, message="Detecting rhythm grid.")
+            update_job(job_id, status="running", progress=0.80, message="Detecting rhythm grid.")
             tempo_bpm, beat_times, _ = detect_beat_times(source)
             if len(beat_times) < 2:
                 raise RuntimeError("No stable beat sequence was detected.")
@@ -933,6 +957,8 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             "title": alignment.title,
             "duration": duration,
             "device_used": device_used,
+            "lyrics_audio_source": "demucs-vocals",
+            "demucs_model": separated.model,
             "whisper_text": whisper_text,
             "tempo_bpm": round(float(tempo_bpm), 3),
             "beat_times": beat_times,
