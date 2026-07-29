@@ -7,10 +7,13 @@ import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Callable, Iterable, Sequence
+
+import numpy as np
 
 from .ffmpeg_tools import find_ffmpeg, probe_duration
 from .transcription import (
+    DEFAULT_WHISPER_MODEL_KEY,
     TranscriptChunk,
     ensure_whisper_model,
     extract_segment_wav,
@@ -69,6 +72,66 @@ class _LineDraft:
     source: str
     matched_characters: int
     exact_characters: int
+
+
+WHISPER_AUDIO_SAMPLE_RATE = 16_000
+WHISPER_SILENCE_THRESHOLD_DB = -40.0
+WHISPER_SILENCE_FRAME_SECONDS = 0.020
+WHISPER_MIN_SILENCE_SECONDS = 0.250
+WHISPER_MIN_ACTIVE_SECONDS = 0.100
+
+
+def find_whisper_active_intervals(
+    audio: np.ndarray,
+    *,
+    sample_rate: int = WHISPER_AUDIO_SAMPLE_RATE,
+    threshold_db: float = WHISPER_SILENCE_THRESHOLD_DB,
+    frame_seconds: float = WHISPER_SILENCE_FRAME_SECONDS,
+    min_silence_seconds: float = WHISPER_MIN_SILENCE_SECONDS,
+    min_active_seconds: float = WHISPER_MIN_ACTIVE_SECONDS,
+) -> list[tuple[int, int]]:
+    """Locate audio to send to Whisper, splitting at sustained -40 dBFS silence."""
+    samples = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if samples.size == 0:
+        return []
+    frame_samples = max(1, int(round(sample_rate * frame_seconds)))
+    frame_count = math.ceil(samples.size / frame_samples)
+    padded = np.pad(samples, (0, frame_count * frame_samples - samples.size))
+    frames = padded.reshape(frame_count, frame_samples)
+    rms = np.sqrt(np.mean(np.square(frames, dtype=np.float32), axis=1))
+    threshold = 10.0 ** (threshold_db / 20.0)
+    active = rms > threshold
+    if not np.any(active):
+        return []
+
+    # A short dip inside a syllable is not a silence boundary. Only close gaps
+    # whose duration reaches min_silence_seconds are excluded from Whisper.
+    minimum_silent_frames = max(1, math.ceil(min_silence_seconds / frame_seconds))
+    first_active = int(np.flatnonzero(active)[0])
+    last_active = int(np.flatnonzero(active)[-1])
+    frame_intervals: list[tuple[int, int]] = []
+    interval_start = first_active
+    index = first_active
+    while index <= last_active:
+        if active[index]:
+            index += 1
+            continue
+        silence_start = index
+        while index <= last_active and not active[index]:
+            index += 1
+        if index - silence_start >= minimum_silent_frames:
+            frame_intervals.append((interval_start, silence_start))
+            interval_start = index
+    frame_intervals.append((interval_start, last_active + 1))
+
+    minimum_active_samples = max(1, int(round(sample_rate * min_active_seconds)))
+    intervals: list[tuple[int, int]] = []
+    for start_frame, end_frame in frame_intervals:
+        start = start_frame * frame_samples
+        end = min(samples.size, end_frame * frame_samples)
+        if end - start >= minimum_active_samples:
+            intervals.append((start, end))
+    return intervals
 
 
 def parse_lyrics(text: str, *, auto_title: bool = True) -> LyricsDocument:
@@ -367,9 +430,10 @@ def transcribe_whisper_chunks(
     source: Path,
     *,
     model_dir: Path | None = None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
     device: str = "cpu",
     language: str = "ja",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> tuple[list[TranscriptChunk], str, float, str]:
     try:
         import openvino_genai as ov_genai  # type: ignore
@@ -390,14 +454,42 @@ def transcribe_whisper_chunks(
         options: dict[str, object] = {"task": "transcribe", "return_timestamps": True}
         if language_token:
             options["language"] = language_token
-        decoded = pipeline.generate(raw_speech, **options)
+        intervals = find_whisper_active_intervals(raw_speech)
+        chunks: list[TranscriptChunk] = []
+        recognized_texts: list[str] = []
+        for interval_index, (sample_start, sample_end) in enumerate(intervals, start=1):
+            interval_audio = np.ascontiguousarray(raw_speech[sample_start:sample_end])
+            interval_start = sample_start / WHISPER_AUDIO_SAMPLE_RATE
+            interval_duration = (sample_end - sample_start) / WHISPER_AUDIO_SAMPLE_RATE
+            decoded = pipeline.generate(interval_audio, **options)
+            for chunk in getattr(decoded, "chunks", None) or []:
+                local_start = _safe_timestamp(
+                    getattr(chunk, "start_ts", None), 0.0, interval_duration
+                )
+                local_end = _safe_timestamp(
+                    getattr(chunk, "end_ts", None), interval_duration, interval_duration
+                )
+                text = str(chunk.text).strip()
+                if not text:
+                    continue
+                start = min(duration, interval_start + local_start)
+                end = min(duration, interval_start + max(local_start, local_end))
+                chunks.append(
+                    TranscriptChunk(
+                        start=round(start, 3),
+                        end=round(max(start, end), 3),
+                        text=text,
+                    )
+                )
+            decoded_text = str(
+                getattr(decoded, "texts", [""])[0] if hasattr(decoded, "texts") else decoded
+            ).strip()
+            if decoded_text:
+                recognized_texts.append(decoded_text)
+            if progress_callback is not None:
+                progress_callback(interval_index, len(intervals))
 
-    chunks: list[TranscriptChunk] = []
-    for chunk in getattr(decoded, "chunks", None) or []:
-        start = _safe_timestamp(getattr(chunk, "start_ts", None), 0.0, duration)
-        end = _safe_timestamp(getattr(chunk, "end_ts", None), duration, duration)
-        chunks.append(TranscriptChunk(start=round(start, 3), end=round(max(start, end), 3), text=str(chunk.text).strip()))
-    text = str(getattr(decoded, "texts", [""])[0] if hasattr(decoded, "texts") else decoded).strip()
+    text = " ".join(recognized_texts).strip()
     return chunks, text, duration, runtime.device_used
 
 
@@ -418,7 +510,7 @@ def generate_lyrics_srt(
     *,
     diagnostics_path: Path | None = None,
     model_dir: Path | None = None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
     device: str = "cpu",
     language: str = "ja",
     auto_title: bool = True,
@@ -472,7 +564,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--diagnostics", type=Path)
     parser.add_argument("--model-dir", type=Path)
-    parser.add_argument("--model", choices=("tiny", "base", "small"), default="small")
+    parser.add_argument(
+        "--model",
+        choices=("tiny", "base", "small", "whisper-large-v3-turbo-int8-ov"),
+        default=DEFAULT_WHISPER_MODEL_KEY,
+    )
     parser.add_argument("--device", choices=("auto", "npu", "gpu", "cpu"), default="cpu")
     parser.add_argument("--language", default="ja")
     parser.add_argument("--keep-first-line", action="store_true", help="Treat a leading one-line block as lyrics, not a title.")

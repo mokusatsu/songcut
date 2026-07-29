@@ -31,18 +31,20 @@ import {
   ApiError,
   cancelScratchProxy,
   checkFfmpeg,
+  getDemucsStatus,
   getExportPlan,
   getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
   startAnalysis,
+  startDemucsDownload,
   startExport,
   startScratchProxy,
   startTranscription,
   startWhisperDownload,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, DemucsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
@@ -239,6 +241,7 @@ export default function App(props: {
   const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
   const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
+  const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
@@ -291,6 +294,9 @@ export default function App(props: {
   const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
   const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
   const [whisperDownloadJob, setWhisperDownloadJob] = useState<JobRecord | null>(null);
+  const [demucsStatus, setDemucsStatus] = useState<DemucsStatus | null>(null);
+  const [demucsDownloadOpen, setDemucsDownloadOpen] = useState(false);
+  const [demucsDownloadJob, setDemucsDownloadJob] = useState<JobRecord | null>(null);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -442,7 +448,7 @@ export default function App(props: {
   );
   const selectedWhisperModel = whisperStatus?.models.find((model) => model.key === whisperSettings.model) ?? null;
   const whisperBusy = taskRegistry.runningTasks.some((task) =>
-    ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper"].includes(task.kind)
+    ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper", "download-demucs"].includes(task.kind)
   );
 
   projectDocumentRef.current = projectDocument;
@@ -540,6 +546,7 @@ export default function App(props: {
   useEffect(() => {
     if (!apiBaseUrl) return;
     void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
+    void refreshDemucsStatus().catch((error) => setMessage(`Demucs status unavailable: ${String(error)}`));
   }, [apiBaseUrl]);
 
   useEffect(() => {
@@ -704,6 +711,13 @@ export default function App(props: {
     if (!apiBaseUrl) return null;
     const status = await getWhisperStatus(apiBaseUrl);
     setWhisperStatus(status);
+    return status;
+  }
+
+  async function refreshDemucsStatus() {
+    if (!apiBaseUrl) return null;
+    const status = await getDemucsStatus(apiBaseUrl);
+    setDemucsStatus(status);
     return status;
   }
 
@@ -1225,6 +1239,88 @@ export default function App(props: {
       }
     })();
     whisperDownloadPromiseRef.current = operation;
+    return operation;
+  }
+
+  async function ensureDemucs(options: { showReadyState?: boolean } = {}) {
+    if (!apiBaseUrl) return;
+    if (demucsDownloadPromiseRef.current) return demucsDownloadPromiseRef.current;
+
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshDemucsStatus();
+        if (currentStatus?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentStatus.installed_bytes;
+            setDemucsDownloadJob({
+              id: "already-ready-demucs",
+              kind: "download-demucs",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.demucsDownloadComplete"),
+              result: {
+                model: currentStatus.model,
+                model_dir: currentStatus.model_dir,
+                source: currentStatus.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setDemucsDownloadOpen(true);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setDemucsDownloadOpen(true);
+        setDemucsDownloadJob({
+          id: "starting-demucs",
+          kind: "download-demucs",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.demucsDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startDemucsDownload(apiBaseUrl);
+        setDemucsDownloadJob(started);
+        taskRegistry.updateTask("download-demucs", started);
+        await waitForJob(
+          apiBaseUrl,
+          started.id,
+          (nextJob) => {
+            setDemucsDownloadJob(nextJob);
+            taskRegistry.updateTask("download-demucs", nextJob);
+          },
+          250
+        );
+        await refreshDemucsStatus();
+      } catch (error) {
+        setDemucsDownloadOpen(true);
+        setDemucsDownloadJob((current) =>
+          current?.status === "failed"
+            ? current
+            : {
+                id: current?.id ?? "failed-demucs",
+                kind: "download-demucs",
+                status: "failed",
+                progress: current?.progress ?? 0,
+                message: tr("dialogs.demucsDownloadFailed"),
+                error: String(error),
+                created_at: current?.created_at ?? Date.now() / 1000,
+                updated_at: Date.now() / 1000,
+              }
+        );
+        throw error;
+      } finally {
+        demucsDownloadPromiseRef.current = null;
+      }
+    })();
+    demucsDownloadPromiseRef.current = operation;
     return operation;
   }
 
@@ -2410,6 +2506,10 @@ export default function App(props: {
               await ensureWhisper();
               setWhisperDownloadOpen(false);
             }}
+            onPrepareDemucsModel={async () => {
+              await ensureDemucs();
+              setDemucsDownloadOpen(false);
+            }}
             saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
             message={message}
             onStateChange={(state) => {
@@ -2579,6 +2679,8 @@ export default function App(props: {
         whisperSettings={whisperSettings}
         whisperStatus={whisperStatus}
         whisperBusy={whisperBusy}
+        demucsStatus={demucsStatus}
+        demucsBusy={whisperBusy}
         hasSegments={segments.length > 0}
         transcriptStale={transcriptStale}
         sourceAvailable={sourceAvailable}
@@ -2612,6 +2714,10 @@ export default function App(props: {
         onPrepareWhisperModel={() => {
           closeSettings();
           void ensureWhisper({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
+        onPrepareDemucsModel={() => {
+          closeSettings();
+          void ensureDemucs({ showReadyState: true }).catch((error) => setMessage(String(error)));
         }}
         onTranscribe={() => {
           closeSettings();
@@ -2651,6 +2757,16 @@ export default function App(props: {
         open={whisperDownloadOpen}
         job={whisperDownloadJob}
         onClose={() => setWhisperDownloadOpen(false)}
+      />
+      <ModelDownloadProgressDialog
+        open={demucsDownloadOpen}
+        job={demucsDownloadJob}
+        title={tr("dialogs.demucsDownloadTitle")}
+        description={tr("dialogs.demucsDownloadDescription")}
+        preparing={tr("dialogs.demucsDownloadPreparing")}
+        failed={tr("dialogs.demucsDownloadFailed")}
+        complete={tr("dialogs.demucsDownloadComplete")}
+        onClose={() => setDemucsDownloadOpen(false)}
       />
       <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
@@ -2840,6 +2956,7 @@ function jobKindLabel(kind: string) {
   if (kind === "transcription") return tr("tasks.transcription");
   if (kind === "export") return tr("tasks.export");
   if (kind === "download-whisper") return tr("tasks.download");
+  if (kind === "download-demucs") return tr("tasks.demucsDownload");
   if (kind === "waveform") return tr("tasks.waveform");
   if (kind === "scratch-proxy") return tr("tasks.proxy");
   return tr("tasks.generic");
@@ -4017,6 +4134,28 @@ function WhisperDownloadProgressDialog(props: {
   job: JobRecord | null;
   onClose: () => void;
 }) {
+  return (
+    <ModelDownloadProgressDialog
+      {...props}
+      title={tr("dialogs.whisperDownloadTitle")}
+      description={tr("dialogs.whisperDownloadDescription")}
+      preparing={tr("dialogs.whisperDownloadPreparing")}
+      failed={tr("dialogs.whisperDownloadFailed")}
+      complete={tr("dialogs.whisperDownloadComplete")}
+    />
+  );
+}
+
+function ModelDownloadProgressDialog(props: {
+  open: boolean;
+  job: JobRecord | null;
+  title: string;
+  description: string;
+  preparing: string;
+  failed: string;
+  complete: string;
+  onClose: () => void;
+}) {
   const status = props.job?.status ?? "queued";
   const result =
     props.job?.result && typeof props.job.result === "object"
@@ -4037,16 +4176,16 @@ function WhisperDownloadProgressDialog(props: {
       ? `${formatDownloadBytes(downloadedBytes)} / ${formatDownloadBytes(totalBytes)}`
       : null;
   return (
-    <Dialog open={props.open} title={tr("dialogs.whisperDownloadTitle")} onClose={props.onClose}>
+    <Dialog open={props.open} title={props.title} onClose={props.onClose}>
       <div className="export-progress">
-        <p className="dialog-message">{tr("dialogs.whisperDownloadDescription")}</p>
+        <p className="dialog-message">{props.description}</p>
         <div className={`export-progress-status export-progress-status-${status}`}>
           <span>
             {status === "completed"
-              ? tr("dialogs.whisperDownloadComplete")
+              ? props.complete
               : status === "failed"
-                ? tr("dialogs.whisperDownloadFailed")
-                : tr("dialogs.whisperDownloadPreparing")}
+                ? props.failed
+                : props.preparing}
           </span>
           <strong>{Math.round(progress * 100)}%</strong>
         </div>

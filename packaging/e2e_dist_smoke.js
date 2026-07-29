@@ -1515,7 +1515,7 @@ function cleanup(processHandle, cdp) {
         initialProject.schema_version === 3 &&
         (initialProject.waveform_snapshot === null || typeof initialProject.waveform_snapshot?.data_base64 === "string") &&
         initialProject.settings?.whisper?.enabled === false &&
-        initialProject.settings?.whisper?.model === "small" &&
+        initialProject.settings?.whisper?.model === "whisper-large-v3-turbo-int8-ov" &&
         initialProject.settings?.whisper?.language === "ja" &&
         initialProject.settings?.whisper?.device === "auto" &&
         initialProject.settings?.export?.filename_template === "{index}_{title}",

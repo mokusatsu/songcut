@@ -38,6 +38,17 @@ def configure_logging(root: Path) -> Path:
     return log_path
 
 
+def configure_standard_streams(log_path: Path) -> None:
+    """Give console-oriented libraries writable streams in a windowed PyInstaller build."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    stream = log_path.open("a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+
+
 def configure_environment(root: Path, base_url: str) -> dict[str, str]:
     local_app_data = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
     writable_root = local_app_data / "songcut"
@@ -47,7 +58,6 @@ def configure_environment(root: Path, base_url: str) -> dict[str, str]:
     os.environ.setdefault("SONGCUT_MODEL_DIR", str(writable_root / "models"))
     os.environ.setdefault("OV_CACHE_DIR", str(writable_root / "ov-cache"))
     os.environ.setdefault("HF_HOME", str(writable_root / "hf-home"))
-    os.environ.setdefault("TORCH_HOME", str(writable_root / "torch-home"))
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["OV_TELEMETRY_ENABLE"] = "NO"
     os.environ["PYTHONUTF8"] = "1"
@@ -90,6 +100,7 @@ def show_startup_error(log_path: Path, error: Exception) -> None:
 def run(argv: list[str] | None = None) -> int:
     root = distribution_root()
     log_path = configure_logging(root)
+    configure_standard_streams(log_path)
     electron_process: subprocess.Popen | None = None
     server: uvicorn.Server | None = None
     try:

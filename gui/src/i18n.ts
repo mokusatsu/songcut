@@ -14,7 +14,7 @@ const en = {
   settings: {
     title: "Settings", playback: "Playback and analysis", scratchDuration: "Scratch preview duration",
     useProxy: "Use scratch audio proxy", waveform: "Waveform display", peak: "Peak Envelope", peakRms: "Peak + RMS",
-    analysisDevice: "Singing analysis device", whisper: "Whisper transcription", export: "Export",
+    analysisDevice: "Singing analysis device", whisper: "Whisper transcription", demucs: "Vocal separation", export: "Export",
     filenameTemplate: "Filename template", placeholders: "Available placeholders: {{placeholders}}",
     projectOnly: "This setting is saved separately for each .songcut project.", tools: "Tools",
     toolsHelp: "Check the ffmpeg and ffprobe executables used by analysis and export.", ffmpegCheck: "ffmpeg Check",
@@ -30,6 +30,11 @@ const en = {
     openLanguages: "Open language options", closeLanguages: "Close language options", languages: "Whisper languages",
     noLanguages: "No matching languages", fastest: "Fastest", basic: "Basic", balanced: "Balanced", good: "Good",
     slower: "Slower", best: "Best",
+  },
+  demucs: {
+    ready: "Ready", missing: "Not downloaded", checking: "Checking…",
+    prepare: "Prepare Demucs Model", installed: "{{size}} installed",
+    description: "OpenVINO Demucs separates vocals before Sub mode lyrics analysis.",
   },
   app: {
     sourceMissingBanner: "Source missing — saved guide, segments, waveform, and transcripts remain available.", relink: "Relink",
@@ -56,7 +61,7 @@ const en = {
   },
   tasks: {
     analysis: "Analysis", transcription: "Transcription", export: "Export", download: "Whisper model download",
-    waveform: "Waveform generation", proxy: "Scratch audio preparation", generic: "A task",
+    demucsDownload: "Demucs model download", waveform: "Waveform generation", proxy: "Scratch audio preparation", generic: "A task",
   },
   segments: {
     export: "Export", title: "Title", id: "ID", start: "Start", end: "End", duration: "Duration", newTitle: "New Segment",
@@ -103,6 +108,11 @@ const en = {
     whisperDownloadPreparing: "Preparing the Whisper model download…",
     whisperDownloadFailed: "Whisper model download failed.",
     whisperDownloadComplete: "Whisper model download complete.",
+    demucsDownloadTitle: "Download Demucs model",
+    demucsDownloadDescription: "Downloading the Demucs model (vocal separation AI). This is required only once; subsequent operations use the downloaded model.",
+    demucsDownloadPreparing: "Preparing the Demucs model download…",
+    demucsDownloadFailed: "Demucs model download failed.",
+    demucsDownloadComplete: "Demucs model download complete.",
     recoveryTitle: "Recover unsaved songcut edits?", recoveryAvailable: "A recovery snapshot is available.",
     recoveryDetail: "{{filename}} has a recovery snapshot from {{date}} at revision {{revision}}.",
     saveFailedTitle: "Could not save the current project", saveFailed: "The current project could not be saved.",
@@ -124,6 +134,7 @@ const en = {
     waveformCancelled: "Waveform generation cancelled.", analysisRunning: "Analyzing singing segments.", analysisSingingComplete: "Singing analysis complete.", analysisComplete: "Analysis complete.",
     transcriptionPreparing: "Preparing Whisper transcription.", transcriptionProgress: "Transcribed {{current}}/{{total}} segments.",
     whisperDownloading: "Downloading Whisper {{model}}.", whisperReady: "Whisper {{model}} model ready.",
+    demucsDownloading: "Downloading OpenVINO Demucs.", demucsReady: "OpenVINO Demucs model ready.",
     exportingItem: "Exporting {{id}}.", proxyPreparing: "Preparing AAC scratch proxy.", proxyCreating: "Creating AAC scratch proxy.", proxyReady: "Scratch proxy ready.", proxyCancelled: "Scratch proxy generation cancelled.",
     lyricsSeparatingVocals: "Separating vocals with Demucs.", lyricsTranscribingVocals: "Transcribing isolated vocals.",
     lyricsAligning: "Aligning lyrics.", lyricsDetectingRhythm: "Detecting rhythm grid.", lyricsComplete: "Lyrics analysis complete.",
@@ -162,7 +173,7 @@ const ja: TranslationShape<typeof en> = {
   settings: {
     title: "設定", playback: "再生と解析", scratchDuration: "スクラッチ試聴時間",
     useProxy: "スクラッチ音声プロキシを使用", waveform: "波形表示", peak: "ピーク包絡", peakRms: "ピーク + RMS",
-    analysisDevice: "歌唱解析デバイス", whisper: "Whisper 文字起こし", export: "書き出し",
+    analysisDevice: "歌唱解析デバイス", whisper: "Whisper 文字起こし", demucs: "ボーカル分離", export: "書き出し",
     filenameTemplate: "ファイル名テンプレート", placeholders: "使用可能なプレースホルダー: {{placeholders}}",
     projectOnly: "この設定は .songcut プロジェクトごとに保存されます。", tools: "ツール",
     toolsHelp: "解析と書き出しに使用する ffmpeg と ffprobe を確認します。", ffmpegCheck: "ffmpeg 確認",
@@ -178,6 +189,11 @@ const ja: TranslationShape<typeof en> = {
     openLanguages: "言語選択肢を開く", closeLanguages: "言語選択肢を閉じる", languages: "Whisper の言語",
     noLanguages: "一致する言語がありません", fastest: "最速", basic: "基本", balanced: "バランス", good: "良好",
     slower: "低速", best: "最高",
+  },
+  demucs: {
+    ready: "準備完了", missing: "未ダウンロード", checking: "確認中…",
+    prepare: "Demucs モデルを準備", installed: "{{size}} インストール済み",
+    description: "Subモードの歌詞解析前にOpenVINO Demucsでボーカルを分離します。",
   },
   app: {
     sourceMissingBanner: "ソースがありません — 保存済みのガイド、セグメント、波形、文字起こしは利用できます。", relink: "再リンク",
@@ -204,7 +220,7 @@ const ja: TranslationShape<typeof en> = {
   },
   tasks: {
     analysis: "解析", transcription: "文字起こし", export: "書き出し", download: "Whisper モデルのダウンロード",
-    waveform: "波形生成", proxy: "スクラッチ音声の準備", generic: "タスク",
+    demucsDownload: "Demucs モデルのダウンロード", waveform: "波形生成", proxy: "スクラッチ音声の準備", generic: "タスク",
   },
   segments: {
     export: "書き出し", title: "タイトル", id: "ID", start: "開始", end: "終了", duration: "長さ", newTitle: "新しいセグメント",
@@ -251,6 +267,11 @@ const ja: TranslationShape<typeof en> = {
     whisperDownloadPreparing: "Whisperモデルのダウンロードを準備しています…",
     whisperDownloadFailed: "Whisperモデルのダウンロードに失敗しました。",
     whisperDownloadComplete: "Whisperモデルのダウンロードが完了しました。",
+    demucsDownloadTitle: "Demucsモデルをダウンロード",
+    demucsDownloadDescription: "Demucsモデル（ボーカル分離AI）をダウンロードしています。この作業は初回のみで、以降はダウンロード済みのモデルが使用されます",
+    demucsDownloadPreparing: "Demucsモデルのダウンロードを準備しています…",
+    demucsDownloadFailed: "Demucsモデルのダウンロードに失敗しました。",
+    demucsDownloadComplete: "Demucsモデルのダウンロードが完了しました。",
     recoveryTitle: "未保存の songcut 編集を復元しますか？", recoveryAvailable: "復元用スナップショットがあります。",
     recoveryDetail: "{{filename}} には {{date}}、リビジョン {{revision}} の復元用スナップショットがあります。",
     saveFailedTitle: "現在のプロジェクトを保存できませんでした", saveFailed: "現在のプロジェクトを保存できませんでした。",
@@ -272,6 +293,7 @@ const ja: TranslationShape<typeof en> = {
     waveformCancelled: "波形生成をキャンセルしました。", analysisRunning: "歌唱セグメントを解析しています。", analysisSingingComplete: "歌唱解析が完了しました。", analysisComplete: "解析が完了しました。",
     transcriptionPreparing: "Whisper 文字起こしを準備しています。", transcriptionProgress: "{{total}} 件中 {{current}} 件を文字起こししました。",
     whisperDownloading: "Whisper {{model}} をダウンロードしています。", whisperReady: "Whisper {{model}} モデルの準備ができました。",
+    demucsDownloading: "OpenVINO Demucs をダウンロードしています。", demucsReady: "OpenVINO Demucs モデルの準備ができました。",
     exportingItem: "{{id}} を書き出しています。", proxyPreparing: "AAC スクラッチプロキシを準備しています。", proxyCreating: "AAC スクラッチプロキシを作成しています。", proxyReady: "スクラッチプロキシの準備ができました。", proxyCancelled: "スクラッチプロキシ生成をキャンセルしました。",
     lyricsSeparatingVocals: "Demucs でボーカルを分離しています。", lyricsTranscribingVocals: "分離したボーカルを文字起こししています。",
     lyricsAligning: "歌詞のタイミングを調整しています。", lyricsDetectingRhythm: "拍グリッドを検出しています。", lyricsComplete: "歌詞解析が完了しました。",

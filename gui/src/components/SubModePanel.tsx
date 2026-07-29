@@ -82,6 +82,7 @@ type Props = {
   state: SubtitleProjectState;
   whisperSettings: WhisperSettings;
   onPrepareWhisperModel: () => Promise<void> | undefined;
+  onPrepareDemucsModel: () => Promise<void> | undefined;
   saveStatus: string;
   message: string;
   onStateChange: (state: SubtitleProjectState) => void;
@@ -268,10 +269,11 @@ export function SubModePanel(props: Props) {
   async function openLyricsDialog() {
     setPreparingModel(true);
     try {
+      await props.onPrepareDemucsModel();
       await props.onPrepareWhisperModel();
       setLyricsOpen(true);
     } catch (error) {
-      props.onMessage(`Whisperモデルのダウンロードに失敗しました: ${String(error)}`);
+      props.onMessage(`解析モデルのダウンロードに失敗しました: ${String(error)}`);
     } finally {
       setPreparingModel(false);
     }

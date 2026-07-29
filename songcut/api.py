@@ -24,7 +24,13 @@ from .rhythm_alignment import (
     detect_beat_times,
 )
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
-from .source_separation import separate_vocals
+from .source_separation import (
+    DEMUCS_MODEL,
+    demucs_model_status,
+    ensure_demucs_model,
+    resolve_demucs_model_dir,
+    separate_vocals,
+)
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
 from .subtitle_export import (
     SubtitleEffect,
@@ -35,6 +41,7 @@ from .subtitle_export import (
     subtitle_style_from_mapping,
 )
 from .transcription import (
+    DEFAULT_WHISPER_MODEL_KEY,
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
     directory_size,
@@ -99,14 +106,18 @@ class AnalyzeRequest(BaseModel):
     timestamp_source: str = "auto"
     device: str = "auto"
     transcribe: bool = True
-    whisper_model: str = "small"
+    whisper_model: str = DEFAULT_WHISPER_MODEL_KEY
     whisper_device: str = "auto"
     whisper_language: str | None = "<|ja|>"
     boundary_refinement: BoundaryRefinementRequest = Field(default_factory=BoundaryRefinementRequest)
 
 
 class WhisperDownloadRequest(BaseModel):
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL_KEY
+
+
+class DemucsDownloadRequest(BaseModel):
+    pass
 
 
 class TranscriptionSegmentRequest(BaseModel):
@@ -118,7 +129,7 @@ class TranscriptionSegmentRequest(BaseModel):
 class TranscriptionRequest(BaseModel):
     source_path: str
     segments: list[TranscriptionSegmentRequest] = Field(default_factory=list)
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL_KEY
     language: str | None = "ja"
     device: str = "auto"
     initial_prompt: str | None = None
@@ -156,7 +167,7 @@ class WaveformRequest(BaseModel):
 class LyricsAnalysisRequest(BaseModel):
     source_path: str
     lyrics_text: str = Field(min_length=1)
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL_KEY
     language: str | None = "ja"
     device: str = "auto"
 
@@ -295,17 +306,17 @@ def devices() -> dict[str, Any]:
 def whisper_model_status() -> dict[str, Any]:
     runtime = select_whisper_runtime("auto")
     models = whisper_model_statuses()
-    small = next(item for item in models if item["key"] == "small")
+    default_model = next(item for item in models if item["key"] == DEFAULT_WHISPER_MODEL_KEY)
     return {
-        "default_model": "small",
+        "default_model": DEFAULT_WHISPER_MODEL_KEY,
         "models": models,
         "languages": whisper_language_options(),
         "devices": devices()["whisper"],
         # Compatibility fields retained for the one-model API.
         "model_id": WHISPER_MODEL_ID,
         "openvino_repo_id": WHISPER_OPENVINO_REPO_ID,
-        "model_dir": small["model_dir"],
-        "ready": small["ready"],
+        "model_dir": default_model["model_dir"],
+        "ready": default_model["ready"],
         "runtime": asdict(runtime),
     }
 
@@ -318,6 +329,16 @@ def download_whisper_model(request: WhisperDownloadRequest | None = None) -> Job
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return start_job("download-whisper", lambda job_id: _download_whisper_job(job_id, model_key))
+
+
+@app.get("/models/demucs")
+def get_demucs_model_status() -> dict[str, Any]:
+    return demucs_model_status()
+
+
+@app.post("/models/demucs/download")
+def download_demucs_model(_request: DemucsDownloadRequest | None = None) -> JobRecord:
+    return start_job("download-demucs", _download_demucs_job)
 
 
 @app.post("/videos/probe")
@@ -585,6 +606,8 @@ _MESSAGE_CODES = {
     "Aligning lyrics.": "lyricsAligning",
     "Detecting rhythm grid.": "lyricsDetectingRhythm",
     "Lyrics analysis complete.": "lyricsComplete",
+    "Downloading OpenVINO Demucs.": "demucsDownloading",
+    "OpenVINO Demucs model ready.": "demucsReady",
 }
 
 
@@ -656,7 +679,7 @@ def _check_executable_runs(label: str, executable: Path) -> None:
         raise RuntimeError(f"{label} could not be started: {executable} ({exc})") from exc
 
 
-def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
+def _download_whisper_job(job_id: str, model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> None:
     try:
         spec = require_whisper_model(model_key)
         update_job(job_id, status="running", progress=0.0, message=f"Downloading Whisper {spec.display_name}.")
@@ -704,6 +727,64 @@ def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
             message=f"Whisper {spec.display_name} model ready.",
             result={
                 "model": model_key,
+                "model_dir": str(model_dir),
+                "source": source,
+                "installed_bytes": directory_size(model_dir),
+            },
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _download_demucs_job(job_id: str) -> None:
+    try:
+        update_job(
+            job_id,
+            status="running",
+            progress=0.0,
+            message="Downloading OpenVINO Demucs.",
+        )
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message="Downloading OpenVINO Demucs.",
+                    result={
+                        "model": DEMUCS_MODEL,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_dir = ensure_demucs_model(progress_callback=on_download_progress)
+        resolved = resolve_demucs_model_dir()
+        source = resolved[1] if resolved is not None else "downloaded"
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="OpenVINO Demucs model ready.",
+            result={
+                "model": DEMUCS_MODEL,
                 "model_dir": str(model_dir),
                 "source": source,
                 "installed_bytes": directory_size(model_dir),
@@ -810,7 +891,7 @@ def _transcription_job(
     requested_device: str,
     language: str | None,
     initial_prompt: str | None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
 ) -> None:
     try:
         update_job(job_id, status="running", progress=0.01, message="Preparing Whisper transcription.", result={"transcripts": []})
@@ -907,7 +988,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
     try:
         source = require_file(request.source_path)
         document = parse_lyrics(request.lyrics_text)
-        update_job(job_id, status="running", progress=0.03, message="Separating vocals with Demucs.")
+        update_job(job_id, status="running", progress=0.03, message="Separating vocals with OpenVINO Demucs.")
         with tempfile.TemporaryDirectory(prefix="songcut-demucs-") as temporary_directory:
             separated = separate_vocals(
                 source,
@@ -916,7 +997,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
                     job_id,
                     status="running",
                     progress=0.03 + 0.37 * progress,
-                    message="Separating vocals with Demucs.",
+                    message="Separating vocals with OpenVINO Demucs.",
                 ),
             )
             update_job(

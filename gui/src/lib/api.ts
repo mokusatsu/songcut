@@ -13,7 +13,7 @@ import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
-export type WhisperModelKey = "tiny" | "base" | "small";
+export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 export type WhisperSettings = {
   enabled: boolean;
   model: WhisperModelKey;
@@ -41,6 +41,15 @@ export type WhisperStatus = {
   devices: Record<WhisperDevice, { device_used?: string; error?: string }>;
   model_id: string;
   ready: boolean;
+};
+
+export type DemucsStatus = {
+  model: string;
+  repo_id: string;
+  ready: boolean;
+  source: "bundled" | "downloaded" | null;
+  model_dir: string;
+  installed_bytes: number | null;
 };
 
 export class ApiError extends Error {
@@ -122,8 +131,16 @@ export function getWhisperStatus(baseUrl: string) {
   return getJson<WhisperStatus>(baseUrl, "/models/whisper");
 }
 
-export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "small") {
+export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "whisper-large-v3-turbo-int8-ov") {
   return postJson<JobRecord>(baseUrl, "/models/whisper/download", { model });
+}
+
+export function getDemucsStatus(baseUrl: string) {
+  return getJson<DemucsStatus>(baseUrl, "/models/demucs");
+}
+
+export function startDemucsDownload(baseUrl: string) {
+  return postJson<JobRecord>(baseUrl, "/models/demucs/download", {});
 }
 
 export function startTranscription(

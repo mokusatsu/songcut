@@ -9,6 +9,7 @@ from songcut.api import (
     FFMPEG_DOWNLOAD_URL,
     AnalyzeRequest,
     BoundaryRefinementRequest,
+    DemucsDownloadRequest,
     ExportItem,
     ExportPlanRequest,
     ExportRequest,
@@ -21,6 +22,7 @@ from songcut.api import (
     TranscriptionSegmentRequest,
     WhisperDownloadRequest,
     _analysis_job,
+    _download_demucs_job,
     _download_whisper_job,
     _export_job,
     _lyrics_analysis_job,
@@ -34,6 +36,7 @@ from songcut.api import (
     cancel_scratch_proxy_job,
     create_transcription_job,
     create_export_plan,
+    download_demucs_model,
     download_whisper_model,
     ffmpeg_check,
     health,
@@ -292,7 +295,11 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 400)
         start_job.assert_not_called()
 
-    def test_empty_whisper_download_body_keeps_small_compatibility(self) -> None:
+    def test_empty_whisper_download_body_uses_application_default(self) -> None:
+        self.assertEqual(
+            WhisperDownloadRequest().model,
+            "whisper-large-v3-turbo-int8-ov",
+        )
         sentinel = SimpleNamespace(id="download-001")
         with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
             result = download_whisper_model(None)
@@ -342,6 +349,57 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(progress_updates[-1]["result"]["total_bytes"], 100)
         self.assertEqual(progress_updates[-1]["progress"], 1.0)
         self.assertEqual(_jobs["download-001"].status, "completed")
+
+    def test_demucs_download_endpoint_starts_dedicated_job(self) -> None:
+        sentinel = SimpleNamespace(id="demucs-download-001")
+        with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
+            result = download_demucs_model(DemucsDownloadRequest())
+        self.assertIs(result, sentinel)
+        self.assertEqual(start_job.call_args.args[0], "download-demucs")
+
+    def test_demucs_download_job_reports_byte_progress(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["demucs-download-001"] = JobRecord(
+                id="demucs-download-001",
+                kind="download-demucs",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        updates: list[dict[str, object]] = []
+        original_update_job = update_job
+
+        def capture_update(job_id: str, **changes: object) -> bool:
+            updates.append(dict(changes))
+            return original_update_job(job_id, **changes)
+
+        def fake_ensure_demucs_model(**kwargs: object) -> Path:
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(25, 100)
+            progress_callback(100, 100)
+            return Path("demucs-model")
+
+        with (
+            mock.patch("songcut.api.update_job", side_effect=capture_update),
+            mock.patch("songcut.api.ensure_demucs_model", side_effect=fake_ensure_demucs_model),
+            mock.patch(
+                "songcut.api.resolve_demucs_model_dir",
+                return_value=(Path("demucs-model"), "downloaded"),
+            ),
+            mock.patch("songcut.api.directory_size", return_value=100),
+        ):
+            _download_demucs_job("demucs-download-001")
+
+        progress_updates = [
+            update
+            for update in updates
+            if isinstance(update.get("result"), dict)
+            and "downloaded_bytes" in update["result"]
+        ]
+        self.assertEqual(progress_updates[0]["progress"], 0.25)
+        self.assertEqual(progress_updates[-1]["progress"], 1.0)
+        self.assertEqual(_jobs["demucs-download-001"].status, "completed")
 
     def test_transcription_job_requires_installed_selected_model(self) -> None:
         request = TranscriptionRequest(

@@ -262,10 +262,7 @@ finally {
   --collect-all pydantic `
   --collect-all pydantic_core `
   --collect-all librosa `
-  --collect-all demucs `
-  --collect-all julius `
-  --collect-all lameenc `
-  --collect-all safetensors `
+  --collect-all soundfile `
   --collect-all win_safesubprocess `
   --exclude-module tensorflow `
   --exclude-module transformers `
@@ -274,6 +271,13 @@ finally {
   --exclude-module sklearn `
   --exclude-module PIL `
   --exclude-module matplotlib `
+  --exclude-module pytest `
+  --exclude-module torch `
+  --exclude-module torchaudio `
+  --exclude-module demucs `
+  --exclude-module openvino.torch `
+  --exclude-module openvino.frontend.pytorch `
+  --exclude-module openvino.preprocess.torchvision `
   --exclude-module openpyxl `
   --hidden-import uvicorn.logging `
   --hidden-import uvicorn.loops `
@@ -296,6 +300,26 @@ $LauncherBundle = Join-Path $PyinstallerDist "songcut"
 if (-not (Test-Path $LauncherBundle)) {
   throw "PyInstaller output was not found: $LauncherBundle"
 }
+
+# `--collect-all openvino` also includes model-conversion frontends. Songcut
+# executes pre-converted IR only, so remove every PyTorch adapter and header.
+$OpenVinoRuntime = Join-Path $LauncherBundle "runtime\openvino"
+$UnusedPytorchArtifacts = @(
+  (Join-Path $OpenVinoRuntime "torch"),
+  (Join-Path $OpenVinoRuntime "frontend\pytorch"),
+  (Join-Path $OpenVinoRuntime "include\openvino\frontend\pytorch"),
+  (Join-Path $OpenVinoRuntime "preprocess\torchvision"),
+  (Join-Path $OpenVinoRuntime "libs\openvino_pytorch_frontend.dll"),
+  (Join-Path $OpenVinoRuntime "libs\openvino_pytorch_frontend.lib"),
+  (Join-Path $OpenVinoRuntime "tools\ovc\moc_frontend\pytorch_frontend_utils.py"),
+  (Join-Path $OpenVinoRuntime "tools\ovc\moc_frontend\pytorch_frontend_utils.pyi")
+)
+foreach ($Artifact in $UnusedPytorchArtifacts) {
+  if (Test-Path -LiteralPath $Artifact) {
+    Remove-Item -LiteralPath $Artifact -Recurse -Force
+  }
+}
+
 Copy-Item -Path (Join-Path $LauncherBundle "*") -Destination $PackageRoot -Recurse
 
 $ElectronRuntime = Join-Path $GuiRoot "node_modules\electron\dist"
@@ -339,11 +363,23 @@ if (Test-Path $ThirdPartySource) {
   Copy-Item -Path $ThirdPartySource -Destination (Join-Path $PackageRoot "third_party") -Recurse
 }
 
-$ModelSource = Join-Path $RepoRoot ".models\openvino\whisper-small"
-if (Test-Path $ModelSource) {
+$BundledModels = @(
+  @{
+    Source = Join-Path $RepoRoot ".models\openvino\whisper-large-v3-turbo-int8-ov"
+    Name = "whisper-large-v3-turbo-int8-ov"
+  },
+  @{
+    Source = Join-Path $RepoRoot ".models\openvino\demucs-htdemucs-v4"
+    Name = "demucs-htdemucs-v4"
+  }
+)
+foreach ($BundledModel in $BundledModels) {
+  if (-not (Test-Path $BundledModel.Source)) {
+    continue
+  }
   $ModelTarget = Join-Path $PackageRoot "models\openvino"
   New-Item -ItemType Directory -Force -Path $ModelTarget | Out-Null
-  Copy-Item -Path $ModelSource -Destination (Join-Path $ModelTarget "whisper-small") -Recurse
+  Copy-Item -Path $BundledModel.Source -Destination (Join-Path $ModelTarget $BundledModel.Name) -Recurse
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PackageRoot "logs") | Out-Null

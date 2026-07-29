@@ -23,7 +23,7 @@ export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | 
 
 export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = {
   enabled: false,
-  model: "small",
+  model: "whisper-large-v3-turbo-int8-ov",
   language: "ja",
   device: "auto",
 };

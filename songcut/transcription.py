@@ -56,12 +56,22 @@ WHISPER_MODELS: dict[str, WhisperModelSpec] = {
         speed="Slower",
         quality="Best",
     ),
+    "whisper-large-v3-turbo-int8-ov": WhisperModelSpec(
+        key="whisper-large-v3-turbo-int8-ov",
+        display_name="Large v3 Turbo INT8 (OpenVINO)",
+        model_id="openai/whisper-large-v3-turbo",
+        openvino_repo_id="OpenVINO/whisper-large-v3-turbo-int8-ov",
+        directory_name="whisper-large-v3-turbo-int8-ov",
+        speed="Fast",
+        quality="Best",
+    ),
 }
 
-# Backward-compatible aliases for callers that assumed the only model was Small.
-WHISPER_MODEL_ID = WHISPER_MODELS["small"].model_id
-WHISPER_MODEL_NAME = WHISPER_MODELS["small"].directory_name
-WHISPER_OPENVINO_REPO_ID = WHISPER_MODELS["small"].openvino_repo_id
+DEFAULT_WHISPER_MODEL_KEY = "whisper-large-v3-turbo-int8-ov"
+# Compatibility aliases now describe the application default model.
+WHISPER_MODEL_ID = WHISPER_MODELS[DEFAULT_WHISPER_MODEL_KEY].model_id
+WHISPER_MODEL_NAME = WHISPER_MODELS[DEFAULT_WHISPER_MODEL_KEY].directory_name
+WHISPER_OPENVINO_REPO_ID = WHISPER_MODELS[DEFAULT_WHISPER_MODEL_KEY].openvino_repo_id
 WHISPER_REQUIRED_FILES = (
     "config.json",
     "generation_config.json",
@@ -172,7 +182,7 @@ def huggingface_cache_dir() -> Path:
     return root / "hub"
 
 
-def require_whisper_model(model_key: str = "small") -> WhisperModelSpec:
+def require_whisper_model(model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> WhisperModelSpec:
     normalized = model_key.strip().lower()
     try:
         return WHISPER_MODELS[normalized]
@@ -186,18 +196,18 @@ def whisper_model_dir(model_name: str = WHISPER_MODEL_NAME) -> Path:
     return default_model_root() / "openvino" / model_name
 
 
-def writable_whisper_model_dir(model_key: str = "small") -> Path:
+def writable_whisper_model_dir(model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> Path:
     return whisper_model_dir(require_whisper_model(model_key).directory_name)
 
 
-def bundled_whisper_model_dir(model_key: str = "small") -> Path | None:
+def bundled_whisper_model_dir(model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> Path | None:
     root = bundled_model_root()
     if root is None:
         return None
     return root / "openvino" / require_whisper_model(model_key).directory_name
 
 
-def resolve_whisper_model_dir(model_key: str = "small") -> tuple[Path, str] | None:
+def resolve_whisper_model_dir(model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> tuple[Path, str] | None:
     writable = writable_whisper_model_dir(model_key)
     if whisper_model_ready(writable):
         return writable, "downloaded"
@@ -221,7 +231,7 @@ def whisper_model_ready(model_dir: Path | None = None) -> bool:
 def ensure_whisper_model(
     model_dir: Path | None = None,
     *,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
     quantized_int8: bool = False,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path:
@@ -441,7 +451,7 @@ def transcribe_segments(
     segments: list[dict[str, Any]],
     *,
     model_dir: Path | None = None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
     requested_device: str = "auto",
     language: str | None = "<|ja|>",
     initial_prompt: str | None = None,

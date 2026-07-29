@@ -70,7 +70,7 @@ export type Transcript = {
   backend: string;
   device_used: string;
   model_id: string;
-  model_key?: "tiny" | "base" | "small";
+  model_key?: "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
   language_requested?: string;
   device_requested?: "auto" | "npu" | "gpu" | "cpu";
   error?: string | null;

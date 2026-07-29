@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
-type WhisperModelKey = "tiny" | "base" | "small";
+type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 type UiLanguage = "en" | "ja";

@@ -10,7 +10,8 @@ export type TaskSlot =
   | "transcription"
   | "export"
   | "subtitle-export"
-  | "download-whisper";
+  | "download-whisper"
+  | "download-demucs";
 
 export type TaskRegistryState = Partial<Record<TaskSlot, JobRecord>>;
 
@@ -21,6 +22,7 @@ const DISPLAY_PRIORITY: Record<TaskSlot, number> = {
   analysis: 400,
   "lyrics-analysis": 400,
   "download-whisper": 300,
+  "download-demucs": 300,
   waveform: 200,
   "scratch-proxy": 100
 };
@@ -32,6 +34,7 @@ const BLOCKS_QUIT = new Set<TaskSlot>([
   "export",
   "subtitle-export",
   "download-whisper",
+  "download-demucs",
 ]);
 
 export function isTaskRunning(job: JobRecord | null | undefined) {

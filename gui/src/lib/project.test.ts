@@ -231,8 +231,13 @@ describe("project document composition", () => {
     });
   });
 
-  it("defaults new projects to Whisper off, Small, Japanese, and Auto", () => {
-    expect(DEFAULT_WHISPER_SETTINGS).toEqual({ enabled: false, model: "small", language: "ja", device: "auto" });
+  it("defaults new projects to Whisper off, Large v3 Turbo INT8, Japanese, and Auto", () => {
+    expect(DEFAULT_WHISPER_SETTINGS).toEqual({
+      enabled: false,
+      model: "whisper-large-v3-turbo-int8-ov",
+      language: "ja",
+      device: "auto",
+    });
   });
 
   it("defaults new and existing v3 projects to the standard filename template", () => {
@@ -253,10 +258,11 @@ describe("project document composition", () => {
   });
 
   it("marks only model or requested-language changes as transcript-stale", () => {
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, enabled: true })).toBe(false);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, device: "gpu" })).toBe(false);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, model: "base" })).toBe(true);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, language: "auto" })).toBe(true);
+    const matchingSettings = { ...DEFAULT_WHISPER_SETTINGS, model: "small" as const };
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, enabled: true })).toBe(false);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, device: "gpu" })).toBe(false);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, model: "base" })).toBe(true);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, language: "auto" })).toBe(true);
   });
 
   it("turns a persisted running operation into an interrupted operation", () => {

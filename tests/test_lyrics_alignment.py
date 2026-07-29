@@ -2,17 +2,23 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
+import numpy as np
 import pytest
 
 from songcut.lyrics_alignment import (
     LyricsDocument,
     align_lyrics_to_chunks,
+    find_whisper_active_intervals,
     format_srt_timestamp,
     normalize_alignment_text,
     parse_lyrics,
     render_srt,
+    transcribe_whisper_chunks,
 )
 from songcut.rhythm_alignment import (
     adjust_lines_to_rhythm,
@@ -34,6 +40,76 @@ def test_parse_lyrics_recognizes_a_leading_title_block() -> None:
 
 def test_normalize_alignment_text_is_whitespace_and_katakana_insensitive() -> None:
     assert normalize_alignment_text(" ホシ・ノ 夜!? ") == "ほしの夜"
+
+
+def test_whisper_audio_is_split_only_at_sustained_minus_40_db_silence() -> None:
+    sample_rate = 16_000
+    tone = np.full(sample_rate, 0.02, dtype=np.float32)  # about -34 dBFS
+    short_dip = np.zeros(int(sample_rate * 0.1), dtype=np.float32)
+    long_silence = np.zeros(int(sample_rate * 0.5), dtype=np.float32)
+    audio = np.concatenate(
+        (
+            np.zeros(sample_rate, dtype=np.float32),
+            tone,
+            short_dip,
+            tone,
+            long_silence,
+            tone,
+            np.zeros(sample_rate, dtype=np.float32),
+        )
+    )
+
+    intervals = find_whisper_active_intervals(audio)
+
+    assert len(intervals) == 2
+    assert intervals[0][0] / sample_rate == pytest.approx(1.0, abs=0.02)
+    assert intervals[0][1] / sample_rate == pytest.approx(3.1, abs=0.02)
+    assert intervals[1][0] / sample_rate == pytest.approx(3.6, abs=0.02)
+    assert intervals[1][1] / sample_rate == pytest.approx(4.6, abs=0.02)
+
+
+def test_split_whisper_results_restore_source_timestamps(tmp_path: Path) -> None:
+    sample_rate = 16_000
+    audio = np.concatenate(
+        (
+            np.zeros(sample_rate, dtype=np.float32),
+            np.full(sample_rate, 0.02, dtype=np.float32),
+            np.zeros(sample_rate, dtype=np.float32),
+            np.full(sample_rate, 0.02, dtype=np.float32),
+        )
+    )
+    generated_audio: list[np.ndarray] = []
+
+    class FakePipeline:
+        def __init__(self, _model: str, _device: str) -> None:
+            pass
+
+        def generate(self, interval_audio: np.ndarray, **_options: object):
+            generated_audio.append(interval_audio)
+            index = len(generated_audio)
+            return SimpleNamespace(
+                chunks=[SimpleNamespace(start_ts=0.1, end_ts=0.8, text=f"line-{index}")],
+                texts=[f"text-{index}"],
+            )
+
+    fake_openvino_genai = SimpleNamespace(WhisperPipeline=FakePipeline)
+    with (
+        mock.patch.dict(sys.modules, {"openvino_genai": fake_openvino_genai}),
+        mock.patch("songcut.lyrics_alignment.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg", ffprobe="ffprobe")),
+        mock.patch("songcut.lyrics_alignment.probe_duration", return_value=4.0),
+        mock.patch("songcut.lyrics_alignment.select_whisper_runtime", return_value=SimpleNamespace(device_used="CPU")),
+        mock.patch("songcut.lyrics_alignment.ensure_whisper_model", return_value=tmp_path / "model"),
+        mock.patch("songcut.lyrics_alignment.extract_segment_wav"),
+        mock.patch("songcut.lyrics_alignment.read_wav_mono_16k", return_value=audio),
+    ):
+        chunks, text, duration, device = transcribe_whisper_chunks(Path("vocals.wav"))
+
+    assert len(generated_audio) == 2
+    assert all(len(part) == sample_rate for part in generated_audio)
+    assert [(chunk.start, chunk.end) for chunk in chunks] == [(1.1, 1.8), (3.1, 3.8)]
+    assert text == "text-1 text-2"
+    assert duration == 4.0
+    assert device == "CPU"
 
 
 def test_known_lyrics_are_aligned_monotonically_to_whisper_chunks() -> None:

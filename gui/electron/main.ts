@@ -56,7 +56,7 @@ let closeRequestPending = false;
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
-const whisperModels = ["tiny", "base", "small"] as const;
+const whisperModels = ["tiny", "base", "small", "whisper-large-v3-turbo-int8-ov"] as const;
 const waveformDisplayModes = ["rms", "peak", "peak-rms"] as const;
 const timestampExportFormats = ["timestamp-comment", "youtube-chapter", "tsv-excel", "csv", "audacity-label"] as const;
 const e2eMenuCommandTypes = new Set([
@@ -147,7 +147,7 @@ let menuState: SongcutMenuState = {
   scratchAudioProxyEnabled: true,
   analysisDevice: "auto",
   whisperDevice: "auto",
-  whisperModel: "small"
+  whisperModel: "whisper-large-v3-turbo-int8-ov"
 };
 
 async function createWindow() {
@@ -628,7 +628,7 @@ function normalizeInferenceDevice(value: unknown): InferenceDevice {
 function normalizeWhisperModel(value: unknown): WhisperModelKey {
   return typeof value === "string" && whisperModels.includes(value as WhisperModelKey)
     ? (value as WhisperModelKey)
-    : "small";
+    : "whisper-large-v3-turbo-int8-ov";
 }
 
 function normalizeWaveformDisplayMode(value: unknown): WaveformDisplayMode {

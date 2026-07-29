@@ -10,7 +10,7 @@ export const PROJECT_SCHEMA_VERSION = 3 as const;
 export const MAX_PROJECT_BYTES = 64 * 1024 * 1024;
 
 export type InferenceDevice = "auto" | "npu" | "gpu" | "cpu";
-export type WhisperModelKey = "tiny" | "base" | "small";
+export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 
 export type ProjectTranscript = {
   segment_id: string;
@@ -275,7 +275,12 @@ export type RecoverySnapshot = {
 };
 
 const inferenceDevices = new Set<InferenceDevice>(["auto", "npu", "gpu", "cpu"]);
-const whisperModels = new Set<WhisperModelKey>(["tiny", "base", "small"]);
+const whisperModels = new Set<WhisperModelKey>([
+  "tiny",
+  "base",
+  "small",
+  "whisper-large-v3-turbo-int8-ov",
+]);
 
 export function sidecarPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
   return mode === "sub" ? `${videoPath}.sub.songcut` : `${videoPath}.songcut`;

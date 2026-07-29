@@ -12,7 +12,7 @@ import numpy as np
 
 from .ffmpeg_tools import ffprobe_json, find_ffmpeg, probe_duration
 from .lyrics_alignment import AlignedLyricsLine, LyricsAlignmentResult, generate_lyrics_srt, render_srt
-from .transcription import extract_segment_wav, read_wav_mono_16k
+from .transcription import DEFAULT_WHISPER_MODEL_KEY, extract_segment_wav, read_wav_mono_16k
 
 
 @dataclass(frozen=True)
@@ -323,7 +323,7 @@ def generate_lyrics_srt_variants(
     alignment_diagnostics_path: Path | None = None,
     rhythm_diagnostics_path: Path | None = None,
     model_dir: Path | None = None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
     device: str = "cpu",
     language: str = "ja",
 ) -> tuple[LyricsAlignmentResult, RhythmAdjustmentResult]:

@@ -8,6 +8,7 @@ import unittest
 import numpy as np
 
 from songcut.transcription import (
+    DEFAULT_WHISPER_MODEL_KEY,
     WHISPER_MODELS,
     WHISPER_REQUIRED_FILES,
     WhisperRuntime,
@@ -60,9 +61,17 @@ class TranscriptionRuntimeTests(unittest.TestCase):
         self.assertIn((25, 100), progress)
         self.assertIn((100, 100), progress)
 
-    def test_model_registry_is_fixed_to_official_tiny_base_small(self) -> None:
-        self.assertEqual(list(WHISPER_MODELS), ["tiny", "base", "small"])
+    def test_model_registry_includes_large_v3_turbo_int8_openvino(self) -> None:
+        self.assertEqual(
+            list(WHISPER_MODELS),
+            ["tiny", "base", "small", "whisper-large-v3-turbo-int8-ov"],
+        )
         self.assertEqual(WHISPER_MODELS["base"].openvino_repo_id, "OpenVINO/whisper-base-fp16-ov")
+        self.assertEqual(
+            WHISPER_MODELS["whisper-large-v3-turbo-int8-ov"].openvino_repo_id,
+            "OpenVINO/whisper-large-v3-turbo-int8-ov",
+        )
+        self.assertEqual(DEFAULT_WHISPER_MODEL_KEY, "whisper-large-v3-turbo-int8-ov")
 
     def test_language_normalization_accepts_auto_code_and_legacy_token(self) -> None:
         self.assertEqual(normalize_whisper_language("auto"), ("auto", None))

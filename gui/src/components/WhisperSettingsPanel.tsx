@@ -98,6 +98,7 @@ const fallbackModels = [
   { key: "tiny", display_name: "Tiny", speed: "Fastest", quality: "Basic" },
   { key: "base", display_name: "Base", speed: "Balanced", quality: "Good" },
   { key: "small", display_name: "Small", speed: "Slower", quality: "Best" },
+  { key: "whisper-large-v3-turbo-int8-ov", display_name: "Large v3 Turbo INT8 (OpenVINO)", speed: "Fast", quality: "Best" },
 ] as const;
 
 function formatBytes(value: number) {

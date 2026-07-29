@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WhisperSettingsPanel } from "@/components/WhisperSettingsPanel";
 import { HelpTooltip } from "@/components/HelpTooltip";
-import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, DemucsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import type { WaveformDisplayMode } from "@/types";
@@ -25,6 +25,8 @@ export function SettingsDialog(props: {
   whisperSettings: WhisperSettings;
   whisperStatus: WhisperStatus | null;
   whisperBusy: boolean;
+  demucsStatus: DemucsStatus | null;
+  demucsBusy: boolean;
   hasSegments: boolean;
   transcriptStale: boolean;
   sourceAvailable: boolean;
@@ -39,6 +41,7 @@ export function SettingsDialog(props: {
   onFilenameTemplate: (value: string) => void;
   onWhisperSettings: (settings: WhisperSettings) => void;
   onPrepareWhisperModel: () => void;
+  onPrepareDemucsModel: () => void;
   onTranscribe: () => void;
   onFfmpegCheck: () => void;
   onLocalePreference: (preference: UiLanguagePreference) => void;
@@ -122,6 +125,31 @@ export function SettingsDialog(props: {
           />
         </section>
 
+        <section className="settings-section" aria-labelledby="demucs-settings-heading">
+          <div className="whisper-settings-heading">
+            <h3 id="demucs-settings-heading">{tr("settings.demucs")}</h3>
+            <span className={`model-state ${props.demucsStatus ? (props.demucsStatus.ready ? "ready" : "missing") : "unknown"}`}>
+              {props.demucsStatus
+                ? (props.demucsStatus.ready ? tr("demucs.ready") : tr("demucs.missing"))
+                : tr("demucs.checking")}
+            </span>
+          </div>
+          <p className="settings-field-help">{tr("demucs.description")}</p>
+          <div className="whisper-settings-actions">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={props.onPrepareDemucsModel}
+              disabled={!props.apiReady || props.demucsBusy}
+            >
+              {tr("demucs.prepare")}
+            </Button>
+            {props.demucsStatus?.installed_bytes ? (
+              <small>{tr("demucs.installed", { size: formatBytes(props.demucsStatus.installed_bytes) })}</small>
+            ) : null}
+          </div>
+        </section>
+
         <section className="settings-section" aria-labelledby="export-settings-heading">
           <h3 id="export-settings-heading">{tr("settings.export")}</h3>
           <label className="settings-field" htmlFor="export-filename-template">
@@ -181,6 +209,11 @@ export function SettingsDialog(props: {
       </div>
     </Dialog>
   );
+}
+
+function formatBytes(value: number) {
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KiB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 type NumericBoundaryKey = Exclude<keyof BoundaryRefinementSettings, "enabled">;
