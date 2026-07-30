@@ -10,13 +10,21 @@ import uuid
 import win_safesubprocess as subprocess
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .boundary_refiner import BoundaryRefinerConfig
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
 from .lyrics_alignment import align_lyrics_to_chunks, parse_lyrics, transcribe_whisper_chunks
+from .mms_alignment import (
+    MMS_MODEL,
+    ensure_mms_onnx_model,
+    mms_onnx_model_status,
+    refine_standard_alignment_with_mms,
+    resolve_mms_onnx_model_dir,
+)
+from .uta_alignment import align_lyrics_with_uta
 from .rhythm_alignment import (
     adjust_lines_to_rhythm,
     build_extended_rhythm_grid,
@@ -120,6 +128,10 @@ class DemucsDownloadRequest(BaseModel):
     pass
 
 
+class MmsDownloadRequest(BaseModel):
+    pass
+
+
 class TranscriptionSegmentRequest(BaseModel):
     id: str
     start: float
@@ -170,6 +182,7 @@ class LyricsAnalysisRequest(BaseModel):
     model: str = DEFAULT_WHISPER_MODEL_KEY
     language: str | None = "ja"
     device: str = "auto"
+    algorithm: Literal["songcut-standard", "uta-align"] = "songcut-standard"
 
 
 class SubtitleStyleRequest(BaseModel):
@@ -339,6 +352,16 @@ def get_demucs_model_status() -> dict[str, Any]:
 @app.post("/models/demucs/download")
 def download_demucs_model(_request: DemucsDownloadRequest | None = None) -> JobRecord:
     return start_job("download-demucs", _download_demucs_job)
+
+
+@app.get("/models/mms")
+def get_mms_model_status() -> dict[str, Any]:
+    return mms_onnx_model_status()
+
+
+@app.post("/models/mms/download")
+def download_mms_model(_request: MmsDownloadRequest | None = None) -> JobRecord:
+    return start_job("download-mms", _download_mms_job)
 
 
 @app.post("/videos/probe")
@@ -603,11 +626,15 @@ _MESSAGE_CODES = {
     "Creating AAC scratch proxy.": "proxyCreating",
     "Separating vocals with Demucs.": "lyricsSeparatingVocals",
     "Transcribing isolated vocals.": "lyricsTranscribingVocals",
+    "Aligning lyrics with Uta-Align.": "lyricsAligning",
     "Aligning lyrics.": "lyricsAligning",
     "Detecting rhythm grid.": "lyricsDetectingRhythm",
     "Lyrics analysis complete.": "lyricsComplete",
     "Downloading OpenVINO Demucs.": "demucsDownloading",
     "OpenVINO Demucs model ready.": "demucsReady",
+    "Downloading MMS forced aligner.": "mmsDownloading",
+    "MMS forced aligner ready.": "mmsReady",
+    "Refining lyric onset with MMS.": "lyricsRefiningOnset",
 }
 
 
@@ -785,6 +812,62 @@ def _download_demucs_job(job_id: str) -> None:
             message="OpenVINO Demucs model ready.",
             result={
                 "model": DEMUCS_MODEL,
+                "model_dir": str(model_dir),
+                "source": source,
+                "installed_bytes": directory_size(model_dir),
+            },
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _download_mms_job(job_id: str) -> None:
+    try:
+        message = "Downloading MMS forced aligner."
+        update_job(job_id, status="running", progress=0.0, message=message)
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message=message,
+                    result={
+                        "model": MMS_MODEL,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_path = ensure_mms_onnx_model(progress_callback=on_download_progress)
+        resolved = resolve_mms_onnx_model_dir()
+        model_dir, source = (
+            resolved if resolved is not None else (model_path.parent.parent, "downloaded")
+        )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="MMS forced aligner ready.",
+            result={
+                "model": MMS_MODEL,
                 "model_dir": str(model_dir),
                 "source": source,
                 "installed_bytes": directory_size(model_dir),
@@ -1004,16 +1087,62 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
                 job_id,
                 status="running",
                 progress=0.42,
-                message="Transcribing isolated vocals.",
+                message=(
+                    "Aligning lyrics with Uta-Align."
+                    if request.algorithm == "uta-align"
+                    else "Transcribing isolated vocals."
+                ),
             )
-            chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
-                separated.vocals,
-                model_key=request.model,
-                device=request.device,
-                language=request.language or "auto",
-            )
-        update_job(job_id, status="running", progress=0.70, message="Aligning lyrics.")
-        alignment = align_lyrics_to_chunks(document, chunks, media_duration=duration)
+            uta_diagnostics: dict[str, Any] | None = None
+            mms_diagnostics: dict[str, Any] | None = None
+            if request.algorithm == "uta-align":
+                uta_output = align_lyrics_with_uta(
+                    source,
+                    separated.vocals,
+                    document,
+                    model_key=request.model,
+                    device=request.device,
+                    language=request.language or "auto",
+                    progress_callback=lambda request_count: update_job(
+                        job_id,
+                        status="running",
+                        progress=min(0.69, 0.42 + 0.02 * request_count),
+                        message="Aligning lyrics with Uta-Align.",
+                    ),
+                )
+                whisper_text = uta_output.whisper_text
+                duration = uta_output.duration
+                device_used = uta_output.device_used
+                alignment = uta_output
+                uta_diagnostics = uta_output.diagnostics
+            else:
+                chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
+                    separated.vocals,
+                    model_key=request.model,
+                    device=request.device,
+                    language=request.language or "auto",
+                )
+                update_job(job_id, status="running", progress=0.70, message="Aligning lyrics.")
+                alignment = align_lyrics_to_chunks(document, chunks, media_duration=duration)
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=0.72,
+                    message="Refining lyric onset with MMS.",
+                )
+                alignment, mms_output = refine_standard_alignment_with_mms(
+                    separated.vocals,
+                    document,
+                    alignment,
+                    language=request.language or "auto",
+                    progress_callback=lambda progress: update_job(
+                        job_id,
+                        status="running",
+                        progress=0.72 + 0.06 * progress,
+                        message="Refining lyric onset with MMS.",
+                    ),
+                )
+                mms_diagnostics = asdict(mms_output)
         beat_warning: str | None = None
         tempo_bpm = 0.0
         beat_times: list[float] = []
@@ -1038,6 +1167,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             "title": alignment.title,
             "duration": duration,
             "device_used": device_used,
+            "algorithm": request.algorithm,
             "lyrics_audio_source": "demucs-vocals",
             "demucs_model": separated.model,
             "whisper_text": whisper_text,
@@ -1052,6 +1182,10 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             ],
             "elapsed_seconds": round(time.perf_counter() - started, 3),
         }
+        if uta_diagnostics is not None:
+            result["uta_align_diagnostics"] = uta_diagnostics
+        if mms_diagnostics is not None:
+            result["mms_diagnostics"] = mms_diagnostics
         update_job(
             job_id,
             status="completed",

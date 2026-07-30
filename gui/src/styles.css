@@ -568,10 +568,14 @@ select {
 
 .status-panel {
   display: grid;
-  flex: 0 1 240px;
+  flex: 0 0 auto;
   min-width: 180px;
-  gap: 5px;
+  gap: 7px;
+  padding: 8px 10px;
   color: #cbd6db;
+  background: #10171b;
+  border: 1px solid #2c3d44;
+  border-radius: 6px;
   font-size: var(--font-size-control);
 }
 
@@ -579,6 +583,88 @@ select {
   display: flex;
   gap: 7px;
   align-items: center;
+}
+
+.status-secondary-message {
+  color: #9eafb6;
+}
+
+.task-status-list {
+  display: grid;
+  gap: 6px;
+}
+
+.task-status-failures {
+  padding-top: 6px;
+  border-top: 1px solid #34464d;
+}
+
+.task-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.task-status-heading {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  align-items: center;
+}
+
+.task-status-heading strong {
+  flex: 0 0 auto;
+  color: #dce7ea;
+}
+
+.task-status-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: #9eafb6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-status-percent {
+  color: #8de1d1;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-status-dismiss {
+  padding: 0;
+  color: #aebdc3;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.task-status-dismiss:hover {
+  color: #ffffff;
+}
+
+.task-status-row progress,
+.task-status-error {
+  grid-column: 1 / -1;
+}
+
+.task-status-error,
+.task-status-failed .task-status-heading,
+.task-status-cancelled .task-status-heading {
+  color: #f2a6a6;
+}
+
+.task-status-error {
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-meta);
+}
+
+.status-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding-top: 5px;
+  border-top: 1px solid #28383f;
 }
 
 .transcript-run-meta {

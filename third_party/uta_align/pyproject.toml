@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uta-align"
+version = "0.1.0"
+description = "Block-aware forced alignment of known Japanese lyrics to singing audio"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "uta-align contributors"}]
+dependencies = [
+    "numpy>=1.24",
+    "win-safesubprocess>=0.1,<0.2",
+]
+
+[project.optional-dependencies]
+whisper = ["faster-whisper>=1.0"]
+dev = ["pytest>=7.4", "ruff>=0.6", "mypy>=1.8"]
+
+[project.scripts]
+uta-align = "uta_align.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+packages = ["uta_align"]
+no_site_packages = true
+
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*", "faster_whisper"]
+follow_imports = "skip"
+ignore_missing_imports = true

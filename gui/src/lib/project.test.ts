@@ -135,7 +135,13 @@ describe("project document composition", () => {
       segments: [segment],
       exportCandidates: analysis.export_candidates,
       analysisDevice: "gpu",
-      whisper: { enabled: true, model: "small", language: "ja", device: "auto" },
+      whisper: {
+        enabled: true,
+        model: "small",
+        language: "ja",
+        device: "auto",
+        lyricsAlignmentAlgorithm: "songcut-standard"
+      },
       filenameTemplate: "{title}_{start}",
       selectedSegmentId: segment.id,
       currentTime: 2,
@@ -237,6 +243,7 @@ describe("project document composition", () => {
       model: "whisper-large-v3-turbo-int8-ov",
       language: "ja",
       device: "auto",
+      lyricsAlignmentAlgorithm: "songcut-standard",
     });
   });
 

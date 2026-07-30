@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import math
+import re
 import tempfile
 import unicodedata
 import win_safesubprocess as subprocess
@@ -446,9 +447,26 @@ def _effect_params(
 ) -> dict[str, str | int | float]:
     result = dict(params or {})
     color = result.get("color")
-    if isinstance(color, str) and color.startswith("#"):
-        result["color"] = _ass_color(color)
+    if isinstance(color, str):
+        result["color"] = _ass_bgr_color(color)
     return result
+
+
+def _ass_bgr_color(value: str) -> str:
+    text = value.strip().upper()
+    css_match = re.fullmatch(r"#([0-9A-F]{6})(?:[0-9A-F]{2})?", text)
+    if css_match:
+        red, green, blue = (
+            css_match.group(1)[0:2],
+            css_match.group(1)[2:4],
+            css_match.group(1)[4:6],
+        )
+        return f"&H{blue}{green}{red}&"
+    ass_match = re.fullmatch(r"&H([0-9A-F]{6}|[0-9A-F]{8})&?", text)
+    if ass_match:
+        # Colour override tags do not accept the leading ASS alpha byte.
+        return f"&H{ass_match.group(1)[-6:]}&"
+    return value
 
 
 def _fit_effect_durations(start_ms: int, end_ms: int, duration_seconds: float) -> tuple[int, int]:

@@ -109,6 +109,28 @@ def test_effect_is_applied_only_when_export_rendering_requests_it() -> None:
     assert r"\fad(250,400)" in exported
 
 
+def test_glow_converts_gui_rgb_color_to_ass_bgr_override() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(),
+        [SubtitleSegment("line", "歌詞", 1.0, 3.0)],
+        SubtitleEffect(
+            name="glow",
+            params={"radius": 20, "border": 12, "color": "#42D7FF"},
+        ),
+    )
+
+    exported = render_ass_document(
+        [lane],
+        play_res_x=1920,
+        play_res_y=1080,
+        apply_effects=True,
+    )
+
+    assert r"\3c&HFFD742&" in exported
+
+
 def test_short_segments_fit_effect_durations_without_changing_ratio() -> None:
     assert _fit_effect_durations(600, 400, 0.5) == (300, 200)
     assert _fit_effect_durations(100, 200, 1.0) == (100, 200)

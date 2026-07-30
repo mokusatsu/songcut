@@ -26,6 +26,7 @@ export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = {
   model: "whisper-large-v3-turbo-int8-ov",
   language: "ja",
   device: "auto",
+  lyricsAlignmentAlgorithm: "songcut-standard",
 };
 
 export function createProjectDocument(

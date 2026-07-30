@@ -250,6 +250,7 @@ finally {
   --contents-directory runtime `
   --name songcut `
   --icon $AppIcon `
+  --paths (Join-Path $RepoRoot "third_party\uta_align\src") `
   --distpath $PyinstallerDist `
   --workpath $PyinstallerWork `
   --specpath $PyinstallerWork `
@@ -263,7 +264,10 @@ finally {
   --collect-all pydantic_core `
   --collect-all librosa `
   --collect-all soundfile `
+  --collect-data uroman `
+  --collect-data pykakasi `
   --collect-all win_safesubprocess `
+  --collect-submodules uta_align `
   --exclude-module tensorflow `
   --exclude-module transformers `
   --exclude-module optimum `
@@ -367,17 +371,24 @@ $BundledModels = @(
   @{
     Source = Join-Path $RepoRoot ".models\openvino\whisper-large-v3-turbo-int8-ov"
     Name = "whisper-large-v3-turbo-int8-ov"
+    TargetSubdirectory = "openvino"
   },
   @{
     Source = Join-Path $RepoRoot ".models\openvino\demucs-htdemucs-v4"
     Name = "demucs-htdemucs-v4"
+    TargetSubdirectory = "openvino"
+  },
+  @{
+    Source = Join-Path $RepoRoot ".models\onnx\mms-300m-1130-forced-aligner"
+    Name = "mms-300m-1130-forced-aligner"
+    TargetSubdirectory = "onnx"
   }
 )
 foreach ($BundledModel in $BundledModels) {
   if (-not (Test-Path $BundledModel.Source)) {
     continue
   }
-  $ModelTarget = Join-Path $PackageRoot "models\openvino"
+  $ModelTarget = Join-Path $PackageRoot "models\$($BundledModel.TargetSubdirectory)"
   New-Item -ItemType Directory -Force -Path $ModelTarget | Out-Null
   Copy-Item -Path $BundledModel.Source -Destination (Join-Path $ModelTarget $BundledModel.Name) -Recurse
 }
@@ -396,7 +407,7 @@ if ($Release) {
   New-ReleaseArchive `
     -SourceDirectory $PackageRoot `
     -DestinationPath $StandardArchivePath `
-    -EmptyTopLevelDirectories @("third_party", "models")
+    -EmptyTopLevelDirectories @("models")
 
   Write-Host "Created full release archive: $FullArchivePath"
   Write-Host "Created standard release archive: $StandardArchivePath"

@@ -28,6 +28,14 @@ gui = [
   "huggingface-hub>=0.30",
   "pyinstaller>=6.0",
   "soundfile>=0.14",
+  "onnxruntime>=1.20",
+  "uroman>=1.3",
+  "pykakasi>=2.3",
+]
+mms = [
+  "onnxruntime>=1.20",
+  "uroman>=1.3",
+  "pykakasi>=2.3",
 ]
 
 [project.scripts]
@@ -39,5 +47,9 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["songcut", "songcut.ass_effects23"]
+packages = ["songcut", "songcut.ass_effects23", "uta_align"]
 py-modules = ["songcut_cli"]
+package-dir = { uta_align = "third_party/uta_align/src/uta_align" }
+
+[tool.pytest.ini_options]
+pythonpath = [".", "third_party/uta_align/src"]

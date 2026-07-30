@@ -74,6 +74,22 @@ export function WhisperSettingsPanel(props: {
             ))}
           </select>
         </label>
+        <label>
+          {tr("whisper.lyricsAlignmentAlgorithm")}
+          <select
+            value={props.settings.lyricsAlignmentAlgorithm}
+            onChange={(event) =>
+              props.onChange({
+                ...props.settings,
+                lyricsAlignmentAlgorithm:
+                  event.currentTarget.value as WhisperSettings["lyricsAlignmentAlgorithm"]
+              })
+            }
+          >
+            <option value="songcut-standard">{tr("whisper.songcutStandard")}</option>
+            <option value="uta-align">Uta-Align</option>
+          </select>
+        </label>
       </div>
       <div className="whisper-settings-actions">
         <Button size="sm" variant="secondary" onClick={props.onDownload} disabled={props.busy}>

@@ -87,6 +87,7 @@ export type LyricsAnalysisResult = {
   title: string | null;
   duration: number;
   device_used: string;
+  algorithm: "songcut-standard" | "uta-align";
   whisper_text: string;
   tempo_bpm: number;
   beat_times: number[];
@@ -95,6 +96,8 @@ export type LyricsAnalysisResult = {
   confidence_statistics: ConfidenceStatistics;
   lines: LyricsAnalysisLine[];
   elapsed_seconds: number;
+  uta_align_diagnostics?: Record<string, unknown>;
+  mms_diagnostics?: Record<string, unknown>;
 };
 
 export type SubtitleProjectState = {

@@ -14,11 +14,13 @@ import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
+export type LyricsAlignmentAlgorithm = "songcut-standard" | "uta-align";
 export type WhisperSettings = {
   enabled: boolean;
   model: WhisperModelKey;
   language: string;
   device: WhisperDevice;
+  lyricsAlignmentAlgorithm: LyricsAlignmentAlgorithm;
 };
 
 export type WhisperModelStatus = {
@@ -45,6 +47,16 @@ export type WhisperStatus = {
 
 export type DemucsStatus = {
   model: string;
+  repo_id: string;
+  ready: boolean;
+  source: "bundled" | "downloaded" | null;
+  model_dir: string;
+  installed_bytes: number | null;
+};
+
+export type MmsStatus = {
+  model: string;
+  variant: string;
   repo_id: string;
   ready: boolean;
   source: "bundled" | "downloaded" | null;
@@ -143,6 +155,14 @@ export function startDemucsDownload(baseUrl: string) {
   return postJson<JobRecord>(baseUrl, "/models/demucs/download", {});
 }
 
+export function getMmsStatus(baseUrl: string) {
+  return getJson<MmsStatus>(baseUrl, "/models/mms");
+}
+
+export function startMmsDownload(baseUrl: string) {
+  return postJson<JobRecord>(baseUrl, "/models/mms/download", {});
+}
+
 export function startTranscription(
   baseUrl: string,
   sourcePath: string,
@@ -193,6 +213,7 @@ export function startLyricsAnalysis(
     model: settings.model,
     language: settings.language,
     device: settings.device,
+    algorithm: settings.lyricsAlignmentAlgorithm,
   });
 }
 

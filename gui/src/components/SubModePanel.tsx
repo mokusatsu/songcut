@@ -43,6 +43,11 @@ import {
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
 import {
+  createPendingTask,
+  failTask,
+  type TaskSlot,
+} from "@/lib/useTaskRegistry";
+import {
   readSubtitleStylePresets,
   upsertSubtitleStylePreset,
   writeSubtitleStylePresets,
@@ -83,8 +88,11 @@ type Props = {
   whisperSettings: WhisperSettings;
   onPrepareWhisperModel: () => Promise<void> | undefined;
   onPrepareDemucsModel: () => Promise<void> | undefined;
+  onPrepareMmsModel: () => Promise<void> | undefined;
   saveStatus: string;
-  message: string;
+  taskStatus: React.ReactNode;
+  analysisJob: JobRecord | null;
+  exportJob: JobRecord | null;
   onStateChange: (state: SubtitleProjectState) => void;
   onSeek: (time: number) => void;
   onPlay: () => void;
@@ -110,7 +118,7 @@ type Props = {
   onZoomOut: () => void;
   onZoomReset: () => void;
   onMessage: (message: string) => void;
-  onJob: (slot: "lyrics-analysis" | "subtitle-export", job: JobRecord | null) => void;
+  onJob: (slot: TaskSlot, job: JobRecord | null) => void;
   onRenderCaches: (items: SubtitleRenderResultItem[]) => void;
 };
 
@@ -122,9 +130,7 @@ export function SubModePanel(props: Props) {
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [busy, setBusy] = useState<"analysis" | "export" | null>(null);
   const [preparingModel, setPreparingModel] = useState(false);
-  const [analysisJob, setAnalysisJob] = useState<JobRecord | null>(null);
   const [analysisProgressOpen, setAnalysisProgressOpen] = useState(false);
-  const [exportJob, setExportJob] = useState<JobRecord | null>(null);
   const [exportProgressOpen, setExportProgressOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
   const [fontListError, setFontListError] = useState<string | null>(null);
@@ -161,6 +167,8 @@ export function SubModePanel(props: Props) {
     const timer = window.setTimeout(() => {
       const width = props.videoInfo?.video.width || 1920;
       const height = props.videoInfo?.video.height || 1080;
+      let trackedJob = createPendingTask("subtitle-render", "字幕プレビュー画像を準備しています…");
+      props.onJob("subtitle-render", trackedJob);
       void startSubtitleRender(
         props.apiBaseUrl,
         width,
@@ -172,19 +180,32 @@ export function SubModePanel(props: Props) {
           style,
         }))
       )
-        .then((started) =>
-          waitForJob<{ items: SubtitleRenderResultItem[] }>(
+        .then((started) => {
+          if (renderRequestVersionRef.current === version) {
+            trackedJob = started;
+            props.onJob("subtitle-render", started);
+          }
+          return waitForJob<{ items: SubtitleRenderResultItem[] }>(
             props.apiBaseUrl,
             started.id,
-            () => undefined,
+            (job) => {
+              if (renderRequestVersionRef.current === version) {
+                trackedJob = job;
+                props.onJob("subtitle-render", job);
+              }
+            },
             250
-          )
-        )
+          );
+        })
         .then((result) => {
           if (renderRequestVersionRef.current === version) props.onRenderCaches(result.items);
         })
         .catch((error) => {
           if (renderRequestVersionRef.current === version) {
+            props.onJob(
+              "subtitle-render",
+              failTask(trackedJob, error, "字幕プレビュー画像の生成に失敗しました")
+            );
             props.onMessage(`字幕プレビュー画像の生成に失敗しました: ${String(error)}`);
           }
         });
@@ -209,18 +230,10 @@ export function SubModePanel(props: Props) {
 
   async function analyzeLyrics() {
     if (!props.apiBaseUrl || !props.videoPath || !lyricsText.trim()) return;
-    const now = Date.now() / 1000;
     setLyricsOpen(false);
     setAnalysisProgressOpen(true);
-    setAnalysisJob({
-      id: "starting",
-      kind: "lyrics-analysis",
-      status: "queued",
-      progress: 0,
-      message: "歌詞解析を準備しています…",
-      created_at: now,
-      updated_at: now,
-    });
+    let trackedJob = createPendingTask("lyrics-analysis", "歌詞解析を準備しています…");
+    props.onJob("lyrics-analysis", trackedJob);
     setBusy("analysis");
     try {
       const started = await startLyricsAnalysis(
@@ -229,13 +242,13 @@ export function SubModePanel(props: Props) {
         lyricsText,
         props.whisperSettings
       );
-      setAnalysisJob(started);
+      trackedJob = started;
       props.onJob("lyrics-analysis", started);
       const result = await waitForJob<LyricsAnalysisResult>(
         props.apiBaseUrl,
         started.id,
         (job) => {
-          setAnalysisJob(job);
+          trackedJob = job;
           props.onJob("lyrics-analysis", job);
         }
       );
@@ -249,20 +262,10 @@ export function SubModePanel(props: Props) {
           : `歌詞解析が完了しました。${result.lines.length}行、BPM ${result.tempo_bpm.toFixed(1)}`
       );
     } catch (error) {
-      setAnalysisJob((current) => ({
-        id: current?.id ?? "failed",
-        kind: "lyrics-analysis",
-        status: "failed",
-        progress: current?.progress ?? 0,
-        message: "歌詞解析に失敗しました",
-        error: String(error),
-        created_at: current?.created_at ?? Date.now() / 1000,
-        updated_at: Date.now() / 1000,
-      }));
+      props.onJob("lyrics-analysis", failTask(trackedJob, error, "歌詞解析に失敗しました"));
       props.onMessage(`歌詞解析に失敗しました: ${String(error)}`);
     } finally {
       setBusy(null);
-      props.onJob("lyrics-analysis", null);
     }
   }
 
@@ -271,6 +274,9 @@ export function SubModePanel(props: Props) {
     try {
       await props.onPrepareDemucsModel();
       await props.onPrepareWhisperModel();
+      if (props.whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
+        await props.onPrepareMmsModel();
+      }
       setLyricsOpen(true);
     } catch (error) {
       props.onMessage(`解析モデルのダウンロードに失敗しました: ${String(error)}`);
@@ -283,17 +289,9 @@ export function SubModePanel(props: Props) {
     if (!props.apiBaseUrl || !props.videoPath || !props.videoInfo) return;
     const outputDir = await window.songcut.selectOutputDirectory();
     if (!outputDir) return;
-    const now = Date.now() / 1000;
     setExportProgressOpen(true);
-    setExportJob({
-      id: "starting",
-      kind: "subtitle-export",
-      status: "queued",
-      progress: 0,
-      message: "字幕書き出しを準備しています…",
-      created_at: now,
-      updated_at: now,
-    });
+    let trackedJob = createPendingTask("subtitle-export", "字幕書き出しを準備しています…");
+    props.onJob("subtitle-export", trackedJob);
     setBusy("export");
     try {
       const started = await startSubtitleExport(
@@ -304,32 +302,22 @@ export function SubModePanel(props: Props) {
         props.videoInfo.video.height || 1080,
         props.state.lanes
       );
-      setExportJob(started);
+      trackedJob = started;
       props.onJob("subtitle-export", started);
       const result = await waitForJob<{ video: string; output_dir: string }>(
         props.apiBaseUrl,
         started.id,
         (job) => {
-          setExportJob(job);
+          trackedJob = job;
           props.onJob("subtitle-export", job);
         }
       );
       props.onMessage(`字幕動画を書き出しました: ${result.video}`);
     } catch (error) {
-      setExportJob((current) => ({
-        id: current?.id ?? "failed",
-        kind: "subtitle-export",
-        status: "failed",
-        progress: current?.progress ?? 0,
-        message: "字幕書き出しに失敗しました",
-        error: String(error),
-        created_at: current?.created_at ?? Date.now() / 1000,
-        updated_at: Date.now() / 1000,
-      }));
+      props.onJob("subtitle-export", failTask(trackedJob, error, "字幕書き出しに失敗しました"));
       props.onMessage(`字幕書き出しに失敗しました: ${String(error)}`);
     } finally {
       setBusy(null);
-      props.onJob("subtitle-export", null);
     }
   }
 
@@ -455,8 +443,8 @@ export function SubModePanel(props: Props) {
           <Button size="icon" variant="ghost" onClick={props.onZoomIn}><Plus size={16} /></Button>
         </div>
       </header>
+      {props.taskStatus}
       <div className="sub-status-row">
-        <span>{props.message}</span>
         {props.state.tempo_bpm > 0 ? <span>BPM {props.state.tempo_bpm.toFixed(1)}</span> : null}
         {props.state.confidence_statistics ? (
           <span>
@@ -502,13 +490,13 @@ export function SubModePanel(props: Props) {
       </Dialog>
       <AnalysisProgressDialog
         open={analysisProgressOpen}
-        job={analysisJob}
+        job={props.analysisJob}
         onClose={() => setAnalysisProgressOpen(false)}
       />
       <JobProgressDialog
         open={exportProgressOpen}
         title="字幕を書き出し"
-        job={exportJob}
+        job={props.exportJob}
         pendingMessage="字幕書き出しを準備しています…"
         onClose={() => setExportProgressOpen(false)}
       />

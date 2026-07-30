@@ -10,10 +10,13 @@ export type TaskSlot =
   | "transcription"
   | "export"
   | "subtitle-export"
+  | "subtitle-render"
   | "download-whisper"
-  | "download-demucs";
+  | "download-demucs"
+  | "download-mms";
 
 export type TaskRegistryState = Partial<Record<TaskSlot, JobRecord>>;
+export type TaskRegistryEntry = { slot: TaskSlot; job: JobRecord };
 
 const DISPLAY_PRIORITY: Record<TaskSlot, number> = {
   export: 600,
@@ -23,6 +26,8 @@ const DISPLAY_PRIORITY: Record<TaskSlot, number> = {
   "lyrics-analysis": 400,
   "download-whisper": 300,
   "download-demucs": 300,
+  "download-mms": 300,
+  "subtitle-render": 250,
   waveform: 200,
   "scratch-proxy": 100
 };
@@ -35,28 +40,82 @@ const BLOCKS_QUIT = new Set<TaskSlot>([
   "subtitle-export",
   "download-whisper",
   "download-demucs",
+  "download-mms",
 ]);
+const BACKGROUND_TASKS = new Set<TaskSlot>(["waveform", "scratch-proxy", "subtitle-render"]);
 
 export function isTaskRunning(job: JobRecord | null | undefined) {
   return job?.status === "queued" || job?.status === "running";
 }
 
+export function createPendingTask(kind: string, message: string): JobRecord {
+  const now = Date.now() / 1000;
+  return {
+    id: `starting-${kind}`,
+    kind,
+    status: "queued",
+    progress: 0,
+    message,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+export function failTask(job: JobRecord, error: unknown, message: string): JobRecord {
+  if (job.status === "failed" || job.status === "cancelled") return job;
+  return {
+    ...job,
+    status: "failed",
+    message,
+    error: String(error),
+    updated_at: Date.now() / 1000,
+  };
+}
+
+function taskEntries(tasks: TaskRegistryState): TaskRegistryEntry[] {
+  return (Object.entries(tasks) as [TaskSlot, JobRecord][])
+    .filter((entry): entry is [TaskSlot, JobRecord] => Boolean(entry[1]))
+    .map(([slot, job]) => ({ slot, job }));
+}
+
+function byRunningPriority(left: TaskRegistryEntry, right: TaskRegistryEntry) {
+  return (
+    DISPLAY_PRIORITY[right.slot] - DISPLAY_PRIORITY[left.slot] ||
+    right.job.updated_at - left.job.updated_at
+  );
+}
+
+function byMostRecentlyUpdated(left: TaskRegistryEntry, right: TaskRegistryEntry) {
+  return right.job.updated_at - left.job.updated_at;
+}
+
+export function selectRunningTaskEntries(tasks: TaskRegistryState): TaskRegistryEntry[] {
+  return taskEntries(tasks)
+    .filter(({ job }) => isTaskRunning(job))
+    .sort(byRunningPriority);
+}
+
+export function selectFailedTaskEntries(tasks: TaskRegistryState): TaskRegistryEntry[] {
+  return taskEntries(tasks)
+    .filter(({ job }) => job.status === "failed" || job.status === "cancelled")
+    .sort(byMostRecentlyUpdated);
+}
+
+export function selectLatestTerminalTask(tasks: TaskRegistryState): JobRecord | null {
+  const terminal = taskEntries(tasks).filter(({ job }) => !isTaskRunning(job));
+  const foreground = terminal.filter(({ slot }) => !BACKGROUND_TASKS.has(slot));
+  return (foreground.length ? foreground : terminal).sort(byMostRecentlyUpdated)[0]?.job ?? null;
+}
+
 export function selectActiveTask(tasks: TaskRegistryState): JobRecord | null {
-  const entries = (Object.entries(tasks) as [TaskSlot, JobRecord][]).filter(([, job]) => job);
-  const running = entries
-    .filter(([, job]) => isTaskRunning(job))
-    .sort(([left], [right]) => DISPLAY_PRIORITY[right] - DISPLAY_PRIORITY[left]);
-  if (running[0]) return running[0][1];
-  const terminal = entries.sort(([left], [right]) => DISPLAY_PRIORITY[right] - DISPLAY_PRIORITY[left]);
-  return terminal[0]?.[1] ?? null;
+  return selectRunningTaskEntries(tasks)[0]?.job ?? selectLatestTerminalTask(tasks);
 }
 
 export function selectBlockingTask(tasks: TaskRegistryState): JobRecord | null {
-  const entries = Object.entries(tasks) as [TaskSlot, JobRecord][];
   return (
-    entries
-      .filter(([slot, job]) => BLOCKS_QUIT.has(slot) && isTaskRunning(job))
-      .sort(([left], [right]) => DISPLAY_PRIORITY[right] - DISPLAY_PRIORITY[left])[0]?.[1] ?? null
+    taskEntries(tasks)
+      .filter(({ slot, job }) => BLOCKS_QUIT.has(slot) && isTaskRunning(job))
+      .sort(byRunningPriority)[0]?.job ?? null
   );
 }
 
@@ -87,10 +146,20 @@ export function useTaskRegistry() {
   }, []);
   const activeTask = useMemo(() => selectActiveTask(tasks), [tasks]);
   const blockingTask = useMemo(() => selectBlockingTask(tasks), [tasks]);
-  const runningTasks = useMemo(
-    () => (Object.values(tasks) as JobRecord[]).filter((job) => isTaskRunning(job)),
-    [tasks]
-  );
+  const runningTaskEntries = useMemo(() => selectRunningTaskEntries(tasks), [tasks]);
+  const failedTaskEntries = useMemo(() => selectFailedTaskEntries(tasks), [tasks]);
+  const latestTerminalTask = useMemo(() => selectLatestTerminalTask(tasks), [tasks]);
+  const runningTasks = useMemo(() => runningTaskEntries.map(({ job }) => job), [runningTaskEntries]);
 
-  return { tasks, updateTask, clearTasks, activeTask, blockingTask, runningTasks };
+  return {
+    tasks,
+    updateTask,
+    clearTasks,
+    activeTask,
+    blockingTask,
+    runningTasks,
+    runningTaskEntries,
+    failedTaskEntries,
+    latestTerminalTask,
+  };
 }

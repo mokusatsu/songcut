@@ -120,6 +120,7 @@ export type WhisperSettings = {
   model: WhisperModelKey;
   language: string;
   device: InferenceDevice;
+  lyricsAlignmentAlgorithm?: "songcut-standard" | "uta-align";
 };
 
 export type ProjectSubtitleStyle = {
@@ -626,6 +627,13 @@ function whisperSettings(value: unknown, label: string) {
   if (!whisperModels.has(row.model as WhisperModelKey)) throw new Error(`Invalid ${label}.model.`);
   stringValue(row.language, `${label}.language`);
   inferenceDevice(row.device, `${label}.device`);
+  if (
+    row.lyricsAlignmentAlgorithm !== undefined &&
+    row.lyricsAlignmentAlgorithm !== "songcut-standard" &&
+    row.lyricsAlignmentAlgorithm !== "uta-align"
+  ) {
+    throw new Error(`Invalid ${label}.lyricsAlignmentAlgorithm.`);
+  }
 }
 
 function validateOperation(value: unknown) {

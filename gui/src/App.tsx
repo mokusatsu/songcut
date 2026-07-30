@@ -3,6 +3,7 @@ import type * as React from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  CircleAlert,
   CheckCircle2,
   ChevronsLeft,
   ChevronsRight,
@@ -33,6 +34,7 @@ import {
   checkFfmpeg,
   getDemucsStatus,
   getExportPlan,
+  getMmsStatus,
   getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
@@ -40,11 +42,12 @@ import {
   startDemucsDownload,
   startExport,
   startScratchProxy,
+  startMmsDownload,
   startTranscription,
   startWhisperDownload,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, DemucsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { SettingsDialog } from "@/components/SettingsDialog";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
@@ -75,7 +78,8 @@ import type {
 import { useProjectPersistence } from "@/lib/useProjectPersistence";
 import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
-import { useTaskRegistry } from "@/lib/useTaskRegistry";
+import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
+import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
 import {
   normalizeScratchAudioProxyEnabled,
@@ -242,6 +246,7 @@ export default function App(props: {
   const recoveryCheckedRef = useRef(false);
   const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
+  const mmsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
@@ -293,10 +298,10 @@ export default function App(props: {
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
   const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
   const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
-  const [whisperDownloadJob, setWhisperDownloadJob] = useState<JobRecord | null>(null);
   const [demucsStatus, setDemucsStatus] = useState<DemucsStatus | null>(null);
   const [demucsDownloadOpen, setDemucsDownloadOpen] = useState(false);
-  const [demucsDownloadJob, setDemucsDownloadJob] = useState<JobRecord | null>(null);
+  const [mmsStatus, setMmsStatus] = useState<MmsStatus | null>(null);
+  const [mmsDownloadOpen, setMmsDownloadOpen] = useState(false);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -389,7 +394,8 @@ export default function App(props: {
   }
   const exportJob = taskRegistry.tasks.export ?? null;
   const transcriptionJob = taskRegistry.tasks.transcription ?? null;
-  const activeJob = taskRegistry.activeTask;
+  const lyricsAnalysisJob = taskRegistry.tasks["lyrics-analysis"] ?? null;
+  const subtitleExportJob = taskRegistry.tasks["subtitle-export"] ?? null;
   const runningJob = taskRegistry.blockingTask;
   const projectDocument = useMemo(
     () =>
@@ -448,7 +454,25 @@ export default function App(props: {
   );
   const selectedWhisperModel = whisperStatus?.models.find((model) => model.key === whisperSettings.model) ?? null;
   const whisperBusy = taskRegistry.runningTasks.some((task) =>
-    ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper", "download-demucs"].includes(task.kind)
+    ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper", "download-demucs", "download-mms"].includes(task.kind)
+  );
+  const taskStatus = (
+    <TaskStatusPanel
+      runningTasks={taskRegistry.runningTaskEntries}
+      failedTasks={taskRegistry.failedTaskEntries}
+      latestTerminalTask={taskRegistry.latestTerminalTask}
+      message={message}
+      videoInfo={videoInfo}
+      scratchProxyState={scratchProxyState}
+      waveformPhase={progressiveWaveform.phase}
+      waveformProgress={progressiveWaveform.progress}
+      onDismiss={(slot) => taskRegistry.updateTask(slot, null)}
+      onWaveformRetry={
+        sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
+          ? () => void progressiveWaveform.start(videoPath)
+          : null
+      }
+    />
   );
 
   projectDocumentRef.current = projectDocument;
@@ -547,6 +571,7 @@ export default function App(props: {
     if (!apiBaseUrl) return;
     void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
     void refreshDemucsStatus().catch((error) => setMessage(`Demucs status unavailable: ${String(error)}`));
+    void refreshMmsStatus().catch((error) => setMessage(`MMS status unavailable: ${String(error)}`));
   }, [apiBaseUrl]);
 
   useEffect(() => {
@@ -721,6 +746,13 @@ export default function App(props: {
     return status;
   }
 
+  async function refreshMmsStatus() {
+    if (!apiBaseUrl) return null;
+    const status = await getMmsStatus(apiBaseUrl);
+    setMmsStatus(status);
+    return status;
+  }
+
   async function checkRecoveryOnStartup() {
     try {
       const raw = await window.songcut.loadRecovery();
@@ -791,9 +823,21 @@ export default function App(props: {
     setCurrentTime(document.view_state.current_time);
     setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
     setAnalysisDevice(document.settings.analysis_device);
-    setWhisperSettings({ ...document.settings.whisper });
+    setWhisperSettings({
+      ...DEFAULT_WHISPER_SETTINGS,
+      ...document.settings.whisper,
+      lyricsAlignmentAlgorithm:
+        document.settings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
+    });
     setFilenameTemplate(filenameTemplateFromProject(document));
-    taskRegistry.clearTasks(["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export"]);
+    taskRegistry.clearTasks([
+      "analysis",
+      "lyrics-analysis",
+      "transcription",
+      "export",
+      "subtitle-export",
+      "subtitle-render",
+    ]);
     setTranscriptSegment(null);
     setSegmentManagementReview(null);
     setTimestampCommentFlow(closeTimestampCommentFlow());
@@ -831,7 +875,14 @@ export default function App(props: {
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
     progressiveWaveform.cancel();
-    taskRegistry.clearTasks(["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export"]);
+    taskRegistry.clearTasks([
+      "analysis",
+      "lyrics-analysis",
+      "transcription",
+      "export",
+      "subtitle-export",
+      "subtitle-render",
+    ]);
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage("Loading video.");
     const [info, fileUrl, identity, nextProjectPath] = await Promise.all([
@@ -1089,8 +1140,11 @@ export default function App(props: {
     }
 
     setScratchProxyState("preparing");
+    let trackedJob = createPendingTask("scratch-proxy", tr("messages.proxyPreparing"));
+    taskRegistry.updateTask("scratch-proxy", trackedJob);
     try {
       const started = await startScratchProxy(apiBaseUrl, videoPath);
+      trackedJob = started;
       taskRegistry.updateTask("scratch-proxy", started);
       if (scratchProxyConfigurationGenerationRef.current !== generation) {
         await cancelScratchProxy(apiBaseUrl, started.id).catch(() => undefined);
@@ -1100,7 +1154,11 @@ export default function App(props: {
       const result = await waitForJob<ScratchProxyResult>(
         apiBaseUrl,
         started.id,
-        (nextJob) => taskRegistry.updateTask("scratch-proxy", nextJob),
+        (nextJob) => {
+          if (scratchProxyConfigurationGenerationRef.current !== generation) return;
+          trackedJob = nextJob;
+          taskRegistry.updateTask("scratch-proxy", nextJob);
+        },
         250
       );
       if (scratchProxyJobIdRef.current === started.id) scratchProxyJobIdRef.current = null;
@@ -1123,14 +1181,18 @@ export default function App(props: {
       setScratchProxyState("ready");
     } catch (error) {
       if (scratchProxyConfigurationGenerationRef.current !== generation) return;
-      await disposeScratchProxy(apiBaseUrl);
+      taskRegistry.updateTask(
+        "scratch-proxy",
+        failTask(trackedJob, error, "Scratch proxy failed; using original audio.")
+      );
+      await disposeScratchProxy(apiBaseUrl, false);
       if (scratchProxyConfigurationGenerationRef.current !== generation) return;
       setScratchProxyState("failed");
       setMessage(`Scratch proxy failed; using original audio: ${String(error)}`);
     }
   }
 
-  async function disposeScratchProxy(baseUrl: string) {
+  async function disposeScratchProxy(baseUrl: string, clearTask = true) {
     const proxyAudio = scratchProxyAudioRef.current;
     if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
     scratchProxyReadyRef.current = false;
@@ -1144,7 +1206,7 @@ export default function App(props: {
     const proxyId = scratchProxyIdRef.current;
     scratchProxyJobIdRef.current = null;
     scratchProxyIdRef.current = null;
-    taskRegistry.updateTask("scratch-proxy", null);
+    if (clearTask) taskRegistry.updateTask("scratch-proxy", null);
     if (!baseUrl) return;
     if (jobId) await cancelScratchProxy(baseUrl, jobId).catch(() => undefined);
     if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
@@ -1161,6 +1223,11 @@ export default function App(props: {
     if (whisperDownloadPromiseRef.current) return whisperDownloadPromiseRef.current;
 
     const modelKey = whisperSettings.model;
+    let trackedJob = createPendingTask("download-whisper", tr("dialogs.whisperDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-whisper", job);
+    };
     const operation = (async () => {
       try {
         const currentStatus = await refreshWhisperStatus();
@@ -1169,7 +1236,7 @@ export default function App(props: {
           if (options.showReadyState) {
             const now = Date.now() / 1000;
             const installedBytes = currentModel.installed_bytes;
-            setWhisperDownloadJob({
+            trackDownload({
               id: "already-ready",
               kind: "download-whisper",
               status: "completed",
@@ -1194,7 +1261,7 @@ export default function App(props: {
 
         const now = Date.now() / 1000;
         setWhisperDownloadOpen(true);
-        setWhisperDownloadJob({
+        trackDownload({
           id: "starting",
           kind: "download-whisper",
           status: "queued",
@@ -1204,35 +1271,19 @@ export default function App(props: {
           updated_at: now,
         });
         const started = await startWhisperDownload(apiBaseUrl, modelKey);
-        setWhisperDownloadJob(started);
-        taskRegistry.updateTask("download-whisper", started);
+        trackDownload(started);
         await waitForJob(
           apiBaseUrl,
           started.id,
-          (nextJob) => {
-            setWhisperDownloadJob(nextJob);
-            taskRegistry.updateTask("download-whisper", nextJob);
-          },
+          trackDownload,
           250
         );
         await refreshWhisperStatus();
         setMessage(`Whisper ${modelKey} model is ready.`);
       } catch (error) {
         setWhisperDownloadOpen(true);
-        setWhisperDownloadJob((current) =>
-          current?.status === "failed"
-            ? current
-            : {
-                id: current?.id ?? "failed",
-                kind: "download-whisper",
-                status: "failed",
-                progress: current?.progress ?? 0,
-                message: tr("dialogs.whisperDownloadFailed"),
-                error: String(error),
-                created_at: current?.created_at ?? Date.now() / 1000,
-                updated_at: Date.now() / 1000,
-              }
-        );
+        const current = trackedJob;
+        trackDownload(failTask(current, error, tr("dialogs.whisperDownloadFailed")));
         throw error;
       } finally {
         whisperDownloadPromiseRef.current = null;
@@ -1246,6 +1297,11 @@ export default function App(props: {
     if (!apiBaseUrl) return;
     if (demucsDownloadPromiseRef.current) return demucsDownloadPromiseRef.current;
 
+    let trackedJob = createPendingTask("download-demucs", tr("dialogs.demucsDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-demucs", job);
+    };
     const operation = (async () => {
       try {
         const currentStatus = await refreshDemucsStatus();
@@ -1253,7 +1309,7 @@ export default function App(props: {
           if (options.showReadyState) {
             const now = Date.now() / 1000;
             const installedBytes = currentStatus.installed_bytes;
-            setDemucsDownloadJob({
+            trackDownload({
               id: "already-ready-demucs",
               kind: "download-demucs",
               status: "completed",
@@ -1277,7 +1333,7 @@ export default function App(props: {
 
         const now = Date.now() / 1000;
         setDemucsDownloadOpen(true);
-        setDemucsDownloadJob({
+        trackDownload({
           id: "starting-demucs",
           kind: "download-demucs",
           status: "queued",
@@ -1287,40 +1343,89 @@ export default function App(props: {
           updated_at: now,
         });
         const started = await startDemucsDownload(apiBaseUrl);
-        setDemucsDownloadJob(started);
-        taskRegistry.updateTask("download-demucs", started);
+        trackDownload(started);
         await waitForJob(
           apiBaseUrl,
           started.id,
-          (nextJob) => {
-            setDemucsDownloadJob(nextJob);
-            taskRegistry.updateTask("download-demucs", nextJob);
-          },
+          trackDownload,
           250
         );
         await refreshDemucsStatus();
       } catch (error) {
         setDemucsDownloadOpen(true);
-        setDemucsDownloadJob((current) =>
-          current?.status === "failed"
-            ? current
-            : {
-                id: current?.id ?? "failed-demucs",
-                kind: "download-demucs",
-                status: "failed",
-                progress: current?.progress ?? 0,
-                message: tr("dialogs.demucsDownloadFailed"),
-                error: String(error),
-                created_at: current?.created_at ?? Date.now() / 1000,
-                updated_at: Date.now() / 1000,
-              }
-        );
+        const current = trackedJob;
+        trackDownload(failTask(current, error, tr("dialogs.demucsDownloadFailed")));
         throw error;
       } finally {
         demucsDownloadPromiseRef.current = null;
       }
     })();
     demucsDownloadPromiseRef.current = operation;
+    return operation;
+  }
+
+  async function ensureMms(options: { showReadyState?: boolean } = {}) {
+    if (!apiBaseUrl) return;
+    if (mmsDownloadPromiseRef.current) return mmsDownloadPromiseRef.current;
+
+    let trackedJob = createPendingTask("download-mms", tr("dialogs.mmsDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-mms", job);
+    };
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshMmsStatus();
+        if (currentStatus?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentStatus.installed_bytes;
+            trackDownload({
+              id: "already-ready-mms",
+              kind: "download-mms",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.mmsDownloadComplete"),
+              result: {
+                model: currentStatus.model,
+                model_dir: currentStatus.model_dir,
+                source: currentStatus.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setMmsDownloadOpen(true);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setMmsDownloadOpen(true);
+        trackDownload({
+          id: "starting-mms",
+          kind: "download-mms",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.mmsDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startMmsDownload(apiBaseUrl);
+        trackDownload(started);
+        await waitForJob(apiBaseUrl, started.id, trackDownload, 250);
+        await refreshMmsStatus();
+      } catch (error) {
+        setMmsDownloadOpen(true);
+        trackDownload(failTask(trackedJob, error, tr("dialogs.mmsDownloadFailed")));
+        throw error;
+      } finally {
+        mmsDownloadPromiseRef.current = null;
+      }
+    })();
+    mmsDownloadPromiseRef.current = operation;
     return operation;
   }
 
@@ -1355,18 +1460,22 @@ export default function App(props: {
     taskRegistry.updateTask("transcription", null);
     setProjectOperation({ kind: "analysis", status: "running" });
     markProjectChanged();
-    const started = await startAnalysis(
-      apiBaseUrl,
-      videoPath,
-      guideText,
-      analysisDevice,
-      boundaryRefinementSettings
-    );
-    taskRegistry.updateTask("analysis", started);
+    let trackedJob = createPendingTask("analysis", tr("messages.analysisRunning"));
+    taskRegistry.updateTask("analysis", trackedJob);
     try {
-      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) =>
-        taskRegistry.updateTask("analysis", nextJob)
+      const started = await startAnalysis(
+        apiBaseUrl,
+        videoPath,
+        guideText,
+        analysisDevice,
+        boundaryRefinementSettings
       );
+      trackedJob = started;
+      taskRegistry.updateTask("analysis", started);
+      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
+        taskRegistry.updateTask("analysis", nextJob);
+      });
       const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
       setAnalysis(result);
       setSegments(nextSegments);
@@ -1377,6 +1486,7 @@ export default function App(props: {
       setMessage(`Detected ${nextSegments.length} segments.`);
       if (transcribeAfter && nextSegments.length) await runTranscription(nextSegments, false);
     } catch (error) {
+      taskRegistry.updateTask("analysis", failTask(trackedJob, error, tr("messages.analysisFailed")));
       setProjectOperation({ kind: "analysis", status: "interrupted" });
       markProjectChanged();
       throw error;
@@ -1403,11 +1513,15 @@ export default function App(props: {
       pending_segment_ids: pendingIds
     });
     markProjectChanged();
+    let trackedJob = createPendingTask("transcription", tr("messages.transcriptionPreparing"));
+    taskRegistry.updateTask("transcription", trackedJob);
     try {
       const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
+      trackedJob = started;
       taskRegistry.updateTask("transcription", started);
       const appliedTranscripts = new Map<string, string>();
       const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
         taskRegistry.updateTask("transcription", nextJob);
         const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
         const changed = partial.filter((transcript) => {
@@ -1445,6 +1559,10 @@ export default function App(props: {
       markProjectChanged();
       setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
     } catch (error) {
+      taskRegistry.updateTask(
+        "transcription",
+        failTask(trackedJob, error, tr("messages.transcriptionFailed"))
+      );
       setProjectOperation((operation) =>
         operation?.kind === "transcription" ? { ...operation, status: "interrupted" } : operation
       );
@@ -1462,9 +1580,14 @@ export default function App(props: {
     }
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
-    let started: JobRecord;
+    let trackedJob = createPendingTask("export", tr("output.preparing"));
+    taskRegistry.updateTask("export", trackedJob);
+    setOutputOpen(false);
+    setExportProgressOpen(true);
+    setProjectOperation({ kind: "export", status: "running" });
+    markProjectChanged();
     try {
-      started = await startExport(
+      const started = await startExport(
         apiBaseUrl,
         videoPath,
         outputDir,
@@ -1472,23 +1595,17 @@ export default function App(props: {
         buildTimestampExportText(items, "timestamp-comment"),
         createVideoFolder
       );
-    } catch (error) {
-      setMessage(`Export could not be started: ${String(error)}`);
-      return;
-    }
-    setOutputOpen(false);
-    setExportProgressOpen(true);
-    taskRegistry.updateTask("export", started);
-    setProjectOperation({ kind: "export", status: "running" });
-    markProjectChanged();
-    try {
+      trackedJob = started;
+      taskRegistry.updateTask("export", started);
       await waitForJob(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
         taskRegistry.updateTask("export", nextJob);
       });
       setProjectOperation(null);
       markProjectChanged();
       setMessage("Export complete.");
     } catch (error) {
+      taskRegistry.updateTask("export", failTask(trackedJob, error, tr("output.failed")));
       setProjectOperation({ kind: "export", status: "interrupted" });
       markProjectChanged();
       setMessage(`Export failed: ${String(error)}`);
@@ -2443,19 +2560,7 @@ export default function App(props: {
             }}
             placeholder={tr("app.guidePlaceholder")}
           />
-          <StatusPanel
-            job={activeJob}
-            message={message}
-            videoInfo={videoInfo}
-            scratchProxyState={scratchProxyState}
-            waveformPhase={progressiveWaveform.phase}
-            waveformProgress={progressiveWaveform.progress}
-            onWaveformRetry={
-              sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
-                ? () => void progressiveWaveform.start(videoPath)
-                : null
-            }
-          />
+          {taskStatus}
         </div>
         <TimelineStack
           duration={duration}
@@ -2510,8 +2615,14 @@ export default function App(props: {
               await ensureDemucs();
               setDemucsDownloadOpen(false);
             }}
+            onPrepareMmsModel={async () => {
+              await ensureMms();
+              setMmsDownloadOpen(false);
+            }}
             saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
-            message={message}
+            taskStatus={taskStatus}
+            analysisJob={lyricsAnalysisJob}
+            exportJob={subtitleExportJob}
             onStateChange={(state) => {
               setSubtitleState(state);
               markProjectChanged();
@@ -2681,6 +2792,8 @@ export default function App(props: {
         whisperBusy={whisperBusy}
         demucsStatus={demucsStatus}
         demucsBusy={whisperBusy}
+        mmsStatus={mmsStatus}
+        mmsBusy={whisperBusy}
         hasSegments={segments.length > 0}
         transcriptStale={transcriptStale}
         sourceAvailable={sourceAvailable}
@@ -2719,6 +2832,10 @@ export default function App(props: {
           closeSettings();
           void ensureDemucs({ showReadyState: true }).catch((error) => setMessage(String(error)));
         }}
+        onPrepareMmsModel={() => {
+          closeSettings();
+          void ensureMms({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
         onTranscribe={() => {
           closeSettings();
           void runTranscription().catch((error) => setMessage(String(error)));
@@ -2755,18 +2872,28 @@ export default function App(props: {
       />
       <WhisperDownloadProgressDialog
         open={whisperDownloadOpen}
-        job={whisperDownloadJob}
+        job={taskRegistry.tasks["download-whisper"] ?? null}
         onClose={() => setWhisperDownloadOpen(false)}
       />
       <ModelDownloadProgressDialog
         open={demucsDownloadOpen}
-        job={demucsDownloadJob}
+        job={taskRegistry.tasks["download-demucs"] ?? null}
         title={tr("dialogs.demucsDownloadTitle")}
         description={tr("dialogs.demucsDownloadDescription")}
         preparing={tr("dialogs.demucsDownloadPreparing")}
         failed={tr("dialogs.demucsDownloadFailed")}
         complete={tr("dialogs.demucsDownloadComplete")}
         onClose={() => setDemucsDownloadOpen(false)}
+      />
+      <ModelDownloadProgressDialog
+        open={mmsDownloadOpen}
+        job={taskRegistry.tasks["download-mms"] ?? null}
+        title={tr("dialogs.mmsDownloadTitle")}
+        description={tr("dialogs.mmsDownloadDescription")}
+        preparing={tr("dialogs.mmsDownloadPreparing")}
+        failed={tr("dialogs.mmsDownloadFailed")}
+        complete={tr("dialogs.mmsDownloadComplete")}
+        onClose={() => setMmsDownloadOpen(false)}
       />
       <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
@@ -2953,10 +3080,14 @@ function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>
 
 function jobKindLabel(kind: string) {
   if (kind === "analysis") return tr("tasks.analysis");
+  if (kind === "lyrics-analysis") return tr("tasks.lyricsAnalysis");
   if (kind === "transcription") return tr("tasks.transcription");
   if (kind === "export") return tr("tasks.export");
+  if (kind === "subtitle-export") return tr("tasks.subtitleExport");
+  if (kind === "subtitle-render") return tr("tasks.subtitleRender");
   if (kind === "download-whisper") return tr("tasks.download");
   if (kind === "download-demucs") return tr("tasks.demucsDownload");
+  if (kind === "download-mms") return tr("tasks.mmsDownload");
   if (kind === "waveform") return tr("tasks.waveform");
   if (kind === "scratch-proxy") return tr("tasks.proxy");
   return tr("tasks.generic");
@@ -3124,32 +3255,62 @@ function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void
   );
 }
 
-function StatusPanel({
-  job,
+function TaskStatusPanel({
+  runningTasks,
+  failedTasks,
+  latestTerminalTask,
   message,
   videoInfo,
   scratchProxyState,
   waveformPhase,
   waveformProgress,
+  onDismiss,
   onWaveformRetry
 }: {
-  job: JobRecord | null;
+  runningTasks: TaskRegistryEntry[];
+  failedTasks: TaskRegistryEntry[];
+  latestTerminalTask: JobRecord | null;
   message: string;
   videoInfo: VideoInfo | null;
   scratchProxyState: ScratchProxyState;
   waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
   waveformProgress: number;
+  onDismiss: (slot: TaskSlot) => void;
   onWaveformRetry: (() => void) | null;
 }) {
+  const idleJob = runningTasks.length === 0 && failedTasks.length === 0 ? latestTerminalTask : null;
+  const idleJobMessage = localizeJobMessage(idleJob);
+  const uiMessage = localizeUiMessage(message);
   return (
-    <aside className="status-panel">
-      <div className="status-main">
-        {job?.status === "completed" ? <CheckCircle2 size={16} /> : null}
-        <span>{localizeJobMessage(job) || localizeUiMessage(message) || tr("app.idle")}</span>
-      </div>
-      {job ? <progress value={job.progress} max={1} /> : null}
-      {videoInfo ? (
+    <aside className="status-panel" aria-live="polite">
+      {runningTasks.length ? (
+        <div className="task-status-list">
+          {runningTasks.map((entry) => (
+            <TaskStatusRow key={entry.slot} entry={entry} />
+          ))}
+        </div>
+      ) : null}
+      {failedTasks.length ? (
+        <div className="task-status-list task-status-failures">
+          {failedTasks.map((entry) => (
+            <TaskStatusRow key={entry.slot} entry={entry} onDismiss={() => onDismiss(entry.slot)} />
+          ))}
+        </div>
+      ) : null}
+      {runningTasks.length === 0 && failedTasks.length === 0 ? (
         <>
+          <div className="status-main">
+            {idleJob?.status === "completed" ? <CheckCircle2 size={16} /> : null}
+            {idleJob ? <strong>{jobKindLabel(idleJob.kind)}</strong> : null}
+            <span>{idleJobMessage || uiMessage || tr("app.idle")}</span>
+          </div>
+          {idleJobMessage && uiMessage && idleJobMessage !== uiMessage ? (
+            <div className="status-secondary-message">{uiMessage}</div>
+          ) : null}
+        </>
+      ) : null}
+      {videoInfo ? (
+        <div className="status-meta">
           <div className="meta-line">
             {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
           </div>
@@ -3162,9 +3323,37 @@ function StatusPanel({
               <button type="button" className="waveform-retry" onClick={onWaveformRetry}>{tr("controls.retryWaveform")}</button>
             ) : null}
           </div>
-        </>
+        </div>
       ) : null}
     </aside>
+  );
+}
+
+function TaskStatusRow({
+  entry,
+  onDismiss,
+}: {
+  entry: TaskRegistryEntry;
+  onDismiss?: () => void;
+}) {
+  const { job } = entry;
+  const failed = job.status === "failed" || job.status === "cancelled";
+  return (
+    <div className={`task-status-row task-status-${job.status}`}>
+      <div className="task-status-heading">
+        {failed ? <CircleAlert size={15} /> : null}
+        <strong>{jobKindLabel(job.kind)}</strong>
+        <span>{localizeJobMessage(job)}</span>
+      </div>
+      <span className="task-status-percent">{Math.round(clamp(job.progress, 0, 1) * 100)}%</span>
+      {onDismiss ? (
+        <button type="button" className="task-status-dismiss" onClick={onDismiss}>
+          {tr("common.close")}
+        </button>
+      ) : null}
+      <progress value={clamp(job.progress, 0, 1)} max={1} />
+      {job.error ? <div className="task-status-error">{job.error}</div> : null}
+    </div>
   );
 }
 

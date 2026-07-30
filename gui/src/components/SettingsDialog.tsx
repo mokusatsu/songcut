@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { WhisperSettingsPanel } from "@/components/WhisperSettingsPanel";
 import { HelpTooltip } from "@/components/HelpTooltip";
-import type { AnalysisDevice, DemucsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, DemucsStatus, MmsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import type { WaveformDisplayMode } from "@/types";
@@ -27,6 +27,8 @@ export function SettingsDialog(props: {
   whisperBusy: boolean;
   demucsStatus: DemucsStatus | null;
   demucsBusy: boolean;
+  mmsStatus: MmsStatus | null;
+  mmsBusy: boolean;
   hasSegments: boolean;
   transcriptStale: boolean;
   sourceAvailable: boolean;
@@ -42,6 +44,7 @@ export function SettingsDialog(props: {
   onWhisperSettings: (settings: WhisperSettings) => void;
   onPrepareWhisperModel: () => void;
   onPrepareDemucsModel: () => void;
+  onPrepareMmsModel: () => void;
   onTranscribe: () => void;
   onFfmpegCheck: () => void;
   onLocalePreference: (preference: UiLanguagePreference) => void;
@@ -146,6 +149,31 @@ export function SettingsDialog(props: {
             </Button>
             {props.demucsStatus?.installed_bytes ? (
               <small>{tr("demucs.installed", { size: formatBytes(props.demucsStatus.installed_bytes) })}</small>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="settings-section" aria-labelledby="mms-settings-heading">
+          <div className="whisper-settings-heading">
+            <h3 id="mms-settings-heading">{tr("settings.mms")}</h3>
+            <span className={`model-state ${props.mmsStatus ? (props.mmsStatus.ready ? "ready" : "missing") : "unknown"}`}>
+              {props.mmsStatus
+                ? (props.mmsStatus.ready ? tr("mms.ready") : tr("mms.missing"))
+                : tr("mms.checking")}
+            </span>
+          </div>
+          <p className="settings-field-help">{tr("mms.description")}</p>
+          <div className="whisper-settings-actions">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={props.onPrepareMmsModel}
+              disabled={!props.apiReady || props.mmsBusy}
+            >
+              {tr("mms.prepare")}
+            </Button>
+            {props.mmsStatus?.installed_bytes ? (
+              <small>{tr("mms.installed", { size: formatBytes(props.mmsStatus.installed_bytes) })}</small>
             ) : null}
           </div>
         </section>
