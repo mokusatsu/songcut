@@ -13,6 +13,8 @@ import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
+export type DemucsDevice = "auto" | "npu" | "gpu" | "cpu";
+export type MmsDevice = "auto" | "gpu" | "cpu";
 export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 export type LyricsAlignmentAlgorithm = "songcut-standard" | "uta-align";
 export type WhisperSettings = {
@@ -20,6 +22,8 @@ export type WhisperSettings = {
   model: WhisperModelKey;
   language: string;
   device: WhisperDevice;
+  demucsDevice: DemucsDevice;
+  mmsDevice: MmsDevice;
   lyricsAlignmentAlgorithm: LyricsAlignmentAlgorithm;
 };
 
@@ -213,6 +217,8 @@ export function startLyricsAnalysis(
     model: settings.model,
     language: settings.language,
     device: settings.device,
+    demucs_device: settings.demucsDevice,
+    mms_device: settings.mmsDevice,
     algorithm: settings.lyricsAlignmentAlgorithm,
   });
 }

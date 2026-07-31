@@ -102,6 +102,7 @@ class MmsRefinementDiagnostics:
     path_score: float
     star_ratio: float
     variant: str
+    device_used: str = "CPU"
 
 
 def normalize_whisper_to_mms_language(language: str | None) -> str:
@@ -326,16 +327,43 @@ class MmsOnnxRunner:
         model_path: Path,
         *,
         providers: Sequence[str] = ("CPUExecutionProvider",),
+        device: str = "auto",
         session: object | None = None,
     ) -> None:
-        if session is None:
-            try:
-                import onnxruntime as ort
-            except ImportError as exc:
-                raise RuntimeError("onnxruntime is required for MMS alignment.") from exc
-            session = ort.InferenceSession(str(model_path), providers=list(providers))
         self._session = session
-        self._input_name = str(session.get_inputs()[0].name)
+        self._compiled_model: object | None = None
+        self.device_used = "CPU"
+        if session is not None:
+            self._input_name = str(session.get_inputs()[0].name)
+        else:
+            try:
+                import openvino as ov
+            except ImportError as exc:
+                raise RuntimeError("OpenVINO is required for MMS alignment.") from exc
+            normalized_device = device.strip().upper() or "AUTO"
+            if normalized_device not in {"AUTO", "GPU", "CPU"}:
+                raise ValueError("MMS device must be one of: auto, gpu, cpu")
+            core = ov.Core()
+            reported_devices = getattr(core, "available_devices", ("CPU",))
+            if not isinstance(reported_devices, (list, tuple, set, frozenset)):
+                reported_devices = ("CPU",)
+            available_devices = {str(item).upper() for item in reported_devices}
+            candidates = ("GPU", "CPU") if normalized_device == "AUTO" else (normalized_device,)
+            errors: list[str] = []
+            for candidate in candidates:
+                if candidate != "CPU" and candidate not in available_devices:
+                    errors.append(f"{candidate} is not available")
+                    continue
+                try:
+                    self._compiled_model = core.compile_model(str(model_path), candidate)
+                    self.device_used = candidate
+                    break
+                except Exception as exc:
+                    errors.append(f"{candidate}: {exc}")
+                    if normalized_device != "AUTO":
+                        raise RuntimeError(f"MMS could not be compiled for {candidate}: {exc}") from exc
+            if self._compiled_model is None:
+                raise RuntimeError(f"MMS has no usable OpenVINO device ({'; '.join(errors)}).")
 
     def emissions(self, audio: np.ndarray) -> np.ndarray:
         samples = np.asarray(audio, dtype=np.float32).reshape(-1)
@@ -343,8 +371,13 @@ class MmsOnnxRunner:
             raise ValueError("MMS input audio is empty.")
         variance = float(np.var(samples))
         normalized = (samples - float(np.mean(samples))) / math.sqrt(variance + 1e-7)
-        outputs = self._session.run(None, {self._input_name: normalized[np.newaxis, :]})
-        logits = np.asarray(outputs[0], dtype=np.float32)
+        if self._session is not None:
+            outputs = self._session.run(None, {self._input_name: normalized[np.newaxis, :]})
+            logits = np.asarray(outputs[0], dtype=np.float32)
+        else:
+            assert self._compiled_model is not None
+            outputs = self._compiled_model([normalized[np.newaxis, :]])
+            logits = np.asarray(next(iter(outputs.values())), dtype=np.float32)
         if logits.ndim != 3 or logits.shape[0] != 1:
             raise ValueError(f"Unexpected MMS ONNX logits shape: {logits.shape}")
         return log_softmax(logits[0])
@@ -576,6 +609,7 @@ def refine_standard_alignment_with_mms(
     alignment: LyricsAlignmentResult,
     *,
     language: str,
+    device: str = "auto",
     progress_callback: Callable[[float], None] | None = None,
 ) -> tuple[LyricsAlignmentResult, MmsRefinementDiagnostics]:
     resolved = resolve_mms_onnx_model_dir()
@@ -596,7 +630,8 @@ def refine_standard_alignment_with_mms(
     audio = read_media_mono_16k(vocals_path)
     if progress_callback is not None:
         progress_callback(0.15)
-    emissions = MmsOnnxRunner(mms_onnx_model_path(model_dir)).emissions(audio)
+    runner = MmsOnnxRunner(mms_onnx_model_path(model_dir), device=device)
+    emissions = runner.emissions(audio)
     if progress_callback is not None:
         progress_callback(0.85)
     ctc_alignment = align_prepared_lines(
@@ -611,7 +646,7 @@ def refine_standard_alignment_with_mms(
     )
     if progress_callback is not None:
         progress_callback(1.0)
-    return refined, diagnostics
+    return refined, replace(diagnostics, device_used=runner.device_used)
 
 
 def read_media_mono_16k(source: Path) -> np.ndarray:

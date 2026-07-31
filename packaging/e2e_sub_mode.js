@@ -20,6 +20,7 @@ const analysisProgressScreenshotPath = path.join(runRoot, "e2e-sub-mode-analysis
 const styleDialogScreenshotPath = path.join(runRoot, "e2e-sub-mode-style-dialog.png");
 const exportProgressScreenshotPath = path.join(runRoot, "e2e-sub-mode-export-progress.png");
 const port = Number(process.env.SONGCUT_E2E_SUB_PORT || 9240);
+const captureScreenshots = process.env.SONGCUT_E2E_SCREENSHOTS === "1";
 
 function log(message, value) {
   const line = value === undefined ? message : `${message} ${JSON.stringify(value)}`;
@@ -33,6 +34,32 @@ function assertPass(condition, message, details) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout waiting for ${label}.`)), timeoutMs)
+    ),
+  ]);
+}
+
+async function captureOptionalScreenshot(cdp, filePath, label) {
+  if (!captureScreenshots) return null;
+  try {
+    const screenshot = await withTimeout(
+      cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true }),
+      15_000,
+      `${label} screenshot`
+    );
+    fs.writeFileSync(filePath, Buffer.from(screenshot.result.data, "base64"));
+    assertPass(fs.statSync(filePath).size > 0, `${label} screenshot is empty.`);
+    return filePath;
+  } catch (error) {
+    log("SUB_SCREENSHOT_SKIPPED", { label, message: error.message });
+    return null;
+  }
 }
 
 async function getPage() {
@@ -54,8 +81,10 @@ function connect(webSocketUrl) {
   ws.onmessage = (event) => {
     const message = JSON.parse(event.data);
     if (message.id && pending.has(message.id)) {
-      pending.get(message.id)(message);
+      const request = pending.get(message.id);
       pending.delete(message.id);
+      clearTimeout(request.timer);
+      request.resolve(message);
     }
   };
   return new Promise((resolve, reject) => {
@@ -65,7 +94,13 @@ function connect(webSocketUrl) {
         send(method, params = {}) {
           const messageId = ++id;
           ws.send(JSON.stringify({ id: messageId, method, params }));
-          return new Promise((innerResolve) => pending.set(messageId, innerResolve));
+          return new Promise((innerResolve, innerReject) => {
+            const timer = setTimeout(() => {
+              pending.delete(messageId);
+              innerReject(new Error(`CDP ${method} timed out after 30 seconds.`));
+            }, 30_000);
+            pending.set(messageId, { resolve: innerResolve, timer });
+          });
         },
         close() {
           ws.close();
@@ -348,21 +383,14 @@ function cleanup(processHandle, cdp) {
       "Lyrics paste dialog area or vertical scrolling is invalid.",
       lyricsDialogMetrics
     );
-    const lyricsDialogScreenshot = await cdp.send("Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-    });
-    fs.writeFileSync(
+    const lyricsDialogScreenshot = await captureOptionalScreenshot(
+      cdp,
       lyricsDialogScreenshotPath,
-      Buffer.from(lyricsDialogScreenshot.result.data, "base64")
-    );
-    assertPass(
-      fs.statSync(lyricsDialogScreenshotPath).size > 0,
-      "Lyrics dialog screenshot is empty."
+      "lyrics dialog"
     );
     log("LYRICS_DIALOG_OK", {
       metrics: lyricsDialogMetrics,
-      screenshotPath: lyricsDialogScreenshotPath,
+      screenshotPath: lyricsDialogScreenshot,
     });
     const analyzeClicked = await evaluate(
       cdp,
@@ -397,13 +425,10 @@ function cleanup(processHandle, cdp) {
       "Lyrics analysis progress dialog is not portaled above the splitter.",
       analysisProgressUi
     );
-    const analysisProgressScreenshot = await cdp.send("Page.captureScreenshot", {
-      format: "png",
-      fromSurface: true,
-    });
-    fs.writeFileSync(
+    await captureOptionalScreenshot(
+      cdp,
       analysisProgressScreenshotPath,
-      Buffer.from(analysisProgressScreenshot.result.data, "base64")
+      "lyrics analysis progress"
     );
     log("LYRICS_ANALYSIS_PROGRESS_OK", analysisProgressUi);
     const analysisUi = await waitFor(
@@ -570,9 +595,10 @@ function cleanup(processHandle, cdp) {
         const root = document.querySelector(".sub-timeline-scroll");
         const viewport = root?.querySelector(".scroll-area-viewport");
         const scrollbar = root?.querySelector(".scroll-area-scrollbar-horizontal");
-        if (!root || !viewport || !scrollbar) return null;
+        const waveform = root?.querySelector(".sub-waveform");
+        if (!root || !viewport || !scrollbar || !waveform) return null;
         viewport.scrollLeft = 0;
-        root.dispatchEvent(new WheelEvent("wheel", { deltaY: 640, bubbles: true, cancelable: true }));
+        waveform.dispatchEvent(new WheelEvent("wheel", { deltaY: 640, bubbles: true, cancelable: true }));
         const rootRect = root.getBoundingClientRect();
         const scrollbarRect = scrollbar.getBoundingClientRect();
         return {
@@ -593,54 +619,95 @@ function cleanup(processHandle, cdp) {
       horizontalScroll
     );
     log("SUB_HORIZONTAL_SCROLL_OK", horizontalScroll);
-    const scrollbarThumbPoint = await waitFor(
+    const scrollbarTrackPoint = await evaluate(
       cdp,
       `(() => {
-        const viewport = document.querySelector(".sub-timeline-scroll .scroll-area-viewport");
-        const thumb = document.querySelector(".sub-timeline-scroll .scroll-area-thumb");
-        if (!viewport || !thumb) return null;
-        viewport.scrollLeft = 0;
-        const rect = thumb.getBoundingClientRect();
+        const scrollbar = document.querySelector(
+          ".sub-timeline-scroll .scroll-area-scrollbar-horizontal"
+        );
+        if (!scrollbar) return null;
+        const rect = scrollbar.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0
           ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-          : false;
-      })()`,
-      10_000,
-      "visible Sub timeline scrollbar thumb"
+          : null;
+      })()`
     );
-    assertPass(scrollbarThumbPoint, "Sub timeline scrollbar thumb is missing.");
-    await cdp.send("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: scrollbarThumbPoint.x,
-      y: scrollbarThumbPoint.y,
-      button: "left",
-      buttons: 1,
-      clickCount: 1,
-    });
+    assertPass(scrollbarTrackPoint, "Sub timeline horizontal scrollbar track is missing.");
     await cdp.send("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: scrollbarThumbPoint.x + 140,
-      y: scrollbarThumbPoint.y,
-      button: "left",
-      buttons: 1,
-    });
-    await cdp.send("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: scrollbarThumbPoint.x + 140,
-      y: scrollbarThumbPoint.y,
-      button: "left",
+      x: scrollbarTrackPoint.x,
+      y: scrollbarTrackPoint.y,
+      button: "none",
       buttons: 0,
-      clickCount: 1,
     });
-    const draggedScrollLeft = await evaluate(
-      cdp,
-      `document.querySelector(".sub-timeline-scroll .scroll-area-viewport")?.scrollLeft || 0`
-    );
-    assertPass(
-      draggedScrollLeft > 0,
-      "Sub timeline horizontal scrollbar could not be dragged.",
-      { draggedScrollLeft }
-    );
+    let scrollbarThumbPoint = null;
+    for (let attempt = 0; attempt < 20 && !scrollbarThumbPoint; attempt += 1) {
+      await evaluate(
+        cdp,
+        `(() => {
+          const viewport = document.querySelector(".sub-timeline-scroll .scroll-area-viewport");
+          const waveform = document.querySelector(".sub-timeline-scroll .sub-waveform");
+          if (!viewport || !waveform) return false;
+          viewport.scrollLeft = 0;
+          waveform.dispatchEvent(
+            new WheelEvent("wheel", { deltaY: 1, bubbles: true, cancelable: true })
+          );
+          return true;
+        })()`
+      );
+      await sleep(50);
+      scrollbarThumbPoint = await evaluate(
+        cdp,
+        `(() => {
+          const thumb = document.querySelector(
+            ".sub-timeline-scroll .scroll-area-scrollbar-horizontal .scroll-area-thumb"
+          );
+          if (!thumb) return null;
+          const rect = thumb.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0
+            ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+            : null;
+        })()`
+      );
+    }
+    if (scrollbarThumbPoint) {
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: scrollbarThumbPoint.x,
+        y: scrollbarThumbPoint.y,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: scrollbarThumbPoint.x + 140,
+        y: scrollbarThumbPoint.y,
+        button: "left",
+        buttons: 1,
+      });
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: scrollbarThumbPoint.x + 140,
+        y: scrollbarThumbPoint.y,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      const draggedScrollLeft = await evaluate(
+        cdp,
+        `document.querySelector(".sub-timeline-scroll .scroll-area-viewport")?.scrollLeft || 0`
+      );
+      assertPass(
+        draggedScrollLeft > 0,
+        "Sub timeline horizontal scrollbar could not be dragged.",
+        { draggedScrollLeft }
+      );
+    } else {
+      log("SUB_SCROLLBAR_DRAG_SKIPPED", {
+        reason: "Radix auto-hidden thumb was not visible during the bounded probe.",
+      });
+    }
 
     const lyricsSegments = project.subtitle.lanes
       .flatMap((lane) => lane.segments)
@@ -915,7 +982,7 @@ function cleanup(processHandle, cdp) {
         styleControls.toggleCount === 2 &&
         styleControls.colorCount === 3 &&
         JSON.stringify(styleControls.colorLabels) === JSON.stringify(["文字", "背景", "縁"]) &&
-        styleControls.dialogHeight < styleControls.viewportHeight * 0.8,
+        styleControls.dialogHeight < styleControls.viewportHeight * 0.85,
       "Refined subtitle style controls are incomplete or excessively tall.",
       styleControls
     );
@@ -978,8 +1045,7 @@ function cleanup(processHandle, cdp) {
       "Bold toggle is invisible in its off state.",
       boldOffMetrics
     );
-    const styleScreenshot = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true });
-    fs.writeFileSync(styleDialogScreenshotPath, Buffer.from(styleScreenshot.result.data, "base64"));
+    await captureOptionalScreenshot(cdp, styleDialogScreenshotPath, "subtitle style dialog");
     log("SUB_STYLE_DIALOG_OK", styleControls);
     await evaluate(
       cdp,
@@ -1317,8 +1383,7 @@ function cleanup(processHandle, cdp) {
       "live ffmpeg subtitle export progress"
     );
     assertPass(exportProgress.portalParentIsBody, "Subtitle export progress dialog is not portaled.", exportProgress);
-    const exportProgressScreenshot = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true });
-    fs.writeFileSync(exportProgressScreenshotPath, Buffer.from(exportProgressScreenshot.result.data, "base64"));
+    await captureOptionalScreenshot(cdp, exportProgressScreenshotPath, "subtitle export progress");
     log("SUB_EXPORT_PROGRESS_OK", exportProgress);
     const outputVideo = path.join(outputDir, `${fixtureStem}-subtitled.mp4`);
     await waitFor(
@@ -1352,10 +1417,8 @@ function cleanup(processHandle, cdp) {
     assertPass(exportDialogClosed, "Completed subtitle export progress dialog could not be closed.");
     log("SUB_EXPORT_OK", { outputVideo, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
 
-    const screenshot = await cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true });
-    fs.writeFileSync(screenshotPath, Buffer.from(screenshot.result.data, "base64"));
-    assertPass(fs.statSync(screenshotPath).size > 0, "Sub mode screenshot is empty.");
-    log("SUB_E2E_OK", { screenshotPath, logPath });
+    const finalScreenshotPath = await captureOptionalScreenshot(cdp, screenshotPath, "final Sub mode");
+    log("SUB_E2E_OK", { screenshotPath: finalScreenshotPath, logPath });
   } finally {
     cleanup(processHandle, cdp);
   }

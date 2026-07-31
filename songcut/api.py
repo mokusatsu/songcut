@@ -182,6 +182,8 @@ class LyricsAnalysisRequest(BaseModel):
     model: str = DEFAULT_WHISPER_MODEL_KEY
     language: str | None = "ja"
     device: str = "auto"
+    demucs_device: Literal["auto", "npu", "gpu", "cpu"] = "auto"
+    mms_device: Literal["auto", "gpu", "cpu"] = "auto"
     algorithm: Literal["songcut-standard", "uta-align"] = "songcut-standard"
 
 
@@ -1076,6 +1078,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             separated = separate_vocals(
                 source,
                 Path(temporary_directory),
+                device=request.demucs_device,
                 progress_callback=lambda progress: update_job(
                     job_id,
                     status="running",
@@ -1135,6 +1138,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
                     document,
                     alignment,
                     language=request.language or "auto",
+                    device=request.mms_device,
                     progress_callback=lambda progress: update_job(
                         job_id,
                         status="running",
@@ -1170,6 +1174,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             "algorithm": request.algorithm,
             "lyrics_audio_source": "demucs-vocals",
             "demucs_model": separated.model,
+            "demucs_device_used": getattr(separated, "device_used", "CPU"),
             "whisper_text": whisper_text,
             "tempo_bpm": round(float(tempo_bpm), 3),
             "beat_times": beat_times,

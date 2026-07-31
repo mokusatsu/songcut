@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -94,6 +95,9 @@ class SourceSeparationTests(unittest.TestCase):
         fake_core.compile_model.return_value = mock.sentinel.compiled_model
         fake_openvino = mock.Mock()
         fake_openvino.Core.return_value = fake_core
+        fake_soundfile = SimpleNamespace(
+            write=lambda path, *_args, **_kwargs: Path(path).write_bytes(b"wav"),
+        )
 
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -102,7 +106,10 @@ class SourceSeparationTests(unittest.TestCase):
             model_xml.parent.mkdir(parents=True)
             model_xml.write_text("xml", encoding="utf-8")
             with (
-                mock.patch.dict("sys.modules", {"openvino": fake_openvino}),
+                mock.patch.dict(
+                    "sys.modules",
+                    {"openvino": fake_openvino, "soundfile": fake_soundfile},
+                ),
                 mock.patch("songcut.source_separation.ensure_demucs_model", return_value=model_dir),
                 mock.patch("songcut.source_separation._decode_source", return_value=decoded),
                 mock.patch(
@@ -117,12 +124,41 @@ class SourceSeparationTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.model, DEMUCS_MODEL)
+            self.assertEqual(result.device_used, "CPU")
             self.assertTrue(result.vocals.is_file())
             self.assertTrue(result.no_vocals.is_file())
             self.assertEqual(progress[-1], 1.0)
             fake_core.compile_model.assert_called_once_with(model_xml, "CPU")
             passed_mix = separate_mix.call_args.args[1]
             self.assertEqual(passed_mix.shape[-1], sample_count + 11_025)
+
+    def test_auto_device_prefers_gpu_before_npu(self) -> None:
+        fake_core = mock.Mock()
+        fake_core.available_devices = ["CPU", "GPU", "NPU"]
+        fake_core.compile_model.side_effect = RuntimeError("stop after device selection")
+        fake_openvino = mock.Mock()
+        fake_openvino.Core.return_value = fake_core
+        fake_soundfile = SimpleNamespace(write=mock.Mock())
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            model_dir = Path(temporary_directory)
+            model_xml = model_dir / "htdemucs_v4" / "htdemucs_fwd.xml"
+            model_xml.parent.mkdir(parents=True)
+            model_xml.write_text("xml", encoding="utf-8")
+            with (
+                mock.patch.dict(
+                    "sys.modules",
+                    {"openvino": fake_openvino, "soundfile": fake_soundfile},
+                ),
+                mock.patch("songcut.source_separation.ensure_demucs_model", return_value=model_dir),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "no usable OpenVINO device"):
+                    separate_vocals(Path("source.mp4"), model_dir / "output")
+
+        self.assertEqual(
+            [call.args[1] for call in fake_core.compile_model.call_args_list],
+            ["GPU", "NPU", "CPU"],
+        )
 
 
 if __name__ == "__main__":

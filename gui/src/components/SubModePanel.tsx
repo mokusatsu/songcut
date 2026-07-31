@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
@@ -128,6 +129,7 @@ export function SubModePanel(props: Props) {
   const [laneDialogOpen, setLaneDialogOpen] = useState(false);
   const [styleLaneId, setStyleLaneId] = useState<string | null>(null);
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
+  const [timingTarget, setTimingTarget] = useState<{ laneId: string; segmentId: string } | null>(null);
   const [busy, setBusy] = useState<"analysis" | "export" | null>(null);
   const [preparingModel, setPreparingModel] = useState(false);
   const [analysisProgressOpen, setAnalysisProgressOpen] = useState(false);
@@ -138,6 +140,16 @@ export function SubModePanel(props: Props) {
   const selected = selectedSegment(props.state);
   const activeLane = props.state.lanes.find((lane) => lane.id === props.state.active_lane_id) ?? props.state.lanes[0];
   const styleLane = props.state.lanes.find((lane) => lane.id === styleLaneId) ?? null;
+  const timingLane = timingTarget
+    ? props.state.lanes.find((lane) => lane.id === timingTarget.laneId) ?? null
+    : null;
+  const timingSegment = timingLane?.segments.find((segment) => segment.id === timingTarget?.segmentId) ?? null;
+  const timingOrderedSegments = timingLane
+    ? [...timingLane.segments].sort((left, right) => left.start - right.start)
+    : [];
+  const timingSegmentIndex = timingSegment
+    ? timingOrderedSegments.findIndex((segment) => segment.id === timingSegment.id)
+    : -1;
   const canAddSegment = Boolean(
     activeLane && addFourBeatSegment(activeLane, props.state.selected_segment_id, props.state.rhythm_grid)
   );
@@ -475,6 +487,7 @@ export function SubModePanel(props: Props) {
         onSeekingChange={props.onSeekingChange}
         onHandleEditingChange={props.onHandleEditingChange}
         onSelectSegment={props.onSelectSegment}
+        onEditTiming={(laneId, segmentId) => setTimingTarget({ laneId, segmentId })}
       />
       <Dialog open={lyricsOpen} title="歌詞を貼り付け" onClose={() => setLyricsOpen(false)}>
         <Textarea
@@ -515,6 +528,42 @@ export function SubModePanel(props: Props) {
           />
         ) : null}
       </Dialog>
+      <SegmentTimingDialog
+        open={Boolean(timingLane && timingSegment)}
+        mode="sub"
+        segment={timingSegment}
+        mediaDuration={props.duration}
+        previousEnd={timingSegmentIndex > 0 ? timingOrderedSegments[timingSegmentIndex - 1].end : 0}
+        nextStart={timingSegmentIndex >= 0 && timingSegmentIndex < timingOrderedSegments.length - 1
+          ? timingOrderedSegments[timingSegmentIndex + 1].start
+          : props.duration}
+        rhythmGrid={props.state.rhythm_grid}
+        onClose={() => setTimingTarget(null)}
+        onApply={(start, end) => {
+          if (!timingLane || !timingSegment) return;
+          props.onStateChange({
+            ...props.state,
+            active_lane_id: timingLane.id,
+            selected_segment_id: timingSegment.id,
+            lanes: props.state.lanes.map((lane) =>
+              lane.id === timingLane.id
+                ? {
+                    ...lane,
+                    segments: lane.segments
+                      .map((segment) =>
+                        segment.id === timingSegment.id
+                          ? { ...segment, start, end, user_edited: true }
+                          : segment
+                      )
+                      .sort((left, right) => left.start - right.start),
+                  }
+                : lane
+            ),
+          });
+          setTimingTarget(null);
+          props.onSeek(start);
+        }}
+      />
     </>
   );
 }
@@ -539,6 +588,7 @@ function LyricsTimelineEditor(props: {
   onSeekingChange: (seeking: boolean) => void;
   onHandleEditingChange: (editing: boolean) => void;
   onSelectSegment: (laneId: string, segment: LyricsSegment) => void;
+  onEditTiming: (laneId: string, segmentId: string) => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
   const [draggingBoundary, setDraggingBoundary] = useState<{
@@ -704,6 +754,7 @@ function LyricsTimelineEditor(props: {
                     editing={segment.id === props.editingSegmentId}
                     grid={props.state.rhythm_grid}
                     onSelect={() => props.onSelectSegment(lane.id, segment)}
+                    onEditTiming={() => props.onEditTiming(lane.id, segment.id)}
                     onEdit={() => props.onEditingSegmentId(segment.id)}
                     onEditDone={(text) => {
                       props.onEditingSegmentId(null);
@@ -759,6 +810,7 @@ function LyricsSegmentView(props: {
   editing: boolean;
   grid: SubtitleProjectState["rhythm_grid"];
   onSelect: () => void;
+  onEditTiming: () => void;
   onEdit: () => void;
   onEditDone: (text: string) => void;
   onBoundary: (edge: "start" | "end", time: number) => void;
@@ -801,10 +853,24 @@ function LyricsSegmentView(props: {
           event.stopPropagation();
           props.onSelect();
         }}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onSelect();
+          props.onEditTiming();
+        }}
         title={`${props.segment.text}\nconfidence ${props.segment.confidence.toFixed(3)}`}
       >
-        <span className="lyrics-handle start" onPointerDown={(event) => beginDrag(event, "start")} />
-        <span className="lyrics-handle end" onPointerDown={(event) => beginDrag(event, "end")} />
+        <span
+          className="lyrics-handle start"
+          onPointerDown={(event) => beginDrag(event, "start")}
+          onDoubleClick={(event) => event.stopPropagation()}
+        />
+        <span
+          className="lyrics-handle end"
+          onPointerDown={(event) => beginDrag(event, "end")}
+          onDoubleClick={(event) => event.stopPropagation()}
+        />
       </button>
       <div
         className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}

@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { WhisperSettingsPanel } from "@/components/WhisperSettingsPanel";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
@@ -11,9 +13,11 @@ import type { WaveformDisplayMode } from "@/types";
 import { currentUiLanguage, tr, type UiLanguagePreference } from "@/i18n";
 
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
+export type SettingsTab = "common" | "cut" | "sub" | "ai-models";
 
 export function SettingsDialog(props: {
   open: boolean;
+  initialTab: SettingsTab;
   apiReady: boolean;
   scratchPreviewMillisecondsInput: string;
   scratchAudioProxyEnabled: boolean;
@@ -49,193 +53,337 @@ export function SettingsDialog(props: {
   onFfmpegCheck: () => void;
   onLocalePreference: (preference: UiLanguagePreference) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(props.initialTab);
+  const whisperModel = props.whisperStatus?.models.find((item) => item.key === props.whisperSettings.model) ?? null;
+
+  useEffect(() => {
+    if (props.open) setActiveTab(props.initialTab);
+  }, [props.initialTab, props.open]);
+
   return (
     <Dialog open={props.open} title={tr("settings.title")} onClose={props.onClose}>
-      <ScrollArea className="settings-dialog-scroll" viewportClassName="settings-dialog-viewport">
-        <div className="settings-dialog-content">
-        <section className="settings-section" aria-labelledby="playback-settings-heading">
-          <h3 id="playback-settings-heading">{tr("settings.playback")}</h3>
-          <div className="settings-grid">
-            <label className="settings-field" htmlFor="scratch-preview-milliseconds">
-              <span>{tr("settings.scratchDuration")}</span>
-              <span className="settings-inline-control">
-                <Input
-                  id="scratch-preview-milliseconds"
-                  type="number"
-                  min={1}
-                  max={5000}
-                  step="1"
-                  inputMode="numeric"
-                  value={props.scratchPreviewMillisecondsInput}
-                  onFocus={(event) => event.currentTarget.select()}
-                  onChange={(event) => props.onScratchPreviewMillisecondsInput(event.currentTarget.value)}
-                />
-                <span className="settings-unit">ms</span>
-              </span>
-            </label>
-            <label className="settings-checkbox">
-              <input
-                type="checkbox"
-                checked={props.scratchAudioProxyEnabled}
-                onChange={(event) => props.onScratchAudioProxyEnabled(event.currentTarget.checked)}
+      <Tabs
+        className="settings-tabs"
+        value={activeTab}
+        onValueChange={(value) => setActiveTab(value as SettingsTab)}
+      >
+        <TabsList className="settings-tabs-list">
+          <TabsTrigger value="common">{tr("settings.commonTab")}</TabsTrigger>
+          <TabsTrigger value="cut">Cut</TabsTrigger>
+          <TabsTrigger value="sub">Sub</TabsTrigger>
+          <TabsTrigger value="ai-models">{tr("settings.aiModelsTab")}</TabsTrigger>
+        </TabsList>
+        <ScrollArea className="settings-dialog-scroll" viewportClassName="settings-dialog-viewport">
+          <div className="settings-dialog-content">
+            <TabsContent value="common">
+              <section className="settings-section" aria-labelledby="playback-settings-heading">
+                <h3 id="playback-settings-heading">{tr("settings.playback")}</h3>
+                <div className="settings-grid">
+                  <label className="settings-field" htmlFor="scratch-preview-milliseconds">
+                    <span>{tr("settings.scratchDuration")}</span>
+                    <span className="settings-inline-control">
+                      <Input
+                        id="scratch-preview-milliseconds"
+                        type="number"
+                        min={1}
+                        max={5000}
+                        step="1"
+                        inputMode="numeric"
+                        value={props.scratchPreviewMillisecondsInput}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onChange={(event) => props.onScratchPreviewMillisecondsInput(event.currentTarget.value)}
+                      />
+                      <span className="settings-unit">ms</span>
+                    </span>
+                  </label>
+                  <label className="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={props.scratchAudioProxyEnabled}
+                      onChange={(event) => props.onScratchAudioProxyEnabled(event.currentTarget.checked)}
+                    />
+                    {tr("settings.useProxy")}
+                  </label>
+                </div>
+              </section>
+              <section className="settings-section settings-tools" aria-labelledby="tools-settings-heading">
+                <div>
+                  <h3 id="tools-settings-heading">{tr("settings.tools")}</h3>
+                  <p>{tr("settings.toolsHelp")}</p>
+                </div>
+                <Button variant="secondary" onClick={props.onFfmpegCheck} disabled={!props.apiReady}>
+                  {tr("settings.ffmpegCheck")}
+                </Button>
+              </section>
+              <section className="settings-section" aria-labelledby="language-settings-heading">
+                <h3 id="language-settings-heading">{tr("settings.languageHeading")}</h3>
+                <label className="settings-field" htmlFor="ui-language">
+                  <select
+                    id="ui-language"
+                    value={props.localePreference}
+                    onChange={(event) => props.onLocalePreference(event.currentTarget.value as UiLanguagePreference)}
+                  >
+                    <option value="system">{tr("settings.system")}</option>
+                    <option value="en">{tr("settings.english")}</option>
+                    <option value="ja">{tr("settings.japanese")}</option>
+                  </select>
+                </label>
+                <span className="settings-field-help" data-locale-restart-required={props.localeRestartRequired || undefined}>
+                  {tr("settings.languageNextStart")}
+                </span>
+              </section>
+            </TabsContent>
+
+            <TabsContent value="cut">
+              <section className="settings-section">
+                <h3>{tr("settings.display")}</h3>
+                <label className="settings-field">
+                  <span>{tr("settings.waveform")}</span>
+                  <select
+                    value={props.waveformDisplayMode}
+                    onChange={(event) => props.onWaveformDisplayMode(event.currentTarget.value as WaveformDisplayMode)}
+                  >
+                    <option value="rms">RMS</option>
+                    <option value="peak">{tr("settings.peak")}</option>
+                    <option value="peak-rms">{tr("settings.peakRms")}</option>
+                  </select>
+                </label>
+              </section>
+              <section className="settings-section">
+                <h3>{tr("settings.analysis")}</h3>
+                <label className="settings-field">
+                  <span>{tr("settings.analysisDevice")}</span>
+                  <select
+                    value={props.analysisDevice}
+                    onChange={(event) => props.onAnalysisDevice(event.currentTarget.value as AnalysisDevice)}
+                  >
+                    {inferenceDevices.map((device) => (
+                      <option key={device} value={device}>
+                        {device === "auto" ? tr("common.auto") : device.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+              <BoundaryRefinementSection
+                settings={props.boundaryRefinementSettings}
+                onChange={props.onBoundaryRefinementSettings}
               />
-              {tr("settings.useProxy")}
-            </label>
-            <label className="settings-field">
-              <span>{tr("settings.waveform")}</span>
-              <select
-                value={props.waveformDisplayMode}
-                onChange={(event) => props.onWaveformDisplayMode(event.currentTarget.value as WaveformDisplayMode)}
-              >
-                <option value="rms">RMS</option>
-                <option value="peak">{tr("settings.peak")}</option>
-                <option value="peak-rms">{tr("settings.peakRms")}</option>
-              </select>
-            </label>
-            <label className="settings-field">
-              <span>{tr("settings.analysisDevice")}</span>
-              <select
-                value={props.analysisDevice}
-                onChange={(event) => props.onAnalysisDevice(event.currentTarget.value as AnalysisDevice)}
-              >
-                {inferenceDevices.map((device) => (
-                  <option key={device} value={device}>
-                    {device === "auto" ? tr("common.auto") : device.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <section className="settings-section">
+                <h3>{tr("settings.transcription")}</h3>
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={props.whisperSettings.enabled}
+                    onChange={(event) =>
+                      props.onWhisperSettings({ ...props.whisperSettings, enabled: event.currentTarget.checked })
+                    }
+                  />
+                  {tr("whisper.autoTranscribe")}
+                </label>
+                <div className="whisper-settings-actions">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={props.onTranscribe}
+                    disabled={!props.hasSegments || !props.sourceAvailable || !whisperModel?.ready || props.whisperBusy}
+                  >
+                    {props.hasSegments ? tr("whisper.retranscribe") : tr("whisper.transcribe")}
+                  </Button>
+                  {props.transcriptStale ? <span className="transcript-stale">{tr("whisper.stale")}</span> : null}
+                </div>
+              </section>
+              <section className="settings-section" aria-labelledby="export-settings-heading">
+                <h3 id="export-settings-heading">{tr("settings.export")}</h3>
+                <label className="settings-field" htmlFor="export-filename-template">
+                  <span>{tr("settings.filenameTemplate")}</span>
+                  <Input
+                    id="export-filename-template"
+                    value={props.filenameTemplate}
+                    placeholder={DEFAULT_FILENAME_TEMPLATE}
+                    spellCheck={false}
+                    aria-invalid={Boolean(props.filenameTemplateError)}
+                    onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
+                  />
+                </label>
+                <span className="settings-field-help">
+                  {tr("settings.placeholders", { placeholders: FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ") })}
+                </span>
+                {props.filenameTemplateError ? (
+                  <span className="settings-field-error" role="alert">
+                    {props.filenameTemplateError}
+                  </span>
+                ) : null}
+                <span className="settings-field-help">{tr("settings.projectOnly")}</span>
+              </section>
+            </TabsContent>
+
+            <TabsContent value="sub">
+              <section className="settings-section">
+                <h3>{tr("whisper.lyricsAlignmentAlgorithm")}</h3>
+                <label className="settings-field">
+                  <select
+                    value={props.whisperSettings.lyricsAlignmentAlgorithm}
+                    onChange={(event) =>
+                      props.onWhisperSettings({
+                        ...props.whisperSettings,
+                        lyricsAlignmentAlgorithm:
+                          event.currentTarget.value as WhisperSettings["lyricsAlignmentAlgorithm"],
+                      })
+                    }
+                  >
+                    <option value="songcut-standard">{tr("whisper.songcutStandard")}</option>
+                    <option value="uta-align">Uta-Align</option>
+                  </select>
+                </label>
+              </section>
+              <section className="settings-section">
+                <h3>{tr("settings.modelReadiness")}</h3>
+                <div className="model-readiness-list">
+                  <ModelReadinessRow
+                    label={tr("settings.whisper")}
+                    ready={whisperModel?.ready}
+                    unused={false}
+                  />
+                  <ModelReadinessRow
+                    label={tr("settings.demucs")}
+                    ready={props.demucsStatus?.ready}
+                    unused={false}
+                  />
+                  <ModelReadinessRow
+                    label={tr("settings.mms")}
+                    ready={props.mmsStatus?.ready}
+                    unused={props.whisperSettings.lyricsAlignmentAlgorithm === "uta-align"}
+                  />
+                </div>
+                <Button variant="secondary" onClick={() => setActiveTab("ai-models")}>
+                  {tr("settings.openAiModels")}
+                </Button>
+              </section>
+            </TabsContent>
+
+            <TabsContent value="ai-models">
+              <section className="settings-section">
+                <WhisperSettingsPanel
+                  settings={props.whisperSettings}
+                  status={props.whisperStatus}
+                  busy={props.whisperBusy}
+                  onChange={props.onWhisperSettings}
+                  onDownload={props.onPrepareWhisperModel}
+                />
+              </section>
+              <section className="settings-section" aria-labelledby="demucs-settings-heading">
+                <div className="whisper-settings-heading">
+                  <h3 id="demucs-settings-heading">{tr("settings.demucs")}</h3>
+                  <ModelState ready={props.demucsStatus?.ready} />
+                </div>
+                <p className="settings-field-help">{tr("demucs.description")}</p>
+                <label className="settings-field">
+                  <span>{tr("whisper.device")}</span>
+                  <select
+                    value={props.whisperSettings.demucsDevice}
+                    onChange={(event) =>
+                      props.onWhisperSettings({
+                        ...props.whisperSettings,
+                        demucsDevice: event.currentTarget.value as WhisperSettings["demucsDevice"],
+                      })
+                    }
+                  >
+                    {(["auto", "npu", "gpu", "cpu"] as const).map((device) => (
+                      <option
+                        key={device}
+                        value={device}
+                        disabled={device !== "auto" && Boolean(props.whisperStatus?.devices[device]?.error)}
+                      >
+                        {device === "auto" ? tr("common.auto") : device.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="whisper-settings-actions">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={props.onPrepareDemucsModel}
+                    disabled={!props.apiReady || props.demucsBusy}
+                  >
+                    {tr("demucs.prepare")}
+                  </Button>
+                  {props.demucsStatus?.installed_bytes ? (
+                    <small>{tr("demucs.installed", { size: formatBytes(props.demucsStatus.installed_bytes) })}</small>
+                  ) : null}
+                </div>
+              </section>
+              <section className="settings-section" aria-labelledby="mms-settings-heading">
+                <div className="whisper-settings-heading">
+                  <h3 id="mms-settings-heading">{tr("settings.mms")}</h3>
+                  <ModelState ready={props.mmsStatus?.ready} />
+                </div>
+                <p className="settings-field-help">{tr("mms.description")}</p>
+                <p className="settings-field-help">{tr("settings.mmsLanguageHelp")}</p>
+                <label className="settings-field">
+                  <span>{tr("whisper.device")}</span>
+                  <select
+                    value={props.whisperSettings.mmsDevice}
+                    onChange={(event) =>
+                      props.onWhisperSettings({
+                        ...props.whisperSettings,
+                        mmsDevice: event.currentTarget.value as WhisperSettings["mmsDevice"],
+                      })
+                    }
+                  >
+                    <option value="auto">{tr("common.auto")}</option>
+                    <option value="gpu" disabled={Boolean(props.whisperStatus?.devices.gpu?.error)}>GPU</option>
+                    <option value="cpu">CPU</option>
+                  </select>
+                </label>
+                <p className="settings-field-help">{tr("settings.mmsNpuUnsupported")}</p>
+                <div className="whisper-settings-actions">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={props.onPrepareMmsModel}
+                    disabled={!props.apiReady || props.mmsBusy}
+                  >
+                    {tr("mms.prepare")}
+                  </Button>
+                  {props.mmsStatus?.installed_bytes ? (
+                    <small>{tr("mms.installed", { size: formatBytes(props.mmsStatus.installed_bytes) })}</small>
+                  ) : null}
+                </div>
+              </section>
+            </TabsContent>
           </div>
-        </section>
-
-        <BoundaryRefinementSection
-          settings={props.boundaryRefinementSettings}
-          onChange={props.onBoundaryRefinementSettings}
-        />
-
-        <section className="settings-section" aria-labelledby="whisper-settings-heading">
-          <h3 id="whisper-settings-heading">{tr("settings.whisper")}</h3>
-          <WhisperSettingsPanel
-            settings={props.whisperSettings}
-            status={props.whisperStatus}
-            busy={props.whisperBusy}
-            hasSegments={props.hasSegments}
-            transcriptStale={props.transcriptStale}
-            sourceAvailable={props.sourceAvailable}
-            onChange={props.onWhisperSettings}
-            onDownload={props.onPrepareWhisperModel}
-            onTranscribe={props.onTranscribe}
-          />
-        </section>
-
-        <section className="settings-section" aria-labelledby="demucs-settings-heading">
-          <div className="whisper-settings-heading">
-            <h3 id="demucs-settings-heading">{tr("settings.demucs")}</h3>
-            <span className={`model-state ${props.demucsStatus ? (props.demucsStatus.ready ? "ready" : "missing") : "unknown"}`}>
-              {props.demucsStatus
-                ? (props.demucsStatus.ready ? tr("demucs.ready") : tr("demucs.missing"))
-                : tr("demucs.checking")}
-            </span>
-          </div>
-          <p className="settings-field-help">{tr("demucs.description")}</p>
-          <div className="whisper-settings-actions">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={props.onPrepareDemucsModel}
-              disabled={!props.apiReady || props.demucsBusy}
-            >
-              {tr("demucs.prepare")}
-            </Button>
-            {props.demucsStatus?.installed_bytes ? (
-              <small>{tr("demucs.installed", { size: formatBytes(props.demucsStatus.installed_bytes) })}</small>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="settings-section" aria-labelledby="mms-settings-heading">
-          <div className="whisper-settings-heading">
-            <h3 id="mms-settings-heading">{tr("settings.mms")}</h3>
-            <span className={`model-state ${props.mmsStatus ? (props.mmsStatus.ready ? "ready" : "missing") : "unknown"}`}>
-              {props.mmsStatus
-                ? (props.mmsStatus.ready ? tr("mms.ready") : tr("mms.missing"))
-                : tr("mms.checking")}
-            </span>
-          </div>
-          <p className="settings-field-help">{tr("mms.description")}</p>
-          <div className="whisper-settings-actions">
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={props.onPrepareMmsModel}
-              disabled={!props.apiReady || props.mmsBusy}
-            >
-              {tr("mms.prepare")}
-            </Button>
-            {props.mmsStatus?.installed_bytes ? (
-              <small>{tr("mms.installed", { size: formatBytes(props.mmsStatus.installed_bytes) })}</small>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="settings-section" aria-labelledby="export-settings-heading">
-          <h3 id="export-settings-heading">{tr("settings.export")}</h3>
-          <label className="settings-field" htmlFor="export-filename-template">
-            <span>{tr("settings.filenameTemplate")}</span>
-            <Input
-              id="export-filename-template"
-              value={props.filenameTemplate}
-              placeholder={DEFAULT_FILENAME_TEMPLATE}
-              spellCheck={false}
-              aria-invalid={Boolean(props.filenameTemplateError)}
-              onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
-            />
-          </label>
-          <span className="settings-field-help">
-            {tr("settings.placeholders", { placeholders: FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ") })}
-          </span>
-          {props.filenameTemplateError ? (
-            <span className="settings-field-error" role="alert">
-              {props.filenameTemplateError}
-            </span>
-          ) : null}
-          <span className="settings-field-help">{tr("settings.projectOnly")}</span>
-        </section>
-
-        <section className="settings-section" aria-labelledby="language-settings-heading">
-          <h3 id="language-settings-heading">{tr("settings.languageHeading")}</h3>
-          <label className="settings-field" htmlFor="ui-language">
-            <select
-              id="ui-language"
-              value={props.localePreference}
-              onChange={(event) => props.onLocalePreference(event.currentTarget.value as UiLanguagePreference)}
-            >
-              <option value="system">{tr("settings.system")}</option>
-              <option value="en">{tr("settings.english")}</option>
-              <option value="ja">{tr("settings.japanese")}</option>
-            </select>
-          </label>
-          <span className="settings-field-help" data-locale-restart-required={props.localeRestartRequired || undefined}>
-            {tr("settings.languageNextStart")}
-          </span>
-        </section>
-
-        <section className="settings-section settings-tools" aria-labelledby="tools-settings-heading">
-          <div>
-            <h3 id="tools-settings-heading">{tr("settings.tools")}</h3>
-            <p>{tr("settings.toolsHelp")}</p>
-          </div>
-          <Button variant="secondary" onClick={props.onFfmpegCheck} disabled={!props.apiReady}>
-            {tr("settings.ffmpegCheck")}
-          </Button>
-        </section>
-        </div>
-      </ScrollArea>
+        </ScrollArea>
+      </Tabs>
       <div className="dialog-actions settings-dialog-actions">
         <span>{tr("settings.applied")}</span>
         <Button onClick={props.onClose}>{tr("common.done")}</Button>
       </div>
     </Dialog>
+  );
+}
+
+function ModelState(props: { ready: boolean | undefined }) {
+  const state = props.ready === undefined ? "unknown" : props.ready ? "ready" : "missing";
+  const label = props.ready === undefined
+    ? tr("whisper.checking")
+    : props.ready
+      ? tr("whisper.ready")
+      : tr("whisper.missing");
+  return <span className={`model-state ${state}`}>{label}</span>;
+}
+
+function ModelReadinessRow(props: { label: string; ready: boolean | undefined; unused: boolean }) {
+  return (
+    <div className="model-readiness-row">
+      <span>{props.label}</span>
+      {props.unused ? (
+        <span className="model-state unused">{tr("settings.modelUnused")}</span>
+      ) : (
+        <ModelState ready={props.ready} />
+      )}
+    </div>
   );
 }
 

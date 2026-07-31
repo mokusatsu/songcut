@@ -7,12 +7,8 @@ export function WhisperSettingsPanel(props: {
   settings: WhisperSettings;
   status: WhisperStatus | null;
   busy: boolean;
-  hasSegments: boolean;
-  transcriptStale: boolean;
-  sourceAvailable: boolean;
   onChange: (settings: WhisperSettings) => void;
   onDownload: () => void;
-  onTranscribe: () => void;
 }) {
   const model = props.status?.models.find((item) => item.key === props.settings.model) ?? null;
   const languages = props.status?.languages ?? [
@@ -23,14 +19,7 @@ export function WhisperSettingsPanel(props: {
   return (
     <section className="whisper-settings" aria-label={tr("whisper.aria")}>
       <div className="whisper-settings-heading">
-        <label>
-          <input
-            type="checkbox"
-            checked={props.settings.enabled}
-            onChange={(event) => props.onChange({ ...props.settings, enabled: event.currentTarget.checked })}
-          />
-          {tr("whisper.enable")}
-        </label>
+        <h3>{tr("settings.whisper")}</h3>
         <span className={`model-state ${model ? (model.ready ? "ready" : "missing") : "unknown"}`}>
           {model ? (model.ready ? (model.source === "bundled" ? tr("whisper.bundled") : tr("whisper.ready")) : tr("whisper.missing")) : tr("whisper.checking")}
         </span>
@@ -74,36 +63,11 @@ export function WhisperSettingsPanel(props: {
             ))}
           </select>
         </label>
-        <label>
-          {tr("whisper.lyricsAlignmentAlgorithm")}
-          <select
-            value={props.settings.lyricsAlignmentAlgorithm}
-            onChange={(event) =>
-              props.onChange({
-                ...props.settings,
-                lyricsAlignmentAlgorithm:
-                  event.currentTarget.value as WhisperSettings["lyricsAlignmentAlgorithm"]
-              })
-            }
-          >
-            <option value="songcut-standard">{tr("whisper.songcutStandard")}</option>
-            <option value="uta-align">Uta-Align</option>
-          </select>
-        </label>
       </div>
       <div className="whisper-settings-actions">
         <Button size="sm" variant="secondary" onClick={props.onDownload} disabled={props.busy}>
           {tr("whisper.prepare")}
         </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={props.onTranscribe}
-          disabled={!props.hasSegments || !props.sourceAvailable || !model?.ready || props.busy}
-        >
-          {props.hasSegments ? tr("whisper.retranscribe") : tr("whisper.transcribe")}
-        </Button>
-        {props.transcriptStale ? <span className="transcript-stale">{tr("whisper.stale")}</span> : null}
       </div>
       {model?.installed_bytes ? <small>{tr("whisper.installed", { size: formatBytes(model.installed_bytes) })}</small> : null}
     </section>

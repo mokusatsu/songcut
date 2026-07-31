@@ -23,6 +23,7 @@ body {
   line-height: 1.4;
   color: #e9edf0;
   background: #14171a;
+  user-select: none;
 }
 
 button,
@@ -30,6 +31,12 @@ textarea,
 input,
 select {
   font: inherit;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
 }
 
 .app {
@@ -819,6 +826,8 @@ progress {
   height: 20px;
   background: rgb(52 178 148 / 55%);
   border: 1px solid #67d3bd;
+  padding: 0;
+  cursor: pointer;
 }
 
 .drag-handle {
@@ -1138,6 +1147,27 @@ tr.selected:hover {
   min-height: 0;
 }
 
+.settings-tabs {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.settings-tabs-list {
+  flex: 0 0 auto;
+  margin: 0 24px 12px;
+}
+
+.settings-tabs [data-state="inactive"][role="tabpanel"] {
+  display: none;
+}
+
+.settings-tabs [role="tabpanel"] {
+  margin: 0;
+  outline: none;
+}
+
 .settings-dialog-viewport {
   padding-right: 14px;
 }
@@ -1163,6 +1193,88 @@ tr.selected:hover {
   margin: 0;
   color: #edf4f6;
   font-size: var(--font-size-base);
+}
+
+.model-readiness-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.model-readiness-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #354850;
+  border-radius: 6px;
+  background: #10181c;
+}
+
+.model-state.unused {
+  color: #9ba9af;
+  border-color: #45535a;
+}
+
+.segment-timing-form {
+  display: grid;
+  gap: 14px;
+  min-width: min(520px, calc(100vw - 80px));
+}
+
+.segment-timing-mode {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #354850;
+  border-radius: 6px;
+}
+
+.segment-timing-mode legend {
+  padding: 0 5px;
+  color: #cdd7db;
+  font-size: var(--font-size-control);
+}
+
+.segment-timing-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.segment-timing-field {
+  gap: 5px;
+}
+
+.segment-timing-error {
+  margin: 0;
+}
+
+.segment-timing-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.segment-timing-summary > div {
+  padding: 8px 10px;
+  border: 1px solid #2f4149;
+  border-radius: 5px;
+  background: #10181c;
+}
+
+.segment-timing-summary dt {
+  color: #9eafb6;
+  font-size: var(--font-size-meta);
+}
+
+.segment-timing-summary dd {
+  margin: 3px 0 0;
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-grid {
@@ -1953,7 +2065,8 @@ tr.selected:hover {
   cursor: text;
 }
 
-.lyrics-label.editing {
+.lyrics-label.editing,
+.lyrics-label.selected.editing {
   z-index: 30;
   width: auto !important;
   overflow: visible;

@@ -140,6 +140,8 @@ describe("project document composition", () => {
         model: "small",
         language: "ja",
         device: "auto",
+        demucsDevice: "auto",
+        mmsDevice: "auto",
         lyricsAlignmentAlgorithm: "songcut-standard"
       },
       filenameTemplate: "{title}_{start}",
@@ -243,6 +245,8 @@ describe("project document composition", () => {
       model: "whisper-large-v3-turbo-int8-ov",
       language: "ja",
       device: "auto",
+      demucsDevice: "auto",
+      mmsDevice: "auto",
       lyricsAlignmentAlgorithm: "songcut-standard",
     });
   });

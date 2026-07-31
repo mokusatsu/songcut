@@ -78,6 +78,27 @@ def test_prepare_lines_reports_vocabulary_coverage_without_changing_original_tex
     assert lines[0].token_coverage == pytest.approx(2 / 3)
 
 
+def test_mms_openvino_auto_prefers_gpu_and_falls_back_to_cpu() -> None:
+    compiled = object()
+    core = mock.Mock()
+    core.available_devices = ["CPU", "GPU", "NPU"]
+    core.compile_model.side_effect = [RuntimeError("GPU compile failed"), compiled]
+    fake_openvino = SimpleNamespace(Core=lambda: core)
+
+    with mock.patch.dict("sys.modules", {"openvino": fake_openvino}):
+        runner = MmsOnnxRunner(Path("model.onnx"), device="auto")
+
+    assert runner.device_used == "CPU"
+    assert [call.args[1] for call in core.compile_model.call_args_list] == ["GPU", "CPU"]
+
+
+def test_mms_rejects_npu_device() -> None:
+    fake_openvino = SimpleNamespace(Core=mock.Mock())
+    with mock.patch.dict("sys.modules", {"openvino": fake_openvino}):
+        with pytest.raises(ValueError, match="auto, gpu, cpu"):
+            MmsOnnxRunner(Path("model.onnx"), device="npu")
+
+
 def test_prepare_japanese_lines_uses_spoken_kanji_readings() -> None:
     vocabulary = {character: index + 1 for index, character in enumerate("abcdefghijklmnopqrstuvwxyz'")}
 

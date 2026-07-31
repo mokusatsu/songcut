@@ -48,7 +48,9 @@ import {
   waitForJob
 } from "@/lib/api";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
-import { SettingsDialog } from "@/components/SettingsDialog";
+import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
+import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
+import { formatTimeInput } from "@/lib/segmentTiming";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -258,6 +260,7 @@ export default function App(props: {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [exportCandidates, setExportCandidates] = useState<ExportCandidate[]>([]);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [cutTimingSegmentId, setCutTimingSegmentId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [boundarySecondsInput, setBoundarySecondsInput] = useState(readBoundarySecondsInput);
@@ -267,6 +270,7 @@ export default function App(props: {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("common");
   const [boundaryDiagnosticOpen, setBoundaryDiagnosticOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
@@ -335,6 +339,10 @@ export default function App(props: {
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
     [segments, selectedSegmentId]
+  );
+  const cutTimingSegment = useMemo(
+    () => segments.find((segment) => segment.id === cutTimingSegmentId) ?? null,
+    [cutTimingSegmentId, segments],
   );
   const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
   const selectedBoundaryDiagnostic = useMemo(() => {
@@ -1437,11 +1445,11 @@ export default function App(props: {
       const result = await checkFfmpeg(apiBaseUrl);
       setFfmpegCheckResult(result);
       if (showSuccess || !result.ok) setFfmpegCheckOpen(true);
-      setMessage(result.ok ? "ffmpeg and ffprobe are available." : "ffmpeg check failed.");
+      setMessage(result.ok ? tr("ffmpeg.available") : tr("messages.ffmpegFailed"));
     } catch (error) {
       setFfmpegCheckResult({ ok: false, error: String(error), download_url: FFMPEG_DOWNLOAD_URL });
       setFfmpegCheckOpen(true);
-      setMessage("ffmpeg check failed.");
+      setMessage(tr("messages.ffmpegFailed"));
     } finally {
       setFfmpegCheckPending(false);
     }
@@ -2072,7 +2080,8 @@ export default function App(props: {
       });
   }
 
-  function openSettings() {
+  function openSettings(tab: SettingsTab = "common") {
+    setSettingsInitialTab(tab);
     setSettingsOpen(true);
     if (apiBaseUrl) void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
   }
@@ -2511,7 +2520,7 @@ export default function App(props: {
             <Copy size={16} />
             {tr("common.exportTs")}
           </Button>
-          <Button variant="secondary" onClick={openSettings}>
+          <Button variant="secondary" onClick={() => openSettings("cut")}>
             <Settings2 size={16} />
             {tr("common.settings")}
           </Button>
@@ -2582,6 +2591,7 @@ export default function App(props: {
           onHandleEditingChange={setHandleEditing}
           onChange={(patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch)}
           onChangeCommitted={markProjectChanged}
+          onEditTiming={() => selectedSegment && setCutTimingSegmentId(selectedSegment.id)}
         />
         <SegmentList
           segments={segments}
@@ -2648,7 +2658,7 @@ export default function App(props: {
             onPreviousBoundary={() => jumpSubtitleBoundary(-1)}
             onNextBoundary={() => jumpSubtitleBoundary(1)}
             onLoad={selectVideo}
-            onSettings={openSettings}
+            onSettings={() => openSettings("sub")}
             onZoomIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
             onZoomOut={() => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1))}
             onZoomReset={() => setZoomIndex(0)}
@@ -2777,8 +2787,29 @@ export default function App(props: {
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
       />
+      <SegmentTimingDialog
+        open={Boolean(cutTimingSegment)}
+        mode="cut"
+        segment={cutTimingSegment}
+        mediaDuration={duration}
+        onClose={() => setCutTimingSegmentId(null)}
+        onApply={(start, end) => {
+          if (!cutTimingSegment) return;
+          updateSegment(cutTimingSegment.id, {
+            start,
+            end,
+            duration: end - start,
+            start_timecode: formatTimeInput(start),
+            end_timecode: formatTimeInput(end),
+            user_edited: true,
+          });
+          setCutTimingSegmentId(null);
+          seek(start);
+        }}
+      />
       <SettingsDialog
         open={settingsOpen}
+        initialTab={settingsInitialTab}
         apiReady={Boolean(apiBaseUrl)}
         scratchPreviewMillisecondsInput={scratchPreviewMillisecondsInput}
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
@@ -3377,6 +3408,7 @@ function TimelineStack(props: {
   onHandleEditingChange: (editing: boolean) => void;
   onChange: (patch: Partial<Segment>) => void;
   onChangeCommitted: () => void;
+  onEditTiming: () => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
   const timelineViewport = useTimelineViewport({
@@ -3426,6 +3458,7 @@ function TimelineStack(props: {
           onChange={props.onChange}
           onChangeCommitted={props.onChangeCommitted}
           onEditingChange={props.onHandleEditingChange}
+          onEditTiming={props.onEditTiming}
         />
       </div>
     </ScrollArea>
@@ -3674,6 +3707,7 @@ function SegmentTimeline(props: {
   onChange: (patch: Partial<Segment>) => void;
   onChangeCommitted: () => void;
   onEditingChange: (editing: boolean) => void;
+  onEditTiming: () => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
   const segment = props.segment;
@@ -3693,7 +3727,17 @@ function SegmentTimeline(props: {
             {draggingX !== null ? (
               <div className="cut-boundary-drag-guide" style={{ left: draggingX }} />
             ) : null}
-            <div className="segment-range" style={{ left: startX, width: Math.max(2, endX - startX) }} />
+            <button
+              type="button"
+              className="segment-range"
+              style={{ left: startX, width: Math.max(2, endX - startX) }}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                props.onEditTiming();
+              }}
+              aria-label={tr("segmentTiming.title")}
+            />
             <DragHandle
               left={startX}
               label="start"

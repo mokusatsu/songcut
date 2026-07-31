@@ -120,6 +120,8 @@ export type WhisperSettings = {
   model: WhisperModelKey;
   language: string;
   device: InferenceDevice;
+  demucsDevice?: InferenceDevice;
+  mmsDevice?: "auto" | "gpu" | "cpu";
   lyricsAlignmentAlgorithm?: "songcut-standard" | "uta-align";
 };
 
@@ -627,6 +629,15 @@ function whisperSettings(value: unknown, label: string) {
   if (!whisperModels.has(row.model as WhisperModelKey)) throw new Error(`Invalid ${label}.model.`);
   stringValue(row.language, `${label}.language`);
   inferenceDevice(row.device, `${label}.device`);
+  if (row.demucsDevice !== undefined) inferenceDevice(row.demucsDevice, `${label}.demucsDevice`);
+  if (
+    row.mmsDevice !== undefined &&
+    row.mmsDevice !== "auto" &&
+    row.mmsDevice !== "gpu" &&
+    row.mmsDevice !== "cpu"
+  ) {
+    throw new Error(`Invalid ${label}.mmsDevice.`);
+  }
   if (
     row.lyricsAlignmentAlgorithm !== undefined &&
     row.lyricsAlignmentAlgorithm !== "songcut-standard" &&

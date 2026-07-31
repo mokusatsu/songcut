@@ -34,6 +34,7 @@ class SeparatedAudio:
     vocals: Path
     no_vocals: Path
     model: str
+    device_used: str = "CPU"
 
 
 def _default_model_root() -> Path:
@@ -372,7 +373,7 @@ def separate_vocals(
     output_dir: Path,
     *,
     model: str = DEMUCS_MODEL,
-    device: str = "CPU",
+    device: str = "auto",
     model_dir: Path | None = None,
     progress_callback: Callable[[float], None] | None = None,
 ) -> SeparatedAudio:
@@ -396,9 +397,32 @@ def separate_vocals(
         progress_callback=download_progress,
     )
     model_path = resolved_model_dir / DEMUCS_REPO_SUBDIR / "htdemucs_fwd.xml"
-    normalized_device = device.strip().upper() or "CPU"
     core = ov.Core()
-    compiled_model = core.compile_model(model_path, normalized_device)
+    normalized_device = device.strip().upper() or "AUTO"
+    if normalized_device not in {"AUTO", "NPU", "GPU", "CPU"}:
+        raise ValueError("Demucs device must be one of: auto, npu, gpu, cpu")
+    reported_devices = getattr(core, "available_devices", ("CPU",))
+    if not isinstance(reported_devices, (list, tuple, set, frozenset)):
+        reported_devices = ("CPU",)
+    available_devices = {str(item).upper() for item in reported_devices}
+    candidates = ("GPU", "NPU", "CPU") if normalized_device == "AUTO" else (normalized_device,)
+    compiled_model = None
+    device_errors: list[str] = []
+    device_used = "CPU"
+    for candidate in candidates:
+        if candidate != "CPU" and candidate not in available_devices:
+            device_errors.append(f"{candidate} is not available")
+            continue
+        try:
+            compiled_model = core.compile_model(model_path, candidate)
+            device_used = candidate
+            break
+        except Exception as exc:
+            device_errors.append(f"{candidate}: {exc}")
+            if normalized_device != "AUTO":
+                raise RuntimeError(f"Demucs could not be compiled for {candidate}: {exc}") from exc
+    if compiled_model is None:
+        raise RuntimeError(f"Demucs has no usable OpenVINO device ({'; '.join(device_errors)}).")
 
     mix = _decode_source(source)
     reference = mix.mean(axis=0, dtype=np.float32)
@@ -445,4 +469,9 @@ def separate_vocals(
             )
     if progress_callback is not None:
         progress_callback(1.0)
-    return SeparatedAudio(vocals=vocals_path, no_vocals=no_vocals_path, model=model)
+    return SeparatedAudio(
+        vocals=vocals_path,
+        no_vocals=no_vocals_path,
+        model=model,
+        device_used=device_used,
+    )

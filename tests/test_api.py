@@ -211,7 +211,12 @@ class ApiJobTests(unittest.TestCase):
         ):
             _lyrics_analysis_job(
                 "lyrics-001",
-                LyricsAnalysisRequest(source_path="source.mp4", lyrics_text="title\n\nline"),
+                LyricsAnalysisRequest(
+                    source_path="source.mp4",
+                    lyrics_text="title\n\nline",
+                    demucs_device="npu",
+                    mms_device="gpu",
+                ),
             )
 
         completed = _jobs["lyrics-001"]
@@ -220,10 +225,12 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["algorithm"], "songcut-standard")
         self.assertEqual(completed.result["lyrics_audio_source"], "demucs-vocals")
         separate.assert_called_once()
+        self.assertEqual(separate.call_args.kwargs["device"], "npu")
         transcribe.assert_called_once()
         self.assertEqual(transcribe.call_args.args[0], separated.vocals)
         refine_mms.assert_called_once()
         self.assertEqual(refine_mms.call_args.args[0], separated.vocals)
+        self.assertEqual(refine_mms.call_args.kwargs["device"], "gpu")
         self.assertEqual(completed.result["mms_diagnostics"]["applied_line_indexes"], [1])
         detect_beats.assert_called_once_with(Path("source.mp4"))
         self.assertEqual(completed.result["confidence_statistics"]["low_outlier_indexes"], [1])
