@@ -52,29 +52,46 @@ function ConvertTo-ZipEntryName {
 function Test-ExcludedArchivePath {
   param(
     [string]$EntryName,
-    [string[]]$ExcludedTopLevelDirectories
+    [string[]]$ExcludedTopLevelDirectories,
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
-  if ($ExcludedTopLevelDirectories.Count -eq 0) {
-    return $false
+  $TopLevelName = ($EntryName -split "/", 2)[0]
+  if ($ExcludedTopLevelDirectories -contains $TopLevelName) {
+    return $true
   }
 
-  $TopLevelName = ($EntryName -split "/", 2)[0]
-  return $ExcludedTopLevelDirectories -contains $TopLevelName
+  foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+    $NormalizedDirectoryName = $DirectoryName.Trim([char[]]@("/", "\")) -replace "\\", "/"
+    if (
+      $EntryName.Equals($NormalizedDirectoryName, [System.StringComparison]::OrdinalIgnoreCase) -or
+      $EntryName.StartsWith("$NormalizedDirectoryName/", [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Assert-ReleaseArchive {
   param(
     [string]$SourceDirectory,
     [string]$ArchivePath,
-    [string[]]$EmptyTopLevelDirectories = @()
+    [string[]]$EmptyTopLevelDirectories = @(),
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
   $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
   $ExpectedFiles = @(
     Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -File |
       ForEach-Object { ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName } |
-      Where-Object { -not (Test-ExcludedArchivePath -EntryName $_ -ExcludedTopLevelDirectories $EmptyTopLevelDirectories) } |
+      Where-Object {
+        -not (Test-ExcludedArchivePath `
+          -EntryName $_ `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)
+      } |
       Sort-Object
   )
 
@@ -110,6 +127,19 @@ function Assert-ReleaseArchive {
         throw "Release archive directory '$RootEntryName' was not empty: $UnexpectedEntry"
       }
     }
+
+    foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+      $NormalizedDirectoryName = $DirectoryName.Trim([char[]]@("/", "\")) -replace "\\", "/"
+      $UnexpectedEntry = $EntryNames |
+        Where-Object {
+          $_.Equals($NormalizedDirectoryName, [System.StringComparison]::OrdinalIgnoreCase) -or
+          $_.StartsWith("$NormalizedDirectoryName/", [System.StringComparison]::OrdinalIgnoreCase)
+        } |
+        Select-Object -First 1
+      if ($UnexpectedEntry) {
+        throw "Release archive unexpectedly contains excluded directory '$NormalizedDirectoryName': $UnexpectedEntry"
+      }
+    }
   }
   finally {
     $Archive.Dispose()
@@ -120,7 +150,8 @@ function New-ReleaseArchive {
   param(
     [string]$SourceDirectory,
     [string]$DestinationPath,
-    [string[]]$EmptyTopLevelDirectories = @()
+    [string[]]$EmptyTopLevelDirectories = @(),
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
   $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
@@ -130,6 +161,16 @@ function New-ReleaseArchive {
   foreach ($DirectoryName in $EmptyTopLevelDirectories) {
     if ([string]::IsNullOrWhiteSpace($DirectoryName) -or $DirectoryName -match "[\\/]") {
       throw "Empty archive directory names must be top-level names: $DirectoryName"
+    }
+  }
+
+  foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+    if (
+      [string]::IsNullOrWhiteSpace($DirectoryName) -or
+      [System.IO.Path]::IsPathRooted($DirectoryName) -or
+      ($DirectoryName -replace "\\", "/") -match "(^|/)\.\.(/|$)"
+    ) {
+      throw "Excluded archive directories must be safe relative paths: $DirectoryName"
     }
   }
 
@@ -149,7 +190,10 @@ function New-ReleaseArchive {
       Sort-Object FullName |
       ForEach-Object {
         $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
-        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+        if (-not (Test-ExcludedArchivePath `
+          -EntryName $EntryName `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)) {
           $Archive.CreateEntry("$EntryName/") | Out-Null
         }
       }
@@ -158,7 +202,10 @@ function New-ReleaseArchive {
       Sort-Object FullName |
       ForEach-Object {
         $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
-        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+        if (-not (Test-ExcludedArchivePath `
+          -EntryName $EntryName `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)) {
           [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
             $Archive,
             $_.FullName,
@@ -174,7 +221,8 @@ function New-ReleaseArchive {
     Assert-ReleaseArchive `
       -SourceDirectory $SourceRoot `
       -ArchivePath $TemporaryPath `
-      -EmptyTopLevelDirectories $EmptyTopLevelDirectories
+      -EmptyTopLevelDirectories $EmptyTopLevelDirectories `
+      -ExcludedArchiveDirectories $ExcludedArchiveDirectories
 
     if (Test-Path -LiteralPath $DestinationPath) {
       Remove-Item -LiteralPath $DestinationPath -Force
@@ -407,7 +455,8 @@ if ($Release) {
   New-ReleaseArchive `
     -SourceDirectory $PackageRoot `
     -DestinationPath $StandardArchivePath `
-    -EmptyTopLevelDirectories @("models")
+    -EmptyTopLevelDirectories @("models") `
+    -ExcludedArchiveDirectories @("third_party/ffmpeg")
 
   Write-Host "Created full release archive: $FullArchivePath"
   Write-Host "Created standard release archive: $StandardArchivePath"
