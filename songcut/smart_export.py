@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
 import win_safesubprocess as subprocess
@@ -13,6 +14,7 @@ MIN_SPAN_SECONDS = 0.001
 DEFAULT_SOURCE_VIDEO_BITRATE = 2_000_000
 MIN_REENCODE_BITRATE = 300_000
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -25,6 +27,16 @@ class SourceMediaInfo:
     audio_codec: str | None
     audio_bitrate: int
     has_audio: bool
+    video_frame_rate: float = 0.0
+    video_frame_rate_is_constant: bool = False
+
+
+@dataclass(frozen=True)
+class VideoFramePoint:
+    pts: float
+    dts: float | None
+    duration: float
+    keyframe: bool
 
 
 @dataclass(frozen=True)
@@ -73,6 +85,7 @@ class SmartRenderPlan:
     keyframes: list[float]
     spans: list[SmartRenderSpan]
     fallback_reason: str | None
+    expected_video_frames: int | None = None
 
 
 def probe_source_media(ffprobe: Path, source: Path) -> SourceMediaInfo:
@@ -82,7 +95,7 @@ def probe_source_media(ffprobe: Path, source: Path) -> SourceMediaInfo:
         [
             "-show_entries",
             "format=format_name,duration,bit_rate,size:"
-            "stream=index,codec_type,codec_name,width,height,avg_frame_rate,bit_rate,duration",
+            "stream=index,codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,bit_rate,duration",
         ],
     )
     streams = data.get("streams", [])
@@ -107,6 +120,8 @@ def probe_source_media(ffprobe: Path, source: Path) -> SourceMediaInfo:
     else:
         video_bitrate = DEFAULT_SOURCE_VIDEO_BITRATE
 
+    average_frame_rate = _parse_ratio(video_stream.get("avg_frame_rate"))
+    nominal_frame_rate = _parse_ratio(video_stream.get("r_frame_rate"))
     return SourceMediaInfo(
         format_name=str(format_info.get("format_name") or ""),
         duration=duration,
@@ -116,6 +131,12 @@ def probe_source_media(ffprobe: Path, source: Path) -> SourceMediaInfo:
         audio_codec=str(audio_stream.get("codec_name") or "").lower() or None,
         audio_bitrate=audio_bitrate,
         has_audio=bool(audio_stream),
+        video_frame_rate=average_frame_rate,
+        video_frame_rate_is_constant=(
+            average_frame_rate > 0
+            and nominal_frame_rate > 0
+            and abs(average_frame_rate - nominal_frame_rate) < 0.001
+        ),
     )
 
 
@@ -144,6 +165,64 @@ def probe_keyframes(ffprobe: Path, source: Path, *, start: float | None = None, 
     )
 
 
+def probe_video_frames(ffprobe: Path, source: Path, *, start: float, end: float) -> list[VideoFramePoint]:
+    data = ffprobe_json(
+        ffprobe,
+        source,
+        [
+            "-read_intervals",
+            f"{max(0.0, start):.6f}%{max(start, end):.6f}",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "frame=best_effort_timestamp_time,pkt_dts_time,pkt_duration_time,key_frame",
+        ],
+    )
+    points: list[VideoFramePoint] = []
+    for frame in data.get("frames", []):
+        raw_pts = frame.get("best_effort_timestamp_time")
+        if raw_pts is None:
+            continue
+        points.append(
+            VideoFramePoint(
+                pts=float(raw_pts),
+                dts=_float_or_none(frame.get("pkt_dts_time")),
+                duration=max(0.0, _float_or_zero(frame.get("pkt_duration_time"))),
+                keyframe=str(frame.get("key_frame")) == "1",
+            )
+        )
+    return sorted(points, key=lambda point: point.pts)
+
+
+def snap_video_range_to_frames(
+    ffprobe: Path,
+    source: Path,
+    *,
+    start: float,
+    end: float,
+) -> tuple[float, float]:
+    start_points = probe_video_frames(
+        ffprobe,
+        source,
+        start=max(0.0, start - 1.0),
+        end=start + 1.0,
+    )
+    end_points = probe_video_frames(
+        ffprobe,
+        source,
+        start=max(0.0, end - 1.0),
+        end=end + 1.0,
+    )
+    snapped_start = _nearest_frame_boundary(start_points, start)
+    snapped_end = _nearest_frame_boundary(end_points, end)
+    if snapped_end <= snapped_start:
+        raise ValueError(
+            "frame-snapped export range is empty: "
+            f"requested={start:.6f}-{end:.6f}, snapped={snapped_start:.6f}-{snapped_end:.6f}"
+        )
+    return snapped_start, snapped_end
+
+
 def plan_smart_render(ffprobe: Path, source: Path, *, start: float, end: float) -> SmartRenderPlan:
     if end <= start:
         raise ValueError(f"export end must be greater than start: start={start:.3f}, end={end:.3f}")
@@ -158,6 +237,8 @@ def plan_smart_render(ffprobe: Path, source: Path, *, start: float, end: float) 
     spans = [SmartRenderSpan("encode", start, end)]
 
     if fallback_reason is None:
+        start, end = snap_video_range_to_frames(ffprobe, source, start=start, end=end)
+        spans = [SmartRenderSpan("encode", start, end)]
         keyframes = probe_keyframes(ffprobe, source, start=max(0.0, start - 10.0), end=end + 10.0)
         inside = _dedupe_times(value for value in keyframes if start <= value <= end)
         if len(inside) >= 2:
@@ -184,6 +265,11 @@ def plan_smart_render(ffprobe: Path, source: Path, *, start: float, end: float) 
         keyframes=keyframes,
         spans=spans,
         fallback_reason=fallback_reason,
+        expected_video_frames=(
+            round((end - start) * info.video_frame_rate)
+            if info.video_frame_rate_is_constant
+            else None
+        ),
     )
 
 
@@ -270,26 +356,35 @@ def export_smart_clip(ffmpeg: Path, ffprobe: Path, source: Path, target: Path, *
         _validate_export(ffprobe, actual_target, plan)
     else:
         try:
-            _export_smart_spans(ffmpeg, source, actual_target, plan)
+            _export_smart_spans(ffmpeg, ffprobe, source, actual_target, plan)
             _validate_export(ffprobe, actual_target, plan)
         except (subprocess.CalledProcessError, RuntimeError) as exc:
-            plan = _fallback_plan(plan, f"smart render failed: {exc}")
+            reason = f"smart render failed: {_exception_detail(exc)}"
+            LOGGER.warning("%s; falling back to full re-encode", reason)
+            plan = _fallback_plan(plan, reason)
             _export_full_reencode(ffmpeg, source, actual_target, plan)
             _validate_export(ffprobe, actual_target, plan)
 
     return {"target": str(actual_target), "smart_render_plan": asdict(plan)}
 
 
-def _export_smart_spans(ffmpeg: Path, source: Path, target: Path, plan: SmartRenderPlan) -> None:
+def _export_smart_spans(
+    ffmpeg: Path,
+    ffprobe: Path,
+    source: Path,
+    target: Path,
+    plan: SmartRenderPlan,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="songcut-smart-") as tmp_name:
         tmp = Path(tmp_name)
         span_paths: list[Path] = []
         for index, span in enumerate(plan.spans, start=1):
             span_target = tmp / f"span-{index:03d}{_fragment_suffix(plan)}"
             if span.mode == "copy":
-                _export_video_copy_span(ffmpeg, source, span_target, span, plan)
+                _export_video_copy_span(ffmpeg, ffprobe, source, span_target, span, plan)
             else:
                 _export_video_encode_span(ffmpeg, source, span_target, span, plan)
+            _validate_video_span(ffprobe, span_target, span, require_timestamps=span.mode == "copy")
             span_paths.append(span_target)
 
         video_target = tmp / f"video{plan.output_suffix}"
@@ -364,30 +459,47 @@ def _export_video_encode_span(
 
 def _export_video_copy_span(
     ffmpeg: Path,
+    ffprobe: Path,
     source: Path,
     target: Path,
     span: SmartRenderSpan,
     plan: SmartRenderPlan,
 ) -> None:
-    duration = max(0.0, span.end - span.start)
     command = [
         str(ffmpeg),
         "-hide_banner",
         "-loglevel",
         "error",
         "-y",
-        "-ss",
-        f"{span.start:.3f}",
-        "-i",
-        str(source),
-        "-t",
-        f"{duration:.3f}",
-        "-map",
-        "0:v:0",
-        "-an",
-        "-c:v",
-        "copy",
     ]
+    if not _uses_h264_transport_stream(plan):
+        start_packet = _probe_keyframe_packet(ffprobe, source, span.start)
+        end_packet = _probe_keyframe_packet(ffprobe, source, span.end)
+        seek_start = max(0.0, min(start_packet.pts, start_packet.dts or start_packet.pts) - MIN_SPAN_SECONDS)
+        stop_dts = end_packet.dts if end_packet.dts is not None else end_packet.pts
+        copy_duration = max(MIN_SPAN_SECONDS, stop_dts - seek_start)
+        command.extend(
+            [
+                "-i",
+                str(source),
+                "-ss",
+                f"{seek_start:.6f}",
+                "-t",
+                f"{copy_duration:.6f}",
+            ]
+        )
+    else:
+        command.extend(
+            [
+                "-ss",
+                f"{span.start:.6f}",
+                "-i",
+                str(source),
+                "-t",
+                f"{max(0.0, span.end - span.start):.6f}",
+            ]
+        )
+    command.extend(["-map", "0:v:0", "-an", "-c:v", "copy"])
     if _uses_h264_transport_stream(plan):
         command.extend(["-bsf:v", "h264_mp4toannexb"])
     command.extend(["-avoid_negative_ts", "make_zero"])
@@ -470,7 +582,6 @@ def _mux_video_audio(ffmpeg: Path, video: Path, audio: Path, target: Path, plan:
         "copy",
         "-c:a",
         "copy",
-        "-shortest",
     ]
     command.extend(_container_args(plan))
     command.append(str(target))
@@ -478,22 +589,35 @@ def _mux_video_audio(ffmpeg: Path, video: Path, audio: Path, target: Path, plan:
 
 
 def _run_ffmpeg(command: list[str]) -> None:
-    subprocess.run(
-        command,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=CREATE_NO_WINDOW,
-    )
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except subprocess.CalledProcessError as exc:
+        LOGGER.error(
+            "FFmpeg command failed with exit code %s: %s\nstderr:\n%s",
+            exc.returncode,
+            command,
+            (exc.stderr or "").strip(),
+        )
+        raise
 
 
 def _validate_export(ffprobe: Path, target: Path, plan: SmartRenderPlan) -> None:
     data = ffprobe_json(
         ffprobe,
         target,
-        ["-show_entries", "format=duration:stream=codec_type,codec_name"],
+        [
+            "-count_frames",
+            "-show_entries",
+            "format=duration:stream=codec_type,codec_name,nb_read_frames",
+        ],
     )
     streams = data.get("streams", [])
     if not any(item.get("codec_type") == "video" for item in streams):
@@ -506,6 +630,88 @@ def _validate_export(ffprobe: Path, target: Path, plan: SmartRenderPlan) -> None
         raise RuntimeError(
             f"export validation failed: duration {duration:.3f}s differs from expected {expected:.3f}s"
         )
+    if plan.expected_video_frames is not None:
+        video_stream = next(item for item in streams if item.get("codec_type") == "video")
+        actual_frames = _int_or_zero(video_stream.get("nb_read_frames"))
+        if actual_frames <= 0 or abs(actual_frames - plan.expected_video_frames) > 2:
+            raise RuntimeError(
+                "export validation failed: "
+                f"frame count {actual_frames} differs from expected {plan.expected_video_frames}"
+            )
+
+
+def _validate_video_span(
+    ffprobe: Path,
+    target: Path,
+    span: SmartRenderSpan,
+    *,
+    require_timestamps: bool,
+) -> None:
+    entries = "format=duration:stream=codec_type"
+    if require_timestamps:
+        entries += ":packet=pts_time,dts_time"
+    data = ffprobe_json(
+        ffprobe,
+        target,
+        [
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            entries,
+        ],
+    )
+    duration = _float_or_zero(data.get("format", {}).get("duration"))
+    expected = span.end - span.start
+    if duration <= 0 or abs(duration - expected) > max(0.1, expected * 0.01):
+        raise RuntimeError(
+            "smart-render span validation failed: "
+            f"{span.mode} duration {duration:.6f}s differs from expected {expected:.6f}s"
+        )
+    if require_timestamps:
+        packets = data.get("packets", [])
+        if not packets:
+            raise RuntimeError("smart-render span validation failed: copied span has no video packets")
+        missing = sum(1 for packet in packets if packet.get("pts_time") is None)
+        if missing:
+            raise RuntimeError(
+                f"smart-render span validation failed: copied span has {missing} packets without PTS"
+            )
+
+
+def _probe_keyframe_packet(ffprobe: Path, source: Path, pts: float) -> VideoFramePoint:
+    data = ffprobe_json(
+        ffprobe,
+        source,
+        [
+            "-read_intervals",
+            f"{max(0.0, pts - 1.0):.6f}%{pts + 1.0:.6f}",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,dts_time,duration_time,flags",
+        ],
+    )
+    candidates: list[VideoFramePoint] = []
+    for packet in data.get("packets", []):
+        raw_pts = packet.get("pts_time")
+        if raw_pts is None or "K" not in str(packet.get("flags") or ""):
+            continue
+        candidates.append(
+            VideoFramePoint(
+                pts=float(raw_pts),
+                dts=_float_or_none(packet.get("dts_time")),
+                duration=max(0.0, _float_or_zero(packet.get("duration_time"))),
+                keyframe=True,
+            )
+        )
+    if not candidates:
+        raise RuntimeError(f"no keyframe packet found near PTS {pts:.6f}")
+    result = min(candidates, key=lambda packet: abs(packet.pts - pts))
+    if abs(result.pts - pts) > 0.1:
+        raise RuntimeError(
+            f"nearest keyframe packet PTS {result.pts:.6f} differs from planned PTS {pts:.6f}"
+        )
+    return result
 
 
 def _video_encode_args(plan: SmartRenderPlan) -> list[str]:
@@ -572,7 +778,7 @@ def _fragment_suffix(plan: SmartRenderPlan) -> str:
 
 
 def _uses_h264_transport_stream(plan: SmartRenderPlan) -> bool:
-    return plan.video_codec == "h264" and plan.container_family in {"mp4", "mkv"}
+    return plan.video_codec == "h264" and plan.container_family == "mp4"
 
 
 def _fallback_plan(plan: SmartRenderPlan, reason: str) -> SmartRenderPlan:
@@ -606,6 +812,16 @@ def _dedupe_times(values) -> list[float]:
     return result
 
 
+def _nearest_frame_boundary(points: list[VideoFramePoint], requested: float) -> float:
+    if not points:
+        return requested
+    boundaries = [point.pts for point in points]
+    last = points[-1]
+    if last.duration > 0:
+        boundaries.append(last.pts + last.duration)
+    return min(boundaries, key=lambda value: (abs(value - requested), value))
+
+
 def _concat_path(path: Path) -> str:
     return path.resolve().as_posix().replace("'", "'\\''")
 
@@ -615,6 +831,31 @@ def _float_or_zero(value: object) -> float:
         return float(value or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_ratio(value: object) -> float:
+    raw = str(value or "")
+    if "/" not in raw:
+        return _float_or_zero(raw)
+    numerator, denominator = raw.split("/", 1)
+    denominator_value = _float_or_zero(denominator)
+    if denominator_value == 0:
+        return 0.0
+    return _float_or_zero(numerator) / denominator_value
+
+
+def _exception_detail(exc: BaseException) -> str:
+    stderr = str(getattr(exc, "stderr", "") or "").strip()
+    if stderr:
+        return f"{exc}; stderr: {stderr}"
+    return str(exc)
 
 
 def _int_or_zero(value: object) -> int:

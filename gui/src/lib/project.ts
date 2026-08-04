@@ -12,20 +12,30 @@ import type {
 import type { WhisperSettings } from "@/lib/api";
 import { DEFAULT_FILENAME_TEMPLATE } from "@/lib/exportNaming";
 import type { AnalysisResult, ExportCandidate, Segment, VideoInfo, WaveformPoint } from "@/types";
+import {
+  createDefaultSubtitleState,
+  validateSubtitleState,
+  type AppMode,
+  type SubtitleProjectState,
+} from "@/lib/subtitles";
 
 export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | "save-failed" | "read-only";
 
 export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = {
   enabled: false,
-  model: "small",
+  model: "whisper-large-v3-turbo-int8-ov",
   language: "ja",
   device: "auto",
+  demucsDevice: "auto",
+  mmsDevice: "auto",
+  lyricsAlignmentAlgorithm: "songcut-standard",
 };
 
 export function createProjectDocument(
   projectPath: string,
   source: SourceIdentity,
   videoInfo: VideoInfo,
+  mode: AppMode = "cut",
 ): ProjectDocumentV1 {
   const now = new Date().toISOString();
   return {
@@ -35,6 +45,7 @@ export function createProjectDocument(
     revision: 0,
     created_at: now,
     updated_at: now,
+    mode,
     source: {
       absolute_path: source.path,
       relative_path: source.filename,
@@ -56,6 +67,7 @@ export function createProjectDocument(
     export_candidates: [],
     view_state: { selected_segment_id: null, current_time: 0, zoom_index: 0 },
     operation: null,
+    subtitle: mode === "sub" ? createDefaultSubtitleState() : undefined,
   };
 }
 
@@ -77,6 +89,8 @@ export function composeProjectDocument(
     currentTime: number;
     zoomIndex: number;
     operation: ProjectOperation;
+    mode?: AppMode;
+    subtitle?: SubtitleProjectState;
   },
 ): ProjectDocumentV1 {
   const segmentIds = new Set(state.segments.map((segment) => segment.id));
@@ -101,6 +115,7 @@ export function composeProjectDocument(
     ...base,
     revision: state.revision,
     updated_at: new Date().toISOString(),
+    mode: state.mode ?? base.mode ?? "cut",
     source: {
       ...base.source,
       absolute_path: state.videoPath || base.source.absolute_path,
@@ -147,6 +162,7 @@ export function composeProjectDocument(
       zoom_index: Math.max(0, Math.round(state.zoomIndex)),
     },
     operation: state.operation,
+    subtitle: state.subtitle ?? base.subtitle,
   };
 }
 
@@ -186,6 +202,14 @@ export function exportCandidatesFromProject(document: ProjectDocumentV1): Export
 
 export function filenameTemplateFromProject(document: ProjectDocumentV1) {
   return document.settings.export?.filename_template ?? DEFAULT_FILENAME_TEMPLATE;
+}
+
+export function projectMode(document: ProjectDocumentV1): AppMode {
+  return document.mode === "sub" ? "sub" : "cut";
+}
+
+export function subtitleStateFromProject(document: ProjectDocumentV1): SubtitleProjectState {
+  return validateSubtitleState(document.subtitle) ?? createDefaultSubtitleState();
 }
 
 export function normalizeInterruptedOperation(operation: ProjectOperation): ProjectOperation {

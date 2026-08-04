@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
-type WhisperModelKey = "tiny" | "base" | "small";
+type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
 type UiLanguage = "en" | "ja";
@@ -63,6 +63,7 @@ type SongcutMenuState = {
   interface Window {
     songcut: {
       apiBaseUrl(): Promise<string>;
+      listSystemFonts(): Promise<string[]>;
       getLocaleSettings(): Promise<{ language: UiLanguage; preference: UiLanguagePreference }>;
       setLocalePreference(preference: UiLanguagePreference): Promise<{
         preference: UiLanguagePreference;
@@ -86,7 +87,7 @@ type SongcutMenuState = {
     selectVideo(): Promise<string | null>;
     openProject(): Promise<unknown | null>;
     loadProject(projectPath: string): Promise<unknown>;
-    projectPathForVideo(videoPath: string): Promise<string>;
+    projectPathForVideo(videoPath: string, mode?: "cut" | "sub"): Promise<string>;
     saveProject(projectPath: string, document: unknown): Promise<unknown>;
     loadRecovery(): Promise<unknown | null>;
     saveRecovery(snapshot: unknown): Promise<void>;

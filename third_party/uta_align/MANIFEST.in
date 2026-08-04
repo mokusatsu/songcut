@@ -1,0 +1,4 @@
+include WORKER_REPORT.md
+include FINAL_REPORT.md
+recursive-include tests *.py
+recursive-include tools *.py

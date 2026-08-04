@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import socket
+import tempfile
 import threading
 import time
 import traceback
@@ -9,15 +10,46 @@ import uuid
 import win_safesubprocess as subprocess
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .boundary_refiner import BoundaryRefinerConfig
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
+from .lyrics_alignment import align_lyrics_to_chunks, parse_lyrics, transcribe_whisper_chunks
+from .mms_alignment import (
+    MMS_MODEL,
+    ensure_mms_onnx_model,
+    mms_onnx_model_status,
+    refine_standard_alignment_with_mms,
+    resolve_mms_onnx_model_dir,
+)
+from .uta_alignment import align_lyrics_with_uta
+from .rhythm_alignment import (
+    adjust_lines_to_rhythm,
+    build_extended_rhythm_grid,
+    confidence_statistics,
+    detect_beat_times,
+)
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
+from .source_separation import (
+    DEMUCS_MODEL,
+    demucs_model_status,
+    ensure_demucs_model,
+    resolve_demucs_model_dir,
+    separate_vocals,
+)
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
+from .subtitle_export import (
+    SubtitleEffect,
+    SubtitleLane,
+    SubtitleSegment,
+    export_subtitle_bundle,
+    render_subtitle_png_base64,
+    subtitle_style_from_mapping,
+)
 from .transcription import (
+    DEFAULT_WHISPER_MODEL_KEY,
     WHISPER_MODEL_ID,
     WHISPER_OPENVINO_REPO_ID,
     directory_size,
@@ -82,14 +114,22 @@ class AnalyzeRequest(BaseModel):
     timestamp_source: str = "auto"
     device: str = "auto"
     transcribe: bool = True
-    whisper_model: str = "small"
+    whisper_model: str = DEFAULT_WHISPER_MODEL_KEY
     whisper_device: str = "auto"
     whisper_language: str | None = "<|ja|>"
     boundary_refinement: BoundaryRefinementRequest = Field(default_factory=BoundaryRefinementRequest)
 
 
 class WhisperDownloadRequest(BaseModel):
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL_KEY
+
+
+class DemucsDownloadRequest(BaseModel):
+    pass
+
+
+class MmsDownloadRequest(BaseModel):
+    pass
 
 
 class TranscriptionSegmentRequest(BaseModel):
@@ -101,7 +141,7 @@ class TranscriptionSegmentRequest(BaseModel):
 class TranscriptionRequest(BaseModel):
     source_path: str
     segments: list[TranscriptionSegmentRequest] = Field(default_factory=list)
-    model: str = "small"
+    model: str = DEFAULT_WHISPER_MODEL_KEY
     language: str | None = "ja"
     device: str = "auto"
     initial_prompt: str | None = None
@@ -134,6 +174,82 @@ class ScratchProxyRequest(BaseModel):
 
 class WaveformRequest(BaseModel):
     path: str
+
+
+class LyricsAnalysisRequest(BaseModel):
+    source_path: str
+    lyrics_text: str = Field(min_length=1)
+    model: str = DEFAULT_WHISPER_MODEL_KEY
+    language: str | None = "ja"
+    device: str = "auto"
+    demucs_device: Literal["auto", "npu", "gpu", "cpu"] = "auto"
+    mms_device: Literal["auto", "gpu", "cpu"] = "auto"
+    algorithm: Literal["songcut-standard", "uta-align"] = "songcut-standard"
+
+
+class SubtitleStyleRequest(BaseModel):
+    font_name: str = "Yu Gothic UI"
+    font_size: float = Field(default=48.0, gt=0, le=400)
+    primary_color: str = "#FFFFFF"
+    outline_color: str = "#000000"
+    background_color: str = "#00000080"
+    bold: bool = False
+    italic: bool = False
+    outline: float = Field(default=2.0, ge=0, le=30)
+    shadow: float = Field(default=0.0, ge=0, le=30)
+    alignment: int = Field(default=2, ge=1, le=9)
+    margin_l: int = Field(default=60, ge=0, le=4000)
+    margin_r: int = Field(default=60, ge=0, le=4000)
+    margin_v: int = Field(default=54, ge=0, le=4000)
+
+
+class SubtitleSegmentRequest(BaseModel):
+    id: str
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SubtitleSegmentRequest":
+        if self.end <= self.start:
+            raise ValueError("subtitle segment end must be after start")
+        return self
+
+
+class SubtitleEffectRequest(BaseModel):
+    name: str = "cut"
+    start_duration_ms: int = Field(default=300, ge=0, le=60000)
+    end_duration_ms: int = Field(default=300, ge=0, le=60000)
+    params: dict[str, str | int | float] = Field(default_factory=dict)
+
+
+class SubtitleLaneRequest(BaseModel):
+    id: str
+    name: str = ""
+    style: SubtitleStyleRequest = Field(default_factory=SubtitleStyleRequest)
+    effect: SubtitleEffectRequest = Field(default_factory=SubtitleEffectRequest)
+    segments: list[SubtitleSegmentRequest] = Field(default_factory=list)
+
+
+class SubtitleExportRequest(BaseModel):
+    source_path: str
+    output_dir: str
+    play_res_x: int = Field(gt=0)
+    play_res_y: int = Field(gt=0)
+    lanes: list[SubtitleLaneRequest] = Field(min_length=1, max_length=3)
+
+
+class SubtitleRenderItemRequest(BaseModel):
+    segment_id: str
+    signature: str = Field(min_length=1, max_length=4096)
+    text: str
+    style: SubtitleStyleRequest = Field(default_factory=SubtitleStyleRequest)
+
+
+class SubtitleRenderRequest(BaseModel):
+    play_res_x: int = Field(gt=0, le=7680)
+    play_res_y: int = Field(gt=0, le=4320)
+    items: list[SubtitleRenderItemRequest] = Field(min_length=1, max_length=1000)
 
 
 class JobRecord(BaseModel):
@@ -205,17 +321,17 @@ def devices() -> dict[str, Any]:
 def whisper_model_status() -> dict[str, Any]:
     runtime = select_whisper_runtime("auto")
     models = whisper_model_statuses()
-    small = next(item for item in models if item["key"] == "small")
+    default_model = next(item for item in models if item["key"] == DEFAULT_WHISPER_MODEL_KEY)
     return {
-        "default_model": "small",
+        "default_model": DEFAULT_WHISPER_MODEL_KEY,
         "models": models,
         "languages": whisper_language_options(),
         "devices": devices()["whisper"],
         # Compatibility fields retained for the one-model API.
         "model_id": WHISPER_MODEL_ID,
         "openvino_repo_id": WHISPER_OPENVINO_REPO_ID,
-        "model_dir": small["model_dir"],
-        "ready": small["ready"],
+        "model_dir": default_model["model_dir"],
+        "ready": default_model["ready"],
         "runtime": asdict(runtime),
     }
 
@@ -228,6 +344,26 @@ def download_whisper_model(request: WhisperDownloadRequest | None = None) -> Job
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return start_job("download-whisper", lambda job_id: _download_whisper_job(job_id, model_key))
+
+
+@app.get("/models/demucs")
+def get_demucs_model_status() -> dict[str, Any]:
+    return demucs_model_status()
+
+
+@app.post("/models/demucs/download")
+def download_demucs_model(_request: DemucsDownloadRequest | None = None) -> JobRecord:
+    return start_job("download-demucs", _download_demucs_job)
+
+
+@app.get("/models/mms")
+def get_mms_model_status() -> dict[str, Any]:
+    return mms_onnx_model_status()
+
+
+@app.post("/models/mms/download")
+def download_mms_model(_request: MmsDownloadRequest | None = None) -> JobRecord:
+    return start_job("download-mms", _download_mms_job)
 
 
 @app.post("/videos/probe")
@@ -359,6 +495,21 @@ def create_export_job(request: ExportRequest) -> JobRecord:
     return start_job("export", lambda job_id: _export_job(job_id, request))
 
 
+@app.post("/lyrics-analysis/jobs")
+def create_lyrics_analysis_job(request: LyricsAnalysisRequest) -> JobRecord:
+    return start_job("lyrics-analysis", lambda job_id: _lyrics_analysis_job(job_id, request))
+
+
+@app.post("/subtitle-export/jobs")
+def create_subtitle_export_job(request: SubtitleExportRequest) -> JobRecord:
+    return start_job("subtitle-export", lambda job_id: _subtitle_export_job(job_id, request))
+
+
+@app.post("/subtitle-render/jobs")
+def create_subtitle_render_job(request: SubtitleRenderRequest) -> JobRecord:
+    return start_job("subtitle-render", lambda job_id: _subtitle_render_job(job_id, request))
+
+
 @app.post("/export/plan")
 def create_export_plan(request: ExportPlanRequest) -> dict[str, Any]:
     source = require_file(request.source_path)
@@ -475,6 +626,17 @@ _MESSAGE_CODES = {
     "Scratch proxy ready.": "proxyReady",
     "Scratch proxy generation cancelled.": "proxyCancelled",
     "Creating AAC scratch proxy.": "proxyCreating",
+    "Separating vocals with Demucs.": "lyricsSeparatingVocals",
+    "Transcribing isolated vocals.": "lyricsTranscribingVocals",
+    "Aligning lyrics with Uta-Align.": "lyricsAligning",
+    "Aligning lyrics.": "lyricsAligning",
+    "Detecting rhythm grid.": "lyricsDetectingRhythm",
+    "Lyrics analysis complete.": "lyricsComplete",
+    "Downloading OpenVINO Demucs.": "demucsDownloading",
+    "OpenVINO Demucs model ready.": "demucsReady",
+    "Downloading MMS forced aligner.": "mmsDownloading",
+    "MMS forced aligner ready.": "mmsReady",
+    "Refining lyric onset with MMS.": "lyricsRefiningOnset",
 }
 
 
@@ -546,11 +708,45 @@ def _check_executable_runs(label: str, executable: Path) -> None:
         raise RuntimeError(f"{label} could not be started: {executable} ({exc})") from exc
 
 
-def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
+def _download_whisper_job(job_id: str, model_key: str = DEFAULT_WHISPER_MODEL_KEY) -> None:
     try:
         spec = require_whisper_model(model_key)
-        update_job(job_id, status="running", progress=0.05, message=f"Downloading Whisper {spec.display_name}.")
-        model_dir = ensure_whisper_model(model_key=model_key)
+        update_job(job_id, status="running", progress=0.0, message=f"Downloading Whisper {spec.display_name}.")
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message=f"Downloading Whisper {spec.display_name}.",
+                    result={
+                        "model": model_key,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_dir = ensure_whisper_model(
+            model_key=model_key,
+            progress_callback=on_download_progress,
+        )
         resolved = resolve_whisper_model_dir(model_key)
         source = resolved[1] if resolved is not None else "downloaded"
         update_job(
@@ -560,6 +756,120 @@ def _download_whisper_job(job_id: str, model_key: str = "small") -> None:
             message=f"Whisper {spec.display_name} model ready.",
             result={
                 "model": model_key,
+                "model_dir": str(model_dir),
+                "source": source,
+                "installed_bytes": directory_size(model_dir),
+            },
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _download_demucs_job(job_id: str) -> None:
+    try:
+        update_job(
+            job_id,
+            status="running",
+            progress=0.0,
+            message="Downloading OpenVINO Demucs.",
+        )
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message="Downloading OpenVINO Demucs.",
+                    result={
+                        "model": DEMUCS_MODEL,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_dir = ensure_demucs_model(progress_callback=on_download_progress)
+        resolved = resolve_demucs_model_dir()
+        source = resolved[1] if resolved is not None else "downloaded"
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="OpenVINO Demucs model ready.",
+            result={
+                "model": DEMUCS_MODEL,
+                "model_dir": str(model_dir),
+                "source": source,
+                "installed_bytes": directory_size(model_dir),
+            },
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _download_mms_job(job_id: str) -> None:
+    try:
+        message = "Downloading MMS forced aligner."
+        update_job(job_id, status="running", progress=0.0, message=message)
+        progress_lock = threading.Lock()
+        last_reported_progress = 0.0
+        last_reported_at = 0.0
+
+        def on_download_progress(downloaded_bytes: int, total_bytes: int) -> None:
+            nonlocal last_reported_progress, last_reported_at
+            if total_bytes <= 0:
+                return
+            now = time.monotonic()
+            next_progress = min(1.0, downloaded_bytes / total_bytes)
+            with progress_lock:
+                if (
+                    next_progress < last_reported_progress + 0.002
+                    and now < last_reported_at + 0.25
+                    and downloaded_bytes < total_bytes
+                ):
+                    return
+                last_reported_progress = max(last_reported_progress, next_progress)
+                last_reported_at = now
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=last_reported_progress,
+                    message=message,
+                    result={
+                        "model": MMS_MODEL,
+                        "downloaded_bytes": downloaded_bytes,
+                        "total_bytes": total_bytes,
+                    },
+                )
+
+        model_path = ensure_mms_onnx_model(progress_callback=on_download_progress)
+        resolved = resolve_mms_onnx_model_dir()
+        model_dir, source = (
+            resolved if resolved is not None else (model_path.parent.parent, "downloaded")
+        )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="MMS forced aligner ready.",
+            result={
+                "model": MMS_MODEL,
                 "model_dir": str(model_dir),
                 "source": source,
                 "installed_bytes": directory_size(model_dir),
@@ -666,7 +976,7 @@ def _transcription_job(
     requested_device: str,
     language: str | None,
     initial_prompt: str | None,
-    model_key: str = "small",
+    model_key: str = DEFAULT_WHISPER_MODEL_KEY,
 ) -> None:
     try:
         update_job(job_id, status="running", progress=0.01, message="Preparing Whisper transcription.", result={"transcripts": []})
@@ -754,6 +1064,234 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
         if timestamp_comment_path:
             result["timestamp_comment_path"] = timestamp_comment_path
         update_job(job_id, status="completed", progress=1.0, message="Export complete.", result=result)
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
+    started = time.perf_counter()
+    try:
+        source = require_file(request.source_path)
+        document = parse_lyrics(request.lyrics_text)
+        update_job(job_id, status="running", progress=0.03, message="Separating vocals with OpenVINO Demucs.")
+        with tempfile.TemporaryDirectory(prefix="songcut-demucs-") as temporary_directory:
+            separated = separate_vocals(
+                source,
+                Path(temporary_directory),
+                device=request.demucs_device,
+                progress_callback=lambda progress: update_job(
+                    job_id,
+                    status="running",
+                    progress=0.03 + 0.37 * progress,
+                    message="Separating vocals with OpenVINO Demucs.",
+                ),
+            )
+            update_job(
+                job_id,
+                status="running",
+                progress=0.42,
+                message=(
+                    "Aligning lyrics with Uta-Align."
+                    if request.algorithm == "uta-align"
+                    else "Transcribing isolated vocals."
+                ),
+            )
+            uta_diagnostics: dict[str, Any] | None = None
+            mms_diagnostics: dict[str, Any] | None = None
+            if request.algorithm == "uta-align":
+                uta_output = align_lyrics_with_uta(
+                    source,
+                    separated.vocals,
+                    document,
+                    model_key=request.model,
+                    device=request.device,
+                    language=request.language or "auto",
+                    progress_callback=lambda request_count: update_job(
+                        job_id,
+                        status="running",
+                        progress=min(0.69, 0.42 + 0.02 * request_count),
+                        message="Aligning lyrics with Uta-Align.",
+                    ),
+                )
+                whisper_text = uta_output.whisper_text
+                duration = uta_output.duration
+                device_used = uta_output.device_used
+                alignment = uta_output
+                uta_diagnostics = uta_output.diagnostics
+            else:
+                chunks, whisper_text, duration, device_used = transcribe_whisper_chunks(
+                    separated.vocals,
+                    model_key=request.model,
+                    device=request.device,
+                    language=request.language or "auto",
+                )
+                update_job(job_id, status="running", progress=0.70, message="Aligning lyrics.")
+                alignment = align_lyrics_to_chunks(document, chunks, media_duration=duration)
+                update_job(
+                    job_id,
+                    status="running",
+                    progress=0.72,
+                    message="Refining lyric onset with MMS.",
+                )
+                alignment, mms_output = refine_standard_alignment_with_mms(
+                    separated.vocals,
+                    document,
+                    alignment,
+                    language=request.language or "auto",
+                    device=request.mms_device,
+                    progress_callback=lambda progress: update_job(
+                        job_id,
+                        status="running",
+                        progress=0.72 + 0.06 * progress,
+                        message="Refining lyric onset with MMS.",
+                    ),
+                )
+                mms_diagnostics = asdict(mms_output)
+        beat_warning: str | None = None
+        tempo_bpm = 0.0
+        beat_times: list[float] = []
+        rhythm_grid = []
+        adjusted_lines = alignment.lines
+        try:
+            update_job(job_id, status="running", progress=0.80, message="Detecting rhythm grid.")
+            tempo_bpm, beat_times, _ = detect_beat_times(source)
+            if len(beat_times) < 2:
+                raise RuntimeError("No stable beat sequence was detected.")
+            adjusted_lines = adjust_lines_to_rhythm(
+                alignment.lines,
+                beat_times,
+                tempo_bpm=tempo_bpm,
+            ).lines
+            rhythm_grid = build_extended_rhythm_grid(beat_times, media_duration=duration)
+        except Exception as exc:
+            beat_warning = str(exc)
+        stats = confidence_statistics(adjusted_lines)
+        low_indexes = set(stats.low_outlier_indexes)
+        result = {
+            "title": alignment.title,
+            "duration": duration,
+            "device_used": device_used,
+            "algorithm": request.algorithm,
+            "lyrics_audio_source": "demucs-vocals",
+            "demucs_model": separated.model,
+            "demucs_device_used": getattr(separated, "device_used", "CPU"),
+            "whisper_text": whisper_text,
+            "tempo_bpm": round(float(tempo_bpm), 3),
+            "beat_times": beat_times,
+            "rhythm_grid": [asdict(point) for point in rhythm_grid],
+            "beat_warning": beat_warning,
+            "confidence_statistics": asdict(stats),
+            "lines": [
+                {**asdict(line), "low_confidence_outlier": line.index in low_indexes}
+                for line in adjusted_lines
+            ],
+            "elapsed_seconds": round(time.perf_counter() - started, 3),
+        }
+        if uta_diagnostics is not None:
+            result["uta_align_diagnostics"] = uta_diagnostics
+        if mms_diagnostics is not None:
+            result["mms_diagnostics"] = mms_diagnostics
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Lyrics analysis complete.",
+            result=result,
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _subtitle_export_job(job_id: str, request: SubtitleExportRequest) -> None:
+    try:
+        source = require_file(request.source_path)
+        lanes = [
+            SubtitleLane(
+                id=lane.id,
+                name=lane.name,
+                style=subtitle_style_from_mapping(lane.style.model_dump()),
+                effect=SubtitleEffect(
+                    name=lane.effect.name,
+                    start_duration_ms=lane.effect.start_duration_ms,
+                    end_duration_ms=lane.effect.end_duration_ms,
+                    params=lane.effect.params,
+                ),
+                segments=[
+                    SubtitleSegment(
+                        id=segment.id,
+                        text=segment.text,
+                        start=segment.start,
+                        end=segment.end,
+                    )
+                    for segment in lane.segments
+                ],
+            )
+            for lane in request.lanes
+        ]
+
+        def on_progress(progress: float, message: str) -> None:
+            update_job(
+                job_id,
+                status="running",
+                progress=max(0.01, min(0.99, progress)),
+                message=message,
+            )
+
+        result = export_subtitle_bundle(
+            source,
+            Path(request.output_dir),
+            lanes,
+            play_res_x=request.play_res_x,
+            play_res_y=request.play_res_y,
+            on_progress=on_progress,
+        )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Subtitle export complete.",
+            result=result,
+        )
+    except Exception as exc:
+        fail_job(job_id, exc)
+
+
+def _subtitle_render_job(job_id: str, request: SubtitleRenderRequest) -> None:
+    try:
+        rendered: list[dict[str, object]] = []
+        total = len(request.items)
+        ffmpeg_paths = find_ffmpeg()
+        for index, item in enumerate(request.items):
+            update_job(
+                job_id,
+                status="running",
+                progress=max(0.01, index / total),
+                message=f"Rendering subtitle image {index + 1}/{total}.",
+            )
+            png_base64 = render_subtitle_png_base64(
+                item.text,
+                subtitle_style_from_mapping(item.style.model_dump()),
+                play_res_x=request.play_res_x,
+                play_res_y=request.play_res_y,
+                ffmpeg_paths=ffmpeg_paths,
+                verify_ass_filter=index == 0,
+            )
+            rendered.append(
+                {
+                    "segment_id": item.segment_id,
+                    "signature": item.signature,
+                    "png_base64": png_base64,
+                    "width": request.play_res_x,
+                    "height": request.play_res_y,
+                }
+            )
+        update_job(
+            job_id,
+            status="completed",
+            progress=1.0,
+            message="Subtitle images rendered.",
+            result={"items": rendered},
+        )
     except Exception as exc:
         fail_job(job_id, exc)
 

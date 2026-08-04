@@ -9,26 +9,37 @@ from songcut.api import (
     FFMPEG_DOWNLOAD_URL,
     AnalyzeRequest,
     BoundaryRefinementRequest,
+    DemucsDownloadRequest,
     ExportItem,
     ExportPlanRequest,
     ExportRequest,
     JobRecord,
+    LyricsAnalysisRequest,
+    MmsDownloadRequest,
     ProbeRequest,
     ScratchProxyRequest,
+    SubtitleRenderRequest,
     TranscriptionRequest,
     TranscriptionSegmentRequest,
     WhisperDownloadRequest,
     _analysis_job,
+    _download_demucs_job,
+    _download_mms_job,
+    _download_whisper_job,
     _export_job,
+    _lyrics_analysis_job,
     _job_cancel_events,
     _jobs,
     _jobs_lock,
     _waveform_finished_at,
     _waveform_points,
     _scratch_proxy_job,
+    _subtitle_render_job,
     cancel_scratch_proxy_job,
     create_transcription_job,
     create_export_plan,
+    download_demucs_model,
+    download_mms_model,
     download_whisper_model,
     ffmpeg_check,
     health,
@@ -39,6 +50,8 @@ from songcut.api import (
 from pydantic import ValidationError
 from fastapi import HTTPException
 from songcut.gui_pipeline import build_gui_segments_and_exports
+from songcut.lyrics_alignment import AlignedLyricsLine
+from songcut.mms_alignment import MmsRefinementDiagnostics
 
 
 class ApiJobTests(unittest.TestCase):
@@ -52,6 +65,55 @@ class ApiJobTests(unittest.TestCase):
     def test_boundary_refinement_request_rejects_invalid_hysteresis(self) -> None:
         with self.assertRaises(ValidationError):
             BoundaryRefinementRequest(low_occupancy=0.5, high_occupancy=0.5)
+
+    def test_subtitle_render_job_returns_cache_identity_with_png(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["subtitle-render-001"] = JobRecord(
+                id="subtitle-render-001",
+                kind="subtitle-render",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        request = SubtitleRenderRequest.model_validate(
+            {
+                "play_res_x": 1920,
+                "play_res_y": 1080,
+                "items": [
+                    {
+                        "segment_id": "lyrics-001",
+                        "signature": "static-signature",
+                        "text": "歌詞",
+                        "style": {},
+                    }
+                ],
+            }
+        )
+
+        with (
+            mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg")),
+            mock.patch(
+                "songcut.api.render_subtitle_png_base64",
+                return_value="iVBORw0KGgo=",
+            ) as render,
+        ):
+            _subtitle_render_job("subtitle-render-001", request)
+
+        with _jobs_lock:
+            completed = _jobs["subtitle-render-001"]
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(
+            completed.result["items"][0],
+            {
+                "segment_id": "lyrics-001",
+                "signature": "static-signature",
+                "png_base64": "iVBORw0KGgo=",
+                "width": 1920,
+                "height": 1080,
+            },
+        )
+        render.assert_called_once()
 
     def test_analysis_starts_transcription_job_without_waiting_for_it(self) -> None:
         now = time.time()
@@ -88,6 +150,161 @@ class ApiJobTests(unittest.TestCase):
         start_job.assert_called_once()
         transcribe_segments.assert_not_called()
 
+    def test_lyrics_analysis_returns_rhythm_grid_and_confidence_outliers(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["lyrics-001"] = JobRecord(
+                id="lyrics-001",
+                kind="lyrics-analysis",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        confidences = [0.1, 1.0, 1.0, 1.0, 1.0]
+        lines = [
+            AlignedLyricsLine(
+                index=index,
+                text=f"line {index}",
+                start=float(index),
+                end=float(index) + 0.5,
+                confidence=confidence,
+                source="whisper-chunk",
+                matched_characters=1,
+                exact_characters=1,
+                total_characters=1,
+            )
+            for index, confidence in enumerate(confidences, start=1)
+        ]
+        alignment = SimpleNamespace(title="title", lines=lines)
+        separated = SimpleNamespace(
+            vocals=Path("temporary/vocals.wav"),
+            no_vocals=Path("temporary/no_vocals.wav"),
+            model="htdemucs",
+        )
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.separate_vocals", return_value=separated) as separate,
+            mock.patch(
+                "songcut.api.transcribe_whisper_chunks",
+                return_value=([], "recognized", 10.0, "CPU"),
+            ) as transcribe,
+            mock.patch("songcut.api.align_lyrics_to_chunks", return_value=alignment),
+            mock.patch(
+                "songcut.api.refine_standard_alignment_with_mms",
+                return_value=(
+                    alignment,
+                    MmsRefinementDiagnostics(
+                        applied_line_indexes=[1],
+                        candidate_line_count=5,
+                        first_reliable_whisper_line=1,
+                        path_score=-0.5,
+                        star_ratio=0.4,
+                        variant="q4",
+                    ),
+                ),
+            ) as refine_mms,
+            mock.patch(
+                "songcut.api.detect_beat_times",
+                return_value=(120.0, [0.0, 0.5, 1.0], 10.0),
+            ) as detect_beats,
+        ):
+            _lyrics_analysis_job(
+                "lyrics-001",
+                LyricsAnalysisRequest(
+                    source_path="source.mp4",
+                    lyrics_text="title\n\nline",
+                    demucs_device="npu",
+                    mms_device="gpu",
+                ),
+            )
+
+        completed = _jobs["lyrics-001"]
+        self.assertEqual(completed.status, "completed")
+        self.assertTrue(completed.result["rhythm_grid"])
+        self.assertEqual(completed.result["algorithm"], "songcut-standard")
+        self.assertEqual(completed.result["lyrics_audio_source"], "demucs-vocals")
+        separate.assert_called_once()
+        self.assertEqual(separate.call_args.kwargs["device"], "npu")
+        transcribe.assert_called_once()
+        self.assertEqual(transcribe.call_args.args[0], separated.vocals)
+        refine_mms.assert_called_once()
+        self.assertEqual(refine_mms.call_args.args[0], separated.vocals)
+        self.assertEqual(refine_mms.call_args.kwargs["device"], "gpu")
+        self.assertEqual(completed.result["mms_diagnostics"]["applied_line_indexes"], [1])
+        detect_beats.assert_called_once_with(Path("source.mp4"))
+        self.assertEqual(completed.result["confidence_statistics"]["low_outlier_indexes"], [1])
+        self.assertTrue(completed.result["lines"][0]["low_confidence_outlier"])
+
+    def test_uta_align_receives_original_media_and_demucs_vocals(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["lyrics-uta-001"] = JobRecord(
+                id="lyrics-uta-001",
+                kind="lyrics-analysis",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        lines = [
+            AlignedLyricsLine(
+                index=1,
+                text="line",
+                start=1.0,
+                end=2.0,
+                confidence=0.9,
+                source="uta-align",
+                matched_characters=4,
+                exact_characters=4,
+                total_characters=4,
+            )
+        ]
+        separated = SimpleNamespace(
+            vocals=Path("temporary/vocals.wav"),
+            no_vocals=Path("temporary/no_vocals.wav"),
+            model="htdemucs",
+        )
+        uta_output = SimpleNamespace(
+            title="title",
+            lines=lines,
+            whisper_text="recognized",
+            duration=10.0,
+            device_used="CPU",
+            diagnostics={"used_vocal_stem_for_stt": True},
+        )
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.separate_vocals", return_value=separated),
+            mock.patch("songcut.api.align_lyrics_with_uta", return_value=uta_output) as uta_align,
+            mock.patch("songcut.api.transcribe_whisper_chunks") as transcribe,
+            mock.patch("songcut.api.align_lyrics_to_chunks") as standard_align,
+            mock.patch(
+                "songcut.api.detect_beat_times",
+                return_value=(120.0, [0.0, 0.5, 1.0], 10.0),
+            ),
+        ):
+            _lyrics_analysis_job(
+                "lyrics-uta-001",
+                LyricsAnalysisRequest(
+                    source_path="source.mp4",
+                    lyrics_text="title\n\nline",
+                    algorithm="uta-align",
+                ),
+            )
+
+        completed = _jobs["lyrics-uta-001"]
+        self.assertEqual(completed.status, "completed")
+        self.assertEqual(completed.result["algorithm"], "uta-align")
+        self.assertTrue(
+            completed.result["uta_align_diagnostics"]["used_vocal_stem_for_stt"]
+        )
+        uta_align.assert_called_once()
+        self.assertEqual(uta_align.call_args.args[0], Path("source.mp4"))
+        self.assertEqual(uta_align.call_args.args[1], separated.vocals)
+        transcribe.assert_not_called()
+        standard_align.assert_not_called()
+
     def test_job_messages_keep_english_and_add_localization_metadata(self) -> None:
         now = time.time()
         with _jobs_lock:
@@ -106,6 +323,13 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(updated.message, "Transcribed 2/5 segments.")
         self.assertEqual(updated.message_code, "transcriptionProgress")
         self.assertEqual(updated.message_args, {"current": 2, "total": 5})
+
+        update_job("job-001", message="Separating vocals with Demucs.")
+
+        with _jobs_lock:
+            updated = _jobs["job-001"]
+        self.assertEqual(updated.message_code, "lyricsSeparatingVocals")
+        self.assertIsNone(updated.message_args)
 
     def test_waveform_updates_return_only_points_after_the_cursor(self) -> None:
         now = time.time()
@@ -169,12 +393,162 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 400)
         start_job.assert_not_called()
 
-    def test_empty_whisper_download_body_keeps_small_compatibility(self) -> None:
+    def test_empty_whisper_download_body_uses_application_default(self) -> None:
+        self.assertEqual(
+            WhisperDownloadRequest().model,
+            "whisper-large-v3-turbo-int8-ov",
+        )
         sentinel = SimpleNamespace(id="download-001")
         with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
             result = download_whisper_model(None)
         self.assertIs(result, sentinel)
         self.assertEqual(start_job.call_args.args[0], "download-whisper")
+
+    def test_whisper_download_job_reports_byte_progress(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["download-001"] = JobRecord(
+                id="download-001",
+                kind="download-whisper",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        updates: list[dict[str, object]] = []
+        original_update_job = update_job
+
+        def capture_update(job_id: str, **changes: object) -> bool:
+            updates.append(dict(changes))
+            return original_update_job(job_id, **changes)
+
+        def fake_ensure_whisper_model(**kwargs: object) -> Path:
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(50, 100)
+            progress_callback(100, 100)
+            return Path("model")
+
+        with (
+            mock.patch("songcut.api.update_job", side_effect=capture_update),
+            mock.patch("songcut.api.ensure_whisper_model", side_effect=fake_ensure_whisper_model),
+            mock.patch("songcut.api.resolve_whisper_model_dir", return_value=(Path("model"), "downloaded")),
+            mock.patch("songcut.api.directory_size", return_value=100),
+        ):
+            _download_whisper_job("download-001", "small")
+
+        progress_updates = [
+            update
+            for update in updates
+            if isinstance(update.get("result"), dict)
+            and "downloaded_bytes" in update["result"]
+        ]
+        self.assertTrue(progress_updates)
+        self.assertEqual(progress_updates[0]["progress"], 0.5)
+        self.assertEqual(progress_updates[-1]["result"]["downloaded_bytes"], 100)
+        self.assertEqual(progress_updates[-1]["result"]["total_bytes"], 100)
+        self.assertEqual(progress_updates[-1]["progress"], 1.0)
+        self.assertEqual(_jobs["download-001"].status, "completed")
+
+    def test_demucs_download_endpoint_starts_dedicated_job(self) -> None:
+        sentinel = SimpleNamespace(id="demucs-download-001")
+        with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
+            result = download_demucs_model(DemucsDownloadRequest())
+        self.assertIs(result, sentinel)
+        self.assertEqual(start_job.call_args.args[0], "download-demucs")
+
+    def test_demucs_download_job_reports_byte_progress(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["demucs-download-001"] = JobRecord(
+                id="demucs-download-001",
+                kind="download-demucs",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        updates: list[dict[str, object]] = []
+        original_update_job = update_job
+
+        def capture_update(job_id: str, **changes: object) -> bool:
+            updates.append(dict(changes))
+            return original_update_job(job_id, **changes)
+
+        def fake_ensure_demucs_model(**kwargs: object) -> Path:
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(25, 100)
+            progress_callback(100, 100)
+            return Path("demucs-model")
+
+        with (
+            mock.patch("songcut.api.update_job", side_effect=capture_update),
+            mock.patch("songcut.api.ensure_demucs_model", side_effect=fake_ensure_demucs_model),
+            mock.patch(
+                "songcut.api.resolve_demucs_model_dir",
+                return_value=(Path("demucs-model"), "downloaded"),
+            ),
+            mock.patch("songcut.api.directory_size", return_value=100),
+        ):
+            _download_demucs_job("demucs-download-001")
+
+        progress_updates = [
+            update
+            for update in updates
+            if isinstance(update.get("result"), dict)
+            and "downloaded_bytes" in update["result"]
+        ]
+        self.assertEqual(progress_updates[0]["progress"], 0.25)
+        self.assertEqual(progress_updates[-1]["progress"], 1.0)
+        self.assertEqual(_jobs["demucs-download-001"].status, "completed")
+
+    def test_mms_download_endpoint_starts_dedicated_job(self) -> None:
+        sentinel = SimpleNamespace(id="mms-download-001")
+        with mock.patch("songcut.api.start_job", return_value=sentinel) as start_job:
+            result = download_mms_model(MmsDownloadRequest())
+        self.assertIs(result, sentinel)
+        self.assertEqual(start_job.call_args.args[0], "download-mms")
+
+    def test_mms_download_job_reports_byte_progress(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["mms-download-001"] = JobRecord(
+                id="mms-download-001",
+                kind="download-mms",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        updates: list[dict[str, object]] = []
+        original_update_job = update_job
+
+        def capture_update(job_id: str, **changes: object) -> bool:
+            updates.append(dict(changes))
+            return original_update_job(job_id, **changes)
+
+        def fake_ensure_mms_model(**kwargs: object) -> Path:
+            progress_callback = kwargs["progress_callback"]
+            progress_callback(40, 100)
+            progress_callback(100, 100)
+            return Path("mms-model") / "onnx" / "model_q4.onnx"
+
+        with (
+            mock.patch("songcut.api.update_job", side_effect=capture_update),
+            mock.patch("songcut.api.ensure_mms_onnx_model", side_effect=fake_ensure_mms_model),
+            mock.patch(
+                "songcut.api.resolve_mms_onnx_model_dir",
+                return_value=(Path("mms-model"), "downloaded"),
+            ),
+            mock.patch("songcut.api.directory_size", return_value=100),
+        ):
+            _download_mms_job("mms-download-001")
+
+        progress_updates = [
+            update
+            for update in updates
+            if isinstance(update.get("result"), dict)
+            and "downloaded_bytes" in update["result"]
+        ]
+        self.assertEqual(progress_updates[0]["progress"], 0.4)
+        self.assertEqual(progress_updates[-1]["progress"], 1.0)
+        self.assertEqual(_jobs["mms-download-001"].status, "completed")
 
     def test_transcription_job_requires_installed_selected_model(self) -> None:
         request = TranscriptionRequest(

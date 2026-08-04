@@ -3,6 +3,7 @@ import type * as React from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  CircleAlert,
   CheckCircle2,
   ChevronsLeft,
   ChevronsRight,
@@ -31,20 +32,28 @@ import {
   ApiError,
   cancelScratchProxy,
   checkFfmpeg,
+  getDemucsStatus,
   getExportPlan,
+  getMmsStatus,
   getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
   startAnalysis,
+  startDemucsDownload,
   startExport,
   startScratchProxy,
+  startMmsDownload,
   startTranscription,
   startWhisperDownload,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, WhisperSettings, WhisperStatus } from "@/lib/api";
-import { SettingsDialog } from "@/components/SettingsDialog";
+import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
+import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
+import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
+import { formatTimeInput } from "@/lib/segmentTiming";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
+import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DEFAULT_WHISPER_SETTINGS,
   analysisFromProject,
@@ -56,6 +65,8 @@ import {
   parseProjectOpenResult,
   parseRecoverySnapshot,
   parseSourceIdentity,
+  projectMode,
+  subtitleStateFromProject,
   transcriptSettingsAreStale,
   waveformFromProject
 } from "@/lib/project";
@@ -69,7 +80,9 @@ import type {
 import { useProjectPersistence } from "@/lib/useProjectPersistence";
 import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
-import { useTaskRegistry } from "@/lib/useTaskRegistry";
+import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
+import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
+import { useTimelineViewport } from "@/lib/useTimelineViewport";
 import {
   normalizeScratchAudioProxyEnabled,
   selectScratchPreviewSource,
@@ -111,6 +124,15 @@ import {
   selectWaveformLevel
 } from "@/lib/waveform";
 import type { ScratchProxyState } from "@/lib/scratchProxy";
+import {
+  addFourBeatSegment,
+  createDefaultSubtitleState,
+  nudgeSegmentBoundary,
+  subtitleRenderSignature,
+  type AppMode,
+  type LyricsSegment,
+  type SubtitleProjectState,
+} from "@/lib/subtitles";
 import type {
   AnalysisResult,
   ExportCandidate,
@@ -201,6 +223,8 @@ export default function App(props: {
   initialLocaleSettings: { language: UiLanguage; preference: UiLanguagePreference };
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [mode, setMode] = useState<AppMode>("cut");
+  const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
   const [localePreference, setLocalePreference] = useState<UiLanguagePreference>(props.initialLocaleSettings.preference);
   const [localeRestartRequired, setLocaleRestartRequired] = useState(false);
   const scratchProxyAudioRef = useRef<HTMLAudioElement>(null);
@@ -222,6 +246,9 @@ export default function App(props: {
   const videoPathRef = useRef("");
   const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
+  const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
+  const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
+  const mmsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
@@ -233,6 +260,7 @@ export default function App(props: {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [exportCandidates, setExportCandidates] = useState<ExportCandidate[]>([]);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [cutTimingSegmentId, setCutTimingSegmentId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [boundarySecondsInput, setBoundarySecondsInput] = useState(readBoundarySecondsInput);
@@ -242,12 +270,14 @@ export default function App(props: {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("common");
   const [boundaryDiagnosticOpen, setBoundaryDiagnosticOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
   const [waveformDisplayMode, setWaveformDisplayMode] = useState<WaveformDisplayMode>(readWaveformDisplayMode);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
+  const [subtitleFocusRequest, setSubtitleFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
   const [handleEditing, setHandleEditing] = useState(false);
   const [split, setSplit] = useState(readVideoSplitPercent);
@@ -271,6 +301,11 @@ export default function App(props: {
   const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
   const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
   const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
+  const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
+  const [demucsStatus, setDemucsStatus] = useState<DemucsStatus | null>(null);
+  const [demucsDownloadOpen, setDemucsDownloadOpen] = useState(false);
+  const [mmsStatus, setMmsStatus] = useState<MmsStatus | null>(null);
+  const [mmsDownloadOpen, setMmsDownloadOpen] = useState(false);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -304,6 +339,10 @@ export default function App(props: {
   const selectedSegment = useMemo(
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
     [segments, selectedSegmentId]
+  );
+  const cutTimingSegment = useMemo(
+    () => segments.find((segment) => segment.id === cutTimingSegmentId) ?? null,
+    [cutTimingSegmentId, segments],
   );
   const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
   const selectedBoundaryDiagnostic = useMemo(() => {
@@ -363,7 +402,8 @@ export default function App(props: {
   }
   const exportJob = taskRegistry.tasks.export ?? null;
   const transcriptionJob = taskRegistry.tasks.transcription ?? null;
-  const activeJob = taskRegistry.activeTask;
+  const lyricsAnalysisJob = taskRegistry.tasks["lyrics-analysis"] ?? null;
+  const subtitleExportJob = taskRegistry.tasks["subtitle-export"] ?? null;
   const runningJob = taskRegistry.blockingTask;
   const projectDocument = useMemo(
     () =>
@@ -384,6 +424,9 @@ export default function App(props: {
             currentTime,
             zoomIndex,
             operation: projectOperation
+            ,
+            mode,
+            subtitle: mode === "sub" ? subtitleState : undefined
           })
         : null,
     [
@@ -403,16 +446,41 @@ export default function App(props: {
       currentTime,
       zoomIndex,
       projectOperation
+      ,
+      mode,
+      subtitleState
     ]
   );
-  const persistence = useProjectPersistence(projectReadOnly ? "" : projectPath, projectReadOnly ? null : projectDocument);
+  const persistence = useProjectPersistence(
+    projectReadOnly ? "" : projectPath,
+    projectReadOnly ? null : projectDocument,
+    handleEditing
+  );
   const transcriptStale = useMemo(
     () => segments.some((segment) => transcriptSettingsAreStale(segment, whisperSettings)),
     [segments, whisperSettings]
   );
   const selectedWhisperModel = whisperStatus?.models.find((model) => model.key === whisperSettings.model) ?? null;
   const whisperBusy = taskRegistry.runningTasks.some((task) =>
-    ["analysis", "transcription", "export", "download-whisper"].includes(task.kind)
+    ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper", "download-demucs", "download-mms"].includes(task.kind)
+  );
+  const taskStatus = (
+    <TaskStatusPanel
+      runningTasks={taskRegistry.runningTaskEntries}
+      failedTasks={taskRegistry.failedTaskEntries}
+      latestTerminalTask={taskRegistry.latestTerminalTask}
+      message={message}
+      videoInfo={videoInfo}
+      scratchProxyState={scratchProxyState}
+      waveformPhase={progressiveWaveform.phase}
+      waveformProgress={progressiveWaveform.progress}
+      onDismiss={(slot) => taskRegistry.updateTask(slot, null)}
+      onWaveformRetry={
+        sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
+          ? () => void progressiveWaveform.start(videoPath)
+          : null
+      }
+    />
   );
 
   projectDocumentRef.current = projectDocument;
@@ -510,6 +578,8 @@ export default function App(props: {
   useEffect(() => {
     if (!apiBaseUrl) return;
     void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
+    void refreshDemucsStatus().catch((error) => setMessage(`Demucs status unavailable: ${String(error)}`));
+    void refreshMmsStatus().catch((error) => setMessage(`MMS status unavailable: ${String(error)}`));
   }, [apiBaseUrl]);
 
   useEffect(() => {
@@ -677,6 +747,20 @@ export default function App(props: {
     return status;
   }
 
+  async function refreshDemucsStatus() {
+    if (!apiBaseUrl) return null;
+    const status = await getDemucsStatus(apiBaseUrl);
+    setDemucsStatus(status);
+    return status;
+  }
+
+  async function refreshMmsStatus() {
+    if (!apiBaseUrl) return null;
+    const status = await getMmsStatus(apiBaseUrl);
+    setMmsStatus(status);
+    return status;
+  }
+
   async function checkRecoveryOnStartup() {
     try {
       const raw = await window.songcut.loadRecovery();
@@ -720,8 +804,8 @@ export default function App(props: {
       }
     }
 
-    scratchProxyConfigurationGenerationRef.current += 1;
-    void disposeScratchProxy(apiBaseUrl);
+    // Cut/Sub projects share the same loaded media and therefore the same scratch
+    // audio proxy. Keep that global media task alive while only the sidecar changes.
     projectBaseRef.current = document;
     videoPathRef.current = sourcePath ?? "";
     projectReadOnlyRef.current = false;
@@ -735,6 +819,8 @@ export default function App(props: {
     setVideoUrl(fileUrl);
     setVideoInfo(info ?? offlineVideoInfo(document));
     setGuideText(document.guide_text);
+    setMode(projectMode(document));
+    setSubtitleState(subtitleStateFromProject(document));
     setAnalysis(analysisFromProject(document));
     const cachedWaveform = waveformFromProject(document);
     progressiveWaveform.showCached(sourcePath ?? document.source.absolute_path, cachedWaveform);
@@ -745,9 +831,21 @@ export default function App(props: {
     setCurrentTime(document.view_state.current_time);
     setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
     setAnalysisDevice(document.settings.analysis_device);
-    setWhisperSettings({ ...document.settings.whisper });
+    setWhisperSettings({
+      ...DEFAULT_WHISPER_SETTINGS,
+      ...document.settings.whisper,
+      lyricsAlignmentAlgorithm:
+        document.settings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
+    });
     setFilenameTemplate(filenameTemplateFromProject(document));
-    taskRegistry.clearTasks(["analysis", "transcription", "export"]);
+    taskRegistry.clearTasks([
+      "analysis",
+      "lyrics-analysis",
+      "transcription",
+      "export",
+      "subtitle-export",
+      "subtitle-render",
+    ]);
     setTranscriptSegment(null);
     setSegmentManagementReview(null);
     setTimestampCommentFlow(closeTimestampCommentFlow());
@@ -785,7 +883,14 @@ export default function App(props: {
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
     progressiveWaveform.cancel();
-    taskRegistry.clearTasks(["analysis", "transcription", "export"]);
+    taskRegistry.clearTasks([
+      "analysis",
+      "lyrics-analysis",
+      "transcription",
+      "export",
+      "subtitle-export",
+      "subtitle-render",
+    ]);
     setTimestampCommentFlow(closeTimestampCommentFlow());
     setMessage("Loading video.");
     const [info, fileUrl, identity, nextProjectPath] = await Promise.all([
@@ -816,7 +921,7 @@ export default function App(props: {
     const document = createProjectDocument(nextProjectPath, identity, info);
     let initialSidecarError: unknown = null;
     try {
-      await window.songcut.saveProject(nextProjectPath, document);
+      await persistence.saveProjectNow(nextProjectPath, document);
     } catch (error) {
       initialSidecarError = error;
     }
@@ -835,6 +940,8 @@ export default function App(props: {
     setVideoUrl(fileUrl);
     setVideoInfo(info);
     setGuideText("");
+    setMode("cut");
+    setSubtitleState(createDefaultSubtitleState());
     setAnalysis(null);
     progressiveWaveform.showCached(filePath, []);
     void progressiveWaveform.start(filePath);
@@ -899,6 +1006,40 @@ export default function App(props: {
     }
   }
 
+  async function switchMode(nextMode: AppMode) {
+    if (nextMode === mode) return;
+    if (runningJob) {
+      setMessage("処理の完了後にモードを切り替えられます。");
+      return;
+    }
+    if (!videoPath || !videoInfo) {
+      setMessage("動画を読み込んでからモードを切り替えてください。");
+      return;
+    }
+    setMessage(`${nextMode === "sub" ? "Sub" : "Cut"}モードへ切り替えています。`);
+    try {
+      const flushed = await persistence.flush();
+      if (projectDocumentRef.current && !flushed.sidecarSaved) {
+        setMessage("現在のprojectを保存できなかったため、モードを切り替えませんでした。");
+        return;
+      }
+      const nextProjectPath = await window.songcut.projectPathForVideo(videoPath, nextMode);
+      try {
+        const opened = parseProjectOpenResult(await window.songcut.loadProject(nextProjectPath));
+        await hydrateProject(nextProjectPath, opened.document, videoPath);
+        return;
+      } catch (error) {
+        if (!isProjectNotFoundError(error)) throw error;
+      }
+      const identity = parseSourceIdentity(await window.songcut.fingerprintSource(videoPath));
+      const document = createProjectDocument(nextProjectPath, identity, videoInfo, nextMode);
+      await persistence.saveProjectNow(nextProjectPath, document);
+      await hydrateProject(nextProjectPath, document, videoPath);
+    } catch (error) {
+      setMessage(`モード切替に失敗しました: ${String(error)}`);
+    }
+  }
+
   async function recoverProject() {
     if (!recoveryCandidate) return;
     const target = recoveryCandidate.project_path || (await window.songcut.projectPathForVideo(recoveryCandidate.document.source.absolute_path));
@@ -909,7 +1050,7 @@ export default function App(props: {
       operation: normalizeInterruptedOperation(recoveryCandidate.document.operation)
     };
     await hydrateProject(target, document);
-    await window.songcut.saveProject(target, document);
+    await persistence.saveProjectNow(target, document);
     setRecoveryOpen(false);
     setRecoveryCandidate(null);
     setMessage("Recovered edits were saved to the project sidecar.");
@@ -980,7 +1121,7 @@ export default function App(props: {
         fingerprint: conflict.identity.fingerprint
       }
     };
-    await window.songcut.saveProject(conflict.destinationPath, updated);
+    await persistence.saveProjectNow(conflict.destinationPath, updated);
     if (projectPath && !sameWindowsPath(conflict.destinationPath, projectPath)) {
       await window.songcut.archiveRelinkedProject(projectPath);
     }
@@ -1007,8 +1148,11 @@ export default function App(props: {
     }
 
     setScratchProxyState("preparing");
+    let trackedJob = createPendingTask("scratch-proxy", tr("messages.proxyPreparing"));
+    taskRegistry.updateTask("scratch-proxy", trackedJob);
     try {
       const started = await startScratchProxy(apiBaseUrl, videoPath);
+      trackedJob = started;
       taskRegistry.updateTask("scratch-proxy", started);
       if (scratchProxyConfigurationGenerationRef.current !== generation) {
         await cancelScratchProxy(apiBaseUrl, started.id).catch(() => undefined);
@@ -1018,7 +1162,11 @@ export default function App(props: {
       const result = await waitForJob<ScratchProxyResult>(
         apiBaseUrl,
         started.id,
-        (nextJob) => taskRegistry.updateTask("scratch-proxy", nextJob),
+        (nextJob) => {
+          if (scratchProxyConfigurationGenerationRef.current !== generation) return;
+          trackedJob = nextJob;
+          taskRegistry.updateTask("scratch-proxy", nextJob);
+        },
         250
       );
       if (scratchProxyJobIdRef.current === started.id) scratchProxyJobIdRef.current = null;
@@ -1041,14 +1189,18 @@ export default function App(props: {
       setScratchProxyState("ready");
     } catch (error) {
       if (scratchProxyConfigurationGenerationRef.current !== generation) return;
-      await disposeScratchProxy(apiBaseUrl);
+      taskRegistry.updateTask(
+        "scratch-proxy",
+        failTask(trackedJob, error, "Scratch proxy failed; using original audio.")
+      );
+      await disposeScratchProxy(apiBaseUrl, false);
       if (scratchProxyConfigurationGenerationRef.current !== generation) return;
       setScratchProxyState("failed");
       setMessage(`Scratch proxy failed; using original audio: ${String(error)}`);
     }
   }
 
-  async function disposeScratchProxy(baseUrl: string) {
+  async function disposeScratchProxy(baseUrl: string, clearTask = true) {
     const proxyAudio = scratchProxyAudioRef.current;
     if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
     scratchProxyReadyRef.current = false;
@@ -1062,7 +1214,7 @@ export default function App(props: {
     const proxyId = scratchProxyIdRef.current;
     scratchProxyJobIdRef.current = null;
     scratchProxyIdRef.current = null;
-    taskRegistry.updateTask("scratch-proxy", null);
+    if (clearTask) taskRegistry.updateTask("scratch-proxy", null);
     if (!baseUrl) return;
     if (jobId) await cancelScratchProxy(baseUrl, jobId).catch(() => undefined);
     if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
@@ -1074,13 +1226,215 @@ export default function App(props: {
     await loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  async function ensureWhisper() {
+  async function ensureWhisper(options: { showReadyState?: boolean } = {}) {
     if (!apiBaseUrl) return;
-    const started = await startWhisperDownload(apiBaseUrl, whisperSettings.model);
-    taskRegistry.updateTask("download-whisper", started);
-    await waitForJob(apiBaseUrl, started.id, (nextJob) => taskRegistry.updateTask("download-whisper", nextJob));
-    await refreshWhisperStatus();
-    setMessage(`Whisper ${whisperSettings.model} model is ready.`);
+    if (whisperDownloadPromiseRef.current) return whisperDownloadPromiseRef.current;
+
+    const modelKey = whisperSettings.model;
+    let trackedJob = createPendingTask("download-whisper", tr("dialogs.whisperDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-whisper", job);
+    };
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshWhisperStatus();
+        const currentModel = currentStatus?.models.find((model) => model.key === modelKey) ?? null;
+        if (currentModel?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentModel.installed_bytes;
+            trackDownload({
+              id: "already-ready",
+              kind: "download-whisper",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.whisperDownloadComplete"),
+              result: {
+                model: currentModel.key,
+                model_dir: currentModel.model_dir,
+                source: currentModel.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setWhisperDownloadOpen(true);
+            setMessage(`Whisper ${modelKey} model is ready.`);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setWhisperDownloadOpen(true);
+        trackDownload({
+          id: "starting",
+          kind: "download-whisper",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.whisperDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startWhisperDownload(apiBaseUrl, modelKey);
+        trackDownload(started);
+        await waitForJob(
+          apiBaseUrl,
+          started.id,
+          trackDownload,
+          250
+        );
+        await refreshWhisperStatus();
+        setMessage(`Whisper ${modelKey} model is ready.`);
+      } catch (error) {
+        setWhisperDownloadOpen(true);
+        const current = trackedJob;
+        trackDownload(failTask(current, error, tr("dialogs.whisperDownloadFailed")));
+        throw error;
+      } finally {
+        whisperDownloadPromiseRef.current = null;
+      }
+    })();
+    whisperDownloadPromiseRef.current = operation;
+    return operation;
+  }
+
+  async function ensureDemucs(options: { showReadyState?: boolean } = {}) {
+    if (!apiBaseUrl) return;
+    if (demucsDownloadPromiseRef.current) return demucsDownloadPromiseRef.current;
+
+    let trackedJob = createPendingTask("download-demucs", tr("dialogs.demucsDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-demucs", job);
+    };
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshDemucsStatus();
+        if (currentStatus?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentStatus.installed_bytes;
+            trackDownload({
+              id: "already-ready-demucs",
+              kind: "download-demucs",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.demucsDownloadComplete"),
+              result: {
+                model: currentStatus.model,
+                model_dir: currentStatus.model_dir,
+                source: currentStatus.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setDemucsDownloadOpen(true);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setDemucsDownloadOpen(true);
+        trackDownload({
+          id: "starting-demucs",
+          kind: "download-demucs",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.demucsDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startDemucsDownload(apiBaseUrl);
+        trackDownload(started);
+        await waitForJob(
+          apiBaseUrl,
+          started.id,
+          trackDownload,
+          250
+        );
+        await refreshDemucsStatus();
+      } catch (error) {
+        setDemucsDownloadOpen(true);
+        const current = trackedJob;
+        trackDownload(failTask(current, error, tr("dialogs.demucsDownloadFailed")));
+        throw error;
+      } finally {
+        demucsDownloadPromiseRef.current = null;
+      }
+    })();
+    demucsDownloadPromiseRef.current = operation;
+    return operation;
+  }
+
+  async function ensureMms(options: { showReadyState?: boolean } = {}) {
+    if (!apiBaseUrl) return;
+    if (mmsDownloadPromiseRef.current) return mmsDownloadPromiseRef.current;
+
+    let trackedJob = createPendingTask("download-mms", tr("dialogs.mmsDownloadPreparing"));
+    const trackDownload = (job: JobRecord) => {
+      trackedJob = job;
+      taskRegistry.updateTask("download-mms", job);
+    };
+    const operation = (async () => {
+      try {
+        const currentStatus = await refreshMmsStatus();
+        if (currentStatus?.ready) {
+          if (options.showReadyState) {
+            const now = Date.now() / 1000;
+            const installedBytes = currentStatus.installed_bytes;
+            trackDownload({
+              id: "already-ready-mms",
+              kind: "download-mms",
+              status: "completed",
+              progress: 1,
+              message: tr("dialogs.mmsDownloadComplete"),
+              result: {
+                model: currentStatus.model,
+                model_dir: currentStatus.model_dir,
+                source: currentStatus.source,
+                installed_bytes: installedBytes,
+                downloaded_bytes: installedBytes,
+                total_bytes: installedBytes,
+              },
+              created_at: now,
+              updated_at: now,
+            });
+            setMmsDownloadOpen(true);
+          }
+          return;
+        }
+
+        const now = Date.now() / 1000;
+        setMmsDownloadOpen(true);
+        trackDownload({
+          id: "starting-mms",
+          kind: "download-mms",
+          status: "queued",
+          progress: 0,
+          message: tr("dialogs.mmsDownloadPreparing"),
+          created_at: now,
+          updated_at: now,
+        });
+        const started = await startMmsDownload(apiBaseUrl);
+        trackDownload(started);
+        await waitForJob(apiBaseUrl, started.id, trackDownload, 250);
+        await refreshMmsStatus();
+      } catch (error) {
+        setMmsDownloadOpen(true);
+        trackDownload(failTask(trackedJob, error, tr("dialogs.mmsDownloadFailed")));
+        throw error;
+      } finally {
+        mmsDownloadPromiseRef.current = null;
+      }
+    })();
+    mmsDownloadPromiseRef.current = operation;
+    return operation;
   }
 
   async function runFfmpegCheck(showSuccess: boolean) {
@@ -1091,11 +1445,11 @@ export default function App(props: {
       const result = await checkFfmpeg(apiBaseUrl);
       setFfmpegCheckResult(result);
       if (showSuccess || !result.ok) setFfmpegCheckOpen(true);
-      setMessage(result.ok ? "ffmpeg and ffprobe are available." : "ffmpeg check failed.");
+      setMessage(result.ok ? tr("ffmpeg.available") : tr("messages.ffmpegFailed"));
     } catch (error) {
       setFfmpegCheckResult({ ok: false, error: String(error), download_url: FFMPEG_DOWNLOAD_URL });
       setFfmpegCheckOpen(true);
-      setMessage("ffmpeg check failed.");
+      setMessage(tr("messages.ffmpegFailed"));
     } finally {
       setFfmpegCheckPending(false);
     }
@@ -1114,18 +1468,22 @@ export default function App(props: {
     taskRegistry.updateTask("transcription", null);
     setProjectOperation({ kind: "analysis", status: "running" });
     markProjectChanged();
-    const started = await startAnalysis(
-      apiBaseUrl,
-      videoPath,
-      guideText,
-      analysisDevice,
-      boundaryRefinementSettings
-    );
-    taskRegistry.updateTask("analysis", started);
+    let trackedJob = createPendingTask("analysis", tr("messages.analysisRunning"));
+    taskRegistry.updateTask("analysis", trackedJob);
     try {
-      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) =>
-        taskRegistry.updateTask("analysis", nextJob)
+      const started = await startAnalysis(
+        apiBaseUrl,
+        videoPath,
+        guideText,
+        analysisDevice,
+        boundaryRefinementSettings
       );
+      trackedJob = started;
+      taskRegistry.updateTask("analysis", started);
+      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
+        taskRegistry.updateTask("analysis", nextJob);
+      });
       const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
       setAnalysis(result);
       setSegments(nextSegments);
@@ -1136,6 +1494,7 @@ export default function App(props: {
       setMessage(`Detected ${nextSegments.length} segments.`);
       if (transcribeAfter && nextSegments.length) await runTranscription(nextSegments, false);
     } catch (error) {
+      taskRegistry.updateTask("analysis", failTask(trackedJob, error, tr("messages.analysisFailed")));
       setProjectOperation({ kind: "analysis", status: "interrupted" });
       markProjectChanged();
       throw error;
@@ -1162,11 +1521,15 @@ export default function App(props: {
       pending_segment_ids: pendingIds
     });
     markProjectChanged();
+    let trackedJob = createPendingTask("transcription", tr("messages.transcriptionPreparing"));
+    taskRegistry.updateTask("transcription", trackedJob);
     try {
       const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
+      trackedJob = started;
       taskRegistry.updateTask("transcription", started);
       const appliedTranscripts = new Map<string, string>();
       const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
         taskRegistry.updateTask("transcription", nextJob);
         const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
         const changed = partial.filter((transcript) => {
@@ -1204,6 +1567,10 @@ export default function App(props: {
       markProjectChanged();
       setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
     } catch (error) {
+      taskRegistry.updateTask(
+        "transcription",
+        failTask(trackedJob, error, tr("messages.transcriptionFailed"))
+      );
       setProjectOperation((operation) =>
         operation?.kind === "transcription" ? { ...operation, status: "interrupted" } : operation
       );
@@ -1221,9 +1588,14 @@ export default function App(props: {
     }
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
-    let started: JobRecord;
+    let trackedJob = createPendingTask("export", tr("output.preparing"));
+    taskRegistry.updateTask("export", trackedJob);
+    setOutputOpen(false);
+    setExportProgressOpen(true);
+    setProjectOperation({ kind: "export", status: "running" });
+    markProjectChanged();
     try {
-      started = await startExport(
+      const started = await startExport(
         apiBaseUrl,
         videoPath,
         outputDir,
@@ -1231,23 +1603,17 @@ export default function App(props: {
         buildTimestampExportText(items, "timestamp-comment"),
         createVideoFolder
       );
-    } catch (error) {
-      setMessage(`Export could not be started: ${String(error)}`);
-      return;
-    }
-    setOutputOpen(false);
-    setExportProgressOpen(true);
-    taskRegistry.updateTask("export", started);
-    setProjectOperation({ kind: "export", status: "running" });
-    markProjectChanged();
-    try {
+      trackedJob = started;
+      taskRegistry.updateTask("export", started);
       await waitForJob(apiBaseUrl, started.id, (nextJob) => {
+        trackedJob = nextJob;
         taskRegistry.updateTask("export", nextJob);
       });
       setProjectOperation(null);
       markProjectChanged();
       setMessage("Export complete.");
     } catch (error) {
+      taskRegistry.updateTask("export", failTask(trackedJob, error, tr("output.failed")));
       setProjectOperation({ kind: "export", status: "interrupted" });
       markProjectChanged();
       setMessage(`Export failed: ${String(error)}`);
@@ -1336,6 +1702,10 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  function previewSegmentUpdate(id: string, patch: Partial<Segment>) {
+    setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
+  }
+
   function addNewSegment() {
     if (!projectBase) return;
     const pair = createManualSegment(segments, currentTime, duration, tr("segments.newTitle"));
@@ -1347,6 +1717,118 @@ export default function App(props: {
     seek(pair.segment.start);
     markProjectChanged();
     setMessage(tr("messages.added", { id: pair.segment.id }));
+  }
+
+  function focusSubtitleSegment(segment: LyricsSegment) {
+    setSubtitleFocusRequest((request) => request + 1);
+    seek(segment.start);
+  }
+
+  function selectSubtitleSegment(laneId: string, segment: LyricsSegment) {
+    setSubtitleState((current) => ({
+      ...current,
+      active_lane_id: laneId,
+      selected_segment_id: segment.id,
+    }));
+    focusSubtitleSegment(segment);
+    markProjectChanged();
+  }
+
+  function addNewSubtitleSegment() {
+    const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
+    if (!lane) return;
+    const segment = addFourBeatSegment(lane, subtitleState.selected_segment_id, subtitleState.rhythm_grid);
+    if (!segment) return;
+    setSubtitleState((current) => ({
+      ...current,
+      active_lane_id: lane.id,
+      selected_segment_id: segment.id,
+      lanes: current.lanes.map((item) =>
+        item.id === lane.id
+          ? { ...item, segments: [...item.segments, segment].sort((left, right) => left.start - right.start) }
+          : item
+      ),
+    }));
+    focusSubtitleSegment(segment);
+    markProjectChanged();
+  }
+
+  function removeSelectedSubtitleSegment() {
+    const id = subtitleState.selected_segment_id;
+    if (!id) return;
+    const lane = subtitleState.lanes.find((item) => item.segments.some((segment) => segment.id === id));
+    if (!lane) return;
+    const ordered = [...lane.segments].sort((left, right) => left.start - right.start);
+    const selectedIndex = ordered.findIndex((segment) => segment.id === id);
+    const remaining = ordered.filter((segment) => segment.id !== id);
+    const replacement = remaining[Math.min(Math.max(0, selectedIndex), Math.max(0, remaining.length - 1))] ?? null;
+    setSubtitleState((current) => ({
+      ...current,
+      active_lane_id: lane.id,
+      selected_segment_id: replacement?.id ?? null,
+      lanes: current.lanes.map((lane) => ({
+        ...lane,
+        segments: lane.segments.filter((segment) => segment.id !== id),
+      })),
+    }));
+    if (replacement) focusSubtitleSegment(replacement);
+    else setSubtitleFocusRequest((request) => request + 1);
+    markProjectChanged();
+  }
+
+  function selectAdjacentSubtitleSegment(direction: -1 | 1) {
+    const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
+    if (!lane?.segments.length) return;
+    const ordered = [...lane.segments].sort((left, right) => left.start - right.start);
+    const index = ordered.findIndex((segment) => segment.id === subtitleState.selected_segment_id);
+    const nextIndex = index < 0 ? 0 : clamp(index + direction, 0, ordered.length - 1);
+    selectSubtitleSegment(lane.id, ordered[nextIndex]);
+  }
+
+  function nudgeSelectedSubtitleBoundary(direction: -1 | 1) {
+    const selectedId = subtitleState.selected_segment_id;
+    if (!selectedId) return;
+    const lane = subtitleState.lanes.find((item) => item.segments.some((segment) => segment.id === selectedId));
+    const segment = lane?.segments.find((item) => item.id === selectedId);
+    if (!lane || !segment) return;
+    const edge = Math.abs(currentTime - segment.start) <= Math.abs(currentTime - segment.end) ? "start" : "end";
+    setSubtitleState((current) => ({
+      ...current,
+      active_lane_id: lane.id,
+      lanes: current.lanes.map((item) =>
+        item.id === lane.id
+          ? nudgeSegmentBoundary(item, selectedId, edge, direction, current.rhythm_grid)
+          : item
+      ),
+    }));
+    markProjectChanged();
+  }
+
+  function selectedSubtitleSegment() {
+    for (const lane of subtitleState.lanes) {
+      const segment = lane.segments.find((item) => item.id === subtitleState.selected_segment_id);
+      if (segment) return segment;
+    }
+    return null;
+  }
+
+  function playSubtitleBoundary(edge: "start" | "end") {
+    const segment = selectedSubtitleSegment();
+    if (!segment) return;
+    const previewSeconds = parseBoundarySeconds(boundarySecondsInput);
+    if (edge === "start") playFrom(segment.start, Math.min(segment.end, segment.start + previewSeconds));
+    else playFrom(Math.max(segment.start, segment.end - previewSeconds), segment.end);
+  }
+
+  function jumpSubtitleBoundary(direction: -1 | 1) {
+    const boundaries = subtitleState.lanes
+      .flatMap((lane) => lane.segments.flatMap((segment) => [segment.start, segment.end]))
+      .sort((left, right) => left - right);
+    const target =
+      direction < 0
+        ? [...boundaries].reverse().find((time) => time < currentTime - 0.001)
+        : boundaries.find((time) => time > currentTime + 0.001);
+    if (target !== undefined) seek(target);
   }
 
   function requestRemoveSelectedSegment() {
@@ -1598,7 +2080,8 @@ export default function App(props: {
       });
   }
 
-  function openSettings() {
+  function openSettings(tab: SettingsTab = "common") {
+    setSettingsInitialTab(tab);
     setSettingsOpen(true);
     if (apiBaseUrl) void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
   }
@@ -1687,19 +2170,35 @@ export default function App(props: {
     loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
+  const activeSubtitleLane =
+    subtitleState.lanes.find((lane) => lane.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
+  const activeSubtitleSegments = [...(activeSubtitleLane?.segments ?? [])].sort(
+    (left, right) => left.start - right.start
+  );
+  const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
+    (segment) => segment.id === subtitleState.selected_segment_id
+  );
+  const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
+
   useEffect(() => {
     window.songcut.updateMenuState({
       apiReady: Boolean(apiBaseUrl),
       hasProject: Boolean(projectBase),
       hasVideo: Boolean(videoUrl),
-      hasSegments: segments.length > 0,
-      hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
-      hasBoundaryDiagnostic: Boolean(selectedBoundaryDiagnostic),
-      hasCheckedSegments: checkedCount > 0,
-      hasUncheckedSegments: uncheckedCount > 0,
-      hasMultipleSegments: segments.length > 1,
-      canSelectPreviousSegment,
-      canSelectNextSegment,
+      hasSegments: mode === "sub" ? subtitleSegmentCount > 0 : segments.length > 0,
+      hasSelectedSegment:
+        mode === "sub"
+          ? selectedSubtitleIndex >= 0
+          : Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      hasBoundaryDiagnostic: mode === "cut" && Boolean(selectedBoundaryDiagnostic),
+      hasCheckedSegments: mode === "cut" && checkedCount > 0,
+      hasUncheckedSegments: mode === "cut" && uncheckedCount > 0,
+      hasMultipleSegments: mode === "sub" ? subtitleSegmentCount > 1 : segments.length > 1,
+      canSelectPreviousSegment: mode === "sub" ? selectedSubtitleIndex > 0 : canSelectPreviousSegment,
+      canSelectNextSegment:
+        mode === "sub"
+          ? selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1
+          : canSelectNextSegment,
       playing,
       zoomIndex,
       waveformDisplayMode,
@@ -1726,7 +2225,12 @@ export default function App(props: {
     scratchAudioProxyEnabled,
     analysisDevice,
     whisperSettings.device,
-    whisperSettings.model
+    whisperSettings.model,
+    mode,
+    subtitleState,
+    subtitleSegmentCount,
+    selectedSubtitleIndex,
+    activeSubtitleSegments.length
   ]);
 
   useEffect(() => {
@@ -1745,22 +2249,28 @@ export default function App(props: {
           void relinkSource().catch((error) => setMessage(String(error)));
           break;
         case "nudge-boundary-left":
-          nudgeNearestBoundary(-1);
+          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
+          else nudgeNearestBoundary(-1);
           break;
         case "nudge-boundary-right":
-          nudgeNearestBoundary(1);
+          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
+          else nudgeNearestBoundary(1);
           break;
         case "previous-segment":
-          selectAdjacentSegment(-1);
+          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
+          else selectAdjacentSegment(-1);
           break;
         case "next-segment":
-          selectAdjacentSegment(1);
+          if (mode === "sub") selectAdjacentSubtitleSegment(1);
+          else selectAdjacentSegment(1);
           break;
         case "new-segment":
-          addNewSegment();
+          if (mode === "sub") addNewSubtitleSegment();
+          else addNewSegment();
           break;
         case "remove-segment":
-          requestRemoveSelectedSegment();
+          if (mode === "sub") removeSelectedSubtitleSegment();
+          else requestRemoveSelectedSegment();
           break;
         case "remove-unchecked-segments":
           requestRemoveUncheckedSegments();
@@ -1790,7 +2300,8 @@ export default function App(props: {
           seek(0);
           break;
         case "previous-boundary":
-          jumpBoundary(-1);
+          if (mode === "sub") jumpSubtitleBoundary(-1);
+          else jumpBoundary(-1);
           break;
         case "play":
           playVideo();
@@ -1799,13 +2310,16 @@ export default function App(props: {
           pauseVideo();
           break;
         case "next-boundary":
-          jumpBoundary(1);
+          if (mode === "sub") jumpSubtitleBoundary(1);
+          else jumpBoundary(1);
           break;
         case "play-start-boundary":
-          playStartBoundary();
+          if (mode === "sub") playSubtitleBoundary("start");
+          else playStartBoundary();
           break;
         case "play-end-boundary":
-          playEndBoundary();
+          if (mode === "sub") playSubtitleBoundary("end");
+          else playEndBoundary();
           break;
         case "export-movie":
           if (checkedCount > 0) openOutputReview();
@@ -1842,6 +2356,9 @@ export default function App(props: {
     projectReadOnly,
     projectOperation,
     transcriptSegment?.id
+    ,
+    mode,
+    subtitleState
   ]);
 
   useEffect(() => {
@@ -1852,22 +2369,28 @@ export default function App(props: {
 
       switch (action) {
         case "play-start-boundary":
-          playStartBoundary();
+          if (mode === "sub") playSubtitleBoundary("start");
+          else playStartBoundary();
           break;
         case "play-end-boundary":
-          playEndBoundary();
+          if (mode === "sub") playSubtitleBoundary("end");
+          else playEndBoundary();
           break;
         case "previous-segment":
-          selectAdjacentSegment(-1);
+          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
+          else selectAdjacentSegment(-1);
           break;
         case "next-segment":
-          selectAdjacentSegment(1);
+          if (mode === "sub") selectAdjacentSubtitleSegment(1);
+          else selectAdjacentSegment(1);
           break;
         case "nudge-boundary-left":
-          nudgeNearestBoundary(-1);
+          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
+          else nudgeNearestBoundary(-1);
           break;
         case "nudge-boundary-right":
-          nudgeNearestBoundary(1);
+          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
+          else nudgeNearestBoundary(1);
           break;
         case "toggle-playback": {
           const video = videoRef.current;
@@ -1877,10 +2400,12 @@ export default function App(props: {
           break;
         }
         case "previous-boundary":
-          jumpBoundary(-1);
+          if (mode === "sub") jumpSubtitleBoundary(-1);
+          else jumpBoundary(-1);
           break;
         case "next-boundary":
-          jumpBoundary(1);
+          if (mode === "sub") jumpSubtitleBoundary(1);
+          else jumpBoundary(1);
           break;
         case "zoom-out":
           setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
@@ -1896,7 +2421,16 @@ export default function App(props: {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [boundaryNudgeSecondsInput, boundarySecondsInput, currentTime, duration, segments, selectedSegment]);
+  }, [
+    boundaryNudgeSecondsInput,
+    boundarySecondsInput,
+    currentTime,
+    duration,
+    segments,
+    selectedSegment,
+    mode,
+    subtitleState,
+  ]);
 
   return (
     <main
@@ -1911,6 +2445,16 @@ export default function App(props: {
     >
       <audio ref={scratchProxyAudioRef} preload="auto" hidden data-scratch-proxy-state={scratchProxyState} />
       <section className="video-pane">
+        <Tabs
+          value={mode}
+          onValueChange={(value) => void switchMode(value as AppMode)}
+          className="mode-tabs"
+        >
+          <TabsList>
+            <TabsTrigger value="cut" disabled={Boolean(runningJob) || persistence.saving}>Cut</TabsTrigger>
+            <TabsTrigger value="sub" disabled={Boolean(runningJob) || persistence.saving || !videoPath}>Sub</TabsTrigger>
+          </TabsList>
+        </Tabs>
         {videoUrl ? (
           <video ref={videoRef} src={videoUrl} className="video" controls={false} />
         ) : (
@@ -1922,6 +2466,14 @@ export default function App(props: {
             </Button>
           </div>
         )}
+        {mode === "sub" ? (
+          <SubtitleOverlay
+            state={subtitleState}
+            currentTime={currentTime}
+            videoWidth={videoInfo?.video.width || 1920}
+            videoHeight={videoInfo?.video.height || 1080}
+          />
+        ) : null}
       </section>
       <div
         className="splitter"
@@ -1949,6 +2501,8 @@ export default function App(props: {
             </Button>
           </div>
         ) : null}
+        {mode === "cut" ? (
+          <>
         <header className="toolbar">
           <Button onClick={selectVideo}>
             <FolderOpen size={16} />
@@ -1966,7 +2520,7 @@ export default function App(props: {
             <Copy size={16} />
             {tr("common.exportTs")}
           </Button>
-          <Button variant="secondary" onClick={openSettings}>
+          <Button variant="secondary" onClick={() => openSettings("cut")}>
             <Settings2 size={16} />
             {tr("common.settings")}
           </Button>
@@ -2015,19 +2569,7 @@ export default function App(props: {
             }}
             placeholder={tr("app.guidePlaceholder")}
           />
-          <StatusPanel
-            job={activeJob}
-            message={message}
-            videoInfo={videoInfo}
-            scratchProxyState={scratchProxyState}
-            waveformPhase={progressiveWaveform.phase}
-            waveformProgress={progressiveWaveform.progress}
-            onWaveformRetry={
-              sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
-                ? () => void progressiveWaveform.start(videoPath)
-                : null
-            }
-          />
+          {taskStatus}
         </div>
         <TimelineStack
           duration={duration}
@@ -2047,7 +2589,9 @@ export default function App(props: {
           onScrub={scratchPreview}
           onSeekingChange={setWaveformSeeking}
           onHandleEditingChange={setHandleEditing}
-          onChange={(patch) => selectedSegment && updateSegment(selectedSegment.id, patch)}
+          onChange={(patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch)}
+          onChangeCommitted={markProjectChanged}
+          onEditTiming={() => selectedSegment && setCutTimingSegmentId(selectedSegment.id)}
         />
         <SegmentList
           segments={segments}
@@ -2057,6 +2601,101 @@ export default function App(props: {
           onTitleChange={(segment, title) => updateSegment(segment.id, { title })}
           onTranscript={setTranscriptSegment}
         />
+          </>
+        ) : (
+          <SubModePanel
+            apiBaseUrl={apiBaseUrl}
+            videoPath={videoPath}
+            sourceAvailable={sourceAvailable}
+            videoInfo={videoInfo}
+            waveform={progressiveWaveform.waveform}
+            duration={duration}
+            currentTime={currentTime}
+            playing={playing}
+            zoom={zoom}
+            focusRequest={subtitleFocusRequest}
+            editing={waveformSeeking || handleEditing}
+            state={subtitleState}
+            whisperSettings={whisperSettings}
+            onPrepareWhisperModel={async () => {
+              await ensureWhisper();
+              setWhisperDownloadOpen(false);
+            }}
+            onPrepareDemucsModel={async () => {
+              await ensureDemucs();
+              setDemucsDownloadOpen(false);
+            }}
+            onPrepareMmsModel={async () => {
+              await ensureMms();
+              setMmsDownloadOpen(false);
+            }}
+            saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
+            taskStatus={taskStatus}
+            analysisJob={lyricsAnalysisJob}
+            exportJob={subtitleExportJob}
+            onStateChange={(state) => {
+              setSubtitleState(state);
+              markProjectChanged();
+            }}
+            onSeek={seek}
+            onPlay={playVideo}
+            onPause={pauseVideo}
+            onScrub={scratchPreview}
+            onSeekingChange={setWaveformSeeking}
+            onHandleEditingChange={setHandleEditing}
+            onSelectSegment={selectSubtitleSegment}
+            onFocusSegment={focusSubtitleSegment}
+            onAddSegment={addNewSubtitleSegment}
+            onDeleteSelectedSegment={removeSelectedSubtitleSegment}
+            onPreviewRange={(start, end) => playFrom(start, end)}
+            boundarySecondsInput={boundarySecondsInput}
+            boundaryPreviewSeconds={parseBoundarySeconds(boundarySecondsInput)}
+            onBoundarySecondsInput={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
+            onBoundarySecondsBlur={() =>
+              setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))
+            }
+            onNudge={nudgeSelectedSubtitleBoundary}
+            onPreviousBoundary={() => jumpSubtitleBoundary(-1)}
+            onNextBoundary={() => jumpSubtitleBoundary(1)}
+            onLoad={selectVideo}
+            onSettings={() => openSettings("sub")}
+            onZoomIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
+            onZoomOut={() => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1))}
+            onZoomReset={() => setZoomIndex(0)}
+            onMessage={setMessage}
+            onJob={(slot, job) => taskRegistry.updateTask(slot, job)}
+            onRenderCaches={(items: SubtitleRenderResultItem[]) => {
+              const bySegmentId = new Map(items.map((item) => [item.segment_id, item]));
+              setSubtitleState((current) => ({
+                ...current,
+                lanes: current.lanes.map((lane) => ({
+                  ...lane,
+                  segments: lane.segments.map((segment) => {
+                    const rendered = bySegmentId.get(segment.id);
+                    if (!rendered) return segment;
+                    const expected = subtitleRenderSignature(
+                      segment.text,
+                      lane.style,
+                      rendered.width,
+                      rendered.height
+                    );
+                    if (rendered.signature !== expected) return segment;
+                    return {
+                      ...segment,
+                      render_cache: {
+                        signature: rendered.signature,
+                        png_base64: rendered.png_base64,
+                        width: rendered.width,
+                        height: rendered.height,
+                      },
+                    };
+                  }),
+                })),
+              }));
+              markProjectChanged();
+            }}
+          />
+        )}
       </section>
       <Dialog
         open={Boolean(visibleTranscriptSegment)}
@@ -2148,8 +2787,29 @@ export default function App(props: {
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
       />
+      <SegmentTimingDialog
+        open={Boolean(cutTimingSegment)}
+        mode="cut"
+        segment={cutTimingSegment}
+        mediaDuration={duration}
+        onClose={() => setCutTimingSegmentId(null)}
+        onApply={(start, end) => {
+          if (!cutTimingSegment) return;
+          updateSegment(cutTimingSegment.id, {
+            start,
+            end,
+            duration: end - start,
+            start_timecode: formatTimeInput(start),
+            end_timecode: formatTimeInput(end),
+            user_edited: true,
+          });
+          setCutTimingSegmentId(null);
+          seek(start);
+        }}
+      />
       <SettingsDialog
         open={settingsOpen}
+        initialTab={settingsInitialTab}
         apiReady={Boolean(apiBaseUrl)}
         scratchPreviewMillisecondsInput={scratchPreviewMillisecondsInput}
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
@@ -2161,6 +2821,10 @@ export default function App(props: {
         whisperSettings={whisperSettings}
         whisperStatus={whisperStatus}
         whisperBusy={whisperBusy}
+        demucsStatus={demucsStatus}
+        demucsBusy={whisperBusy}
+        mmsStatus={mmsStatus}
+        mmsBusy={whisperBusy}
         hasSegments={segments.length > 0}
         transcriptStale={transcriptStale}
         sourceAvailable={sourceAvailable}
@@ -2191,7 +2855,18 @@ export default function App(props: {
           setWhisperSettings(settings);
           markProjectChanged();
         }}
-        onPrepareWhisperModel={() => void ensureWhisper().catch((error) => setMessage(String(error)))}
+        onPrepareWhisperModel={() => {
+          closeSettings();
+          void ensureWhisper({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
+        onPrepareDemucsModel={() => {
+          closeSettings();
+          void ensureDemucs({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
+        onPrepareMmsModel={() => {
+          closeSettings();
+          void ensureMms({ showReadyState: true }).catch((error) => setMessage(String(error)));
+        }}
         onTranscribe={() => {
           closeSettings();
           void runTranscription().catch((error) => setMessage(String(error)));
@@ -2226,6 +2901,31 @@ export default function App(props: {
         renderPlanState={exportPlanState}
         onClose={() => setExportProgressOpen(false)}
       />
+      <WhisperDownloadProgressDialog
+        open={whisperDownloadOpen}
+        job={taskRegistry.tasks["download-whisper"] ?? null}
+        onClose={() => setWhisperDownloadOpen(false)}
+      />
+      <ModelDownloadProgressDialog
+        open={demucsDownloadOpen}
+        job={taskRegistry.tasks["download-demucs"] ?? null}
+        title={tr("dialogs.demucsDownloadTitle")}
+        description={tr("dialogs.demucsDownloadDescription")}
+        preparing={tr("dialogs.demucsDownloadPreparing")}
+        failed={tr("dialogs.demucsDownloadFailed")}
+        complete={tr("dialogs.demucsDownloadComplete")}
+        onClose={() => setDemucsDownloadOpen(false)}
+      />
+      <ModelDownloadProgressDialog
+        open={mmsDownloadOpen}
+        job={taskRegistry.tasks["download-mms"] ?? null}
+        title={tr("dialogs.mmsDownloadTitle")}
+        description={tr("dialogs.mmsDownloadDescription")}
+        preparing={tr("dialogs.mmsDownloadPreparing")}
+        failed={tr("dialogs.mmsDownloadFailed")}
+        complete={tr("dialogs.mmsDownloadComplete")}
+        onClose={() => setMmsDownloadOpen(false)}
+      />
       <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
         <p className="dialog-message">
           {tr("dialogs.whisperMissing", { model: whisperSettings.model })}
@@ -2247,7 +2947,10 @@ export default function App(props: {
             onClick={() => {
               setWhisperPreflightOpen(false);
               void ensureWhisper()
-                .then(() => runAnalysis(true))
+                .then(() => {
+                  setWhisperDownloadOpen(false);
+                  return runAnalysis(true);
+                })
                 .catch((error) => setMessage(String(error)));
             }}
           >
@@ -2408,9 +3111,14 @@ function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>
 
 function jobKindLabel(kind: string) {
   if (kind === "analysis") return tr("tasks.analysis");
+  if (kind === "lyrics-analysis") return tr("tasks.lyricsAnalysis");
   if (kind === "transcription") return tr("tasks.transcription");
   if (kind === "export") return tr("tasks.export");
+  if (kind === "subtitle-export") return tr("tasks.subtitleExport");
+  if (kind === "subtitle-render") return tr("tasks.subtitleRender");
   if (kind === "download-whisper") return tr("tasks.download");
+  if (kind === "download-demucs") return tr("tasks.demucsDownload");
+  if (kind === "download-mms") return tr("tasks.mmsDownload");
   if (kind === "waveform") return tr("tasks.waveform");
   if (kind === "scratch-proxy") return tr("tasks.proxy");
   return tr("tasks.generic");
@@ -2578,32 +3286,62 @@ function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void
   );
 }
 
-function StatusPanel({
-  job,
+function TaskStatusPanel({
+  runningTasks,
+  failedTasks,
+  latestTerminalTask,
   message,
   videoInfo,
   scratchProxyState,
   waveformPhase,
   waveformProgress,
+  onDismiss,
   onWaveformRetry
 }: {
-  job: JobRecord | null;
+  runningTasks: TaskRegistryEntry[];
+  failedTasks: TaskRegistryEntry[];
+  latestTerminalTask: JobRecord | null;
   message: string;
   videoInfo: VideoInfo | null;
   scratchProxyState: ScratchProxyState;
   waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
   waveformProgress: number;
+  onDismiss: (slot: TaskSlot) => void;
   onWaveformRetry: (() => void) | null;
 }) {
+  const idleJob = runningTasks.length === 0 && failedTasks.length === 0 ? latestTerminalTask : null;
+  const idleJobMessage = localizeJobMessage(idleJob);
+  const uiMessage = localizeUiMessage(message);
   return (
-    <aside className="status-panel">
-      <div className="status-main">
-        {job?.status === "completed" ? <CheckCircle2 size={16} /> : null}
-        <span>{localizeJobMessage(job) || localizeUiMessage(message) || tr("app.idle")}</span>
-      </div>
-      {job ? <progress value={job.progress} max={1} /> : null}
-      {videoInfo ? (
+    <aside className="status-panel" aria-live="polite">
+      {runningTasks.length ? (
+        <div className="task-status-list">
+          {runningTasks.map((entry) => (
+            <TaskStatusRow key={entry.slot} entry={entry} />
+          ))}
+        </div>
+      ) : null}
+      {failedTasks.length ? (
+        <div className="task-status-list task-status-failures">
+          {failedTasks.map((entry) => (
+            <TaskStatusRow key={entry.slot} entry={entry} onDismiss={() => onDismiss(entry.slot)} />
+          ))}
+        </div>
+      ) : null}
+      {runningTasks.length === 0 && failedTasks.length === 0 ? (
         <>
+          <div className="status-main">
+            {idleJob?.status === "completed" ? <CheckCircle2 size={16} /> : null}
+            {idleJob ? <strong>{jobKindLabel(idleJob.kind)}</strong> : null}
+            <span>{idleJobMessage || uiMessage || tr("app.idle")}</span>
+          </div>
+          {idleJobMessage && uiMessage && idleJobMessage !== uiMessage ? (
+            <div className="status-secondary-message">{uiMessage}</div>
+          ) : null}
+        </>
+      ) : null}
+      {videoInfo ? (
+        <div className="status-meta">
           <div className="meta-line">
             {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
           </div>
@@ -2616,9 +3354,37 @@ function StatusPanel({
               <button type="button" className="waveform-retry" onClick={onWaveformRetry}>{tr("controls.retryWaveform")}</button>
             ) : null}
           </div>
-        </>
+        </div>
       ) : null}
     </aside>
+  );
+}
+
+function TaskStatusRow({
+  entry,
+  onDismiss,
+}: {
+  entry: TaskRegistryEntry;
+  onDismiss?: () => void;
+}) {
+  const { job } = entry;
+  const failed = job.status === "failed" || job.status === "cancelled";
+  return (
+    <div className={`task-status-row task-status-${job.status}`}>
+      <div className="task-status-heading">
+        {failed ? <CircleAlert size={15} /> : null}
+        <strong>{jobKindLabel(job.kind)}</strong>
+        <span>{localizeJobMessage(job)}</span>
+      </div>
+      <span className="task-status-percent">{Math.round(clamp(job.progress, 0, 1) * 100)}%</span>
+      {onDismiss ? (
+        <button type="button" className="task-status-dismiss" onClick={onDismiss}>
+          {tr("common.close")}
+        </button>
+      ) : null}
+      <progress value={clamp(job.progress, 0, 1)} max={1} />
+      {job.error ? <div className="task-status-error">{job.error}</div> : null}
+    </div>
   );
 }
 
@@ -2641,86 +3407,30 @@ function TimelineStack(props: {
   onSeekingChange: (seeking: boolean) => void;
   onHandleEditingChange: (editing: boolean) => void;
   onChange: (patch: Partial<Segment>) => void;
+  onChangeCommitted: () => void;
+  onEditTiming: () => void;
 }) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const handledFocusRequestRef = useRef(0);
-  const [baseWidth, setBaseWidth] = useState(900);
-  const width = Math.max(baseWidth, baseWidth * props.zoom);
   const safeDuration = Math.max(0.001, props.duration);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const resize = () => setBaseWidth(Math.max(400, viewport.clientWidth));
-    resize();
-    const observer = new ResizeObserver(resize);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || props.duration <= 0 || props.editing) return;
-    const playheadX = clamp(props.currentTime / props.duration, 0, 1) * width;
-    const viewportWidth = viewport.clientWidth;
-    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewportWidth);
-    const left = viewport.scrollLeft;
-    const right = left + viewportWidth;
-    let target: number | null = null;
-
-    if (props.playing) {
-      if (playheadX > left + viewportWidth * 0.9) {
-        target = playheadX - viewportWidth * 0.7;
-      } else if (playheadX < left + viewportWidth * 0.1) {
-        target = playheadX - viewportWidth * 0.3;
-      }
-    } else if (playheadX < left) {
-      target = playheadX - viewportWidth * 0.3;
-    } else if (playheadX > right) {
-      target = playheadX - viewportWidth * 0.7;
-    }
-
-    if (target !== null) {
-      viewport.scrollLeft = clamp(target, 0, maxScrollLeft);
-    }
-  }, [props.currentTime, props.duration, props.zoom, props.playing, props.editing, width]);
-
-  useEffect(() => {
-    if (handledFocusRequestRef.current === props.focusRequest) return;
-    const viewport = viewportRef.current;
-    const segment = props.selectedSegment;
-    if (!viewport || !segment || props.duration <= 0) return;
-
-    const contentWidth = viewport.scrollWidth;
-    const viewportWidth = viewport.clientWidth;
-    const startX = clamp(segment.start / props.duration, 0, 1) * contentWidth;
-    const endX = clamp(segment.end / props.duration, 0, 1) * contentWidth;
-    const segmentWidth = Math.max(0, endX - startX);
-    const target =
-      segmentWidth <= viewportWidth
-        ? startX + segmentWidth / 2 - viewportWidth / 2
-        : startX - viewportWidth * 0.1;
-
-    viewport.scrollLeft = clamp(target, 0, Math.max(0, contentWidth - viewportWidth));
-    handledFocusRequestRef.current = props.focusRequest;
-  }, [props.focusRequest, props.selectedSegment, props.duration]);
-
-  const scrollByWheel = (event: React.WheelEvent) => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-    if (maxScrollLeft <= 0) return;
-
-    const rawDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    const multiplier = event.deltaMode === 1 ? 24 : event.deltaMode === 2 ? viewport.clientWidth : 1;
-    const nextScrollLeft = clamp(viewport.scrollLeft + rawDelta * multiplier, 0, maxScrollLeft);
-    if (nextScrollLeft === viewport.scrollLeft) return;
-    event.preventDefault();
-    viewport.scrollLeft = nextScrollLeft;
-  };
+  const timelineViewport = useTimelineViewport({
+    duration: props.duration,
+    currentTime: props.currentTime,
+    playing: props.playing,
+    editing: props.editing,
+    zoom: props.zoom,
+    focusRequest: props.focusRequest,
+    focusRange: props.selectedSegment,
+    onScrub: props.onScrub,
+    minimumWidth: 400,
+  });
+  const width = timelineViewport.contentWidth;
 
   return (
-    <ScrollArea className="timeline-scroll-area" viewportRef={viewportRef} scrollbars={["horizontal"]} onWheel={scrollByWheel}>
+    <ScrollArea
+      className="timeline-scroll-area"
+      viewportRef={timelineViewport.viewportRef}
+      scrollbars={["horizontal"]}
+      onWheel={timelineViewport.scrollByWheel}
+    >
       <div className="timeline-content" style={{ width }}>
         <div className="timeline-playhead" style={{ left: (props.currentTime / safeDuration) * width }} />
         <WaveformTimeline
@@ -2733,9 +3443,10 @@ function TimelineStack(props: {
           segments={props.segments}
           selectedSegmentId={props.selectedSegment?.id ?? null}
           width={width}
-          viewportRef={viewportRef}
+          timeFromClientX={timelineViewport.timeFromClientX}
+          scrubFromClientX={timelineViewport.scrubFromClientX}
+          stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
           onSeek={props.onSeek}
-          onScrub={props.onScrub}
           onSeekingChange={props.onSeekingChange}
         />
         <SegmentTimeline
@@ -2743,9 +3454,11 @@ function TimelineStack(props: {
           segment={props.selectedSegment}
           currentTime={props.currentTime}
           width={width}
-          viewportRef={viewportRef}
+          viewportRef={timelineViewport.viewportRef}
           onChange={props.onChange}
+          onChangeCommitted={props.onChangeCommitted}
           onEditingChange={props.onHandleEditingChange}
+          onEditTiming={props.onEditTiming}
         />
       </div>
     </ScrollArea>
@@ -2762,81 +3475,18 @@ function WaveformTimeline(props: {
   segments: Segment[];
   selectedSegmentId: string | null;
   width: number;
-  viewportRef: React.RefObject<HTMLDivElement>;
+  timeFromClientX: (clientX: number) => number;
+  scrubFromClientX: (clientX: number) => void;
+  stopScrubAutoScroll: () => void;
   onSeek: (time: number) => void;
-  onScrub: (time: number) => void;
   onSeekingChange: (seeking: boolean) => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
   const suppressClickRef = useRef(false);
-  const dragClientXRef = useRef<number | null>(null);
+  const pointerSeekingRef = useRef(false);
   const mouseSeekingRef = useRef(false);
-  const autoScrollTimerRef = useRef<number | null>(null);
-  const lastAutoScrollTimeRef = useRef<number | null>(null);
-  const timeFromClientX = (clientX: number) => {
-    const viewport = props.viewportRef.current;
-    if (!viewport || props.duration <= 0) return null;
-    const rect = viewport.getBoundingClientRect();
-    const x = clientX - rect.left + viewport.scrollLeft;
-    return clamp((x / props.width) * props.duration, 0, props.duration);
-  };
   const seekFromClientX = (clientX: number) => {
-    const time = timeFromClientX(clientX);
-    if (time !== null) props.onSeek(time);
-  };
-  const scrubFromClientX = (clientX: number) => {
-    const time = timeFromClientX(clientX);
-    if (time !== null) props.onScrub(time);
-  };
-  const stopAutoScroll = () => {
-    if (autoScrollTimerRef.current !== null) {
-      window.clearInterval(autoScrollTimerRef.current);
-      autoScrollTimerRef.current = null;
-    }
-    lastAutoScrollTimeRef.current = null;
-    dragClientXRef.current = null;
-  };
-  const autoScroll = () => {
-    const viewport = props.viewportRef.current;
-    const clientX = dragClientXRef.current;
-    if (!viewport || clientX === null) {
-      stopAutoScroll();
-      return;
-    }
-
-    const rect = viewport.getBoundingClientRect();
-    const edgeZone = 64;
-    const maxSpeed = 900;
-    const leftDistance = clientX - rect.left;
-    const rightDistance = rect.right - clientX;
-    let speed = 0;
-    if (leftDistance < edgeZone) {
-      const ratio = clamp((edgeZone - Math.max(0, leftDistance)) / edgeZone, 0, 1);
-      speed = -maxSpeed * ratio * ratio;
-    } else if (rightDistance < edgeZone) {
-      const ratio = clamp((edgeZone - Math.max(0, rightDistance)) / edgeZone, 0, 1);
-      speed = maxSpeed * ratio * ratio;
-    }
-
-    if (speed === 0) {
-      lastAutoScrollTimeRef.current = null;
-      return;
-    }
-
-    const now = window.performance.now();
-    const previous = lastAutoScrollTimeRef.current ?? now - 16;
-    const deltaSeconds = Math.min(0.05, Math.max(0, (now - previous) / 1000));
-    lastAutoScrollTimeRef.current = now;
-    const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-    viewport.scrollLeft = clamp(viewport.scrollLeft + speed * deltaSeconds, 0, maxScrollLeft);
-    scrubFromClientX(clientX);
-  };
-  const updateAutoScroll = (clientX: number) => {
-    dragClientXRef.current = clientX;
-    if (autoScrollTimerRef.current === null) {
-      autoScrollTimerRef.current = window.setInterval(autoScroll, 16);
-    }
-    autoScroll();
+    props.onSeek(props.timeFromClientX(clientX));
   };
   return (
     <div
@@ -2846,21 +3496,21 @@ function WaveformTimeline(props: {
         if (event.button !== 0) return;
         event.preventDefault();
         suppressClickRef.current = true;
+        pointerSeekingRef.current = true;
         props.onSeekingChange(true);
         event.currentTarget.setPointerCapture(event.pointerId);
-        updateAutoScroll(event.clientX);
-        scrubFromClientX(event.clientX);
+        props.scrubFromClientX(event.clientX);
       }}
       onPointerMove={(event) => {
         if ((event.buttons & 1) !== 1 || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        updateAutoScroll(event.clientX);
-        scrubFromClientX(event.clientX);
+        props.scrubFromClientX(event.clientX);
       }}
       onPointerUp={(event) => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
-        stopAutoScroll();
+        pointerSeekingRef.current = false;
+        props.stopScrubAutoScroll();
         props.onSeekingChange(false);
         window.setTimeout(() => {
           suppressClickRef.current = false;
@@ -2870,7 +3520,8 @@ function WaveformTimeline(props: {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
           event.currentTarget.releasePointerCapture(event.pointerId);
         }
-        stopAutoScroll();
+        pointerSeekingRef.current = false;
+        props.stopScrubAutoScroll();
         props.onSeekingChange(false);
         window.setTimeout(() => {
           suppressClickRef.current = false;
@@ -2884,21 +3535,19 @@ function WaveformTimeline(props: {
         seekFromClientX(event.clientX);
       }}
       onMouseDown={(event) => {
-        if (event.button !== 0 || dragClientXRef.current !== null) return;
+        if (event.button !== 0 || pointerSeekingRef.current) return;
         event.preventDefault();
         suppressClickRef.current = true;
         mouseSeekingRef.current = true;
         props.onSeekingChange(true);
-        updateAutoScroll(event.clientX);
-        scrubFromClientX(event.clientX);
+        props.scrubFromClientX(event.clientX);
         const move = (moveEvent: MouseEvent) => {
           if (!mouseSeekingRef.current) return;
-          updateAutoScroll(moveEvent.clientX);
-          scrubFromClientX(moveEvent.clientX);
+          props.scrubFromClientX(moveEvent.clientX);
         };
         const up = () => {
           mouseSeekingRef.current = false;
-          stopAutoScroll();
+          props.stopScrubAutoScroll();
           props.onSeekingChange(false);
           window.setTimeout(() => {
             suppressClickRef.current = false;
@@ -2912,14 +3561,17 @@ function WaveformTimeline(props: {
     >
       <svg width={props.width} height="86" viewBox={`0 0 ${props.width} 86`} preserveAspectRatio="none">
         <rect width={props.width} height="86" fill="#101820" />
-        {props.segments.map((segment) => (
+        {[
+          ...props.segments.filter((segment) => segment.id !== props.selectedSegmentId),
+          ...props.segments.filter((segment) => segment.id === props.selectedSegmentId),
+        ].map((segment) => (
           <rect
             key={segment.id}
             x={(segment.start / safeDuration) * props.width}
             y="10"
             width={Math.max(1, ((segment.end - segment.start) / safeDuration) * props.width)}
             height="66"
-            fill={segment.id === props.selectedSegmentId ? "rgba(242, 109, 91, 0.3)" : "rgba(69, 179, 157, 0.26)"}
+            fill={segment.id === props.selectedSegmentId ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
           />
         ))}
         {props.waveformPhase === "streaming" || props.waveformPhase === "finalizing" ? (
@@ -3053,26 +3705,48 @@ function SegmentTimeline(props: {
   width: number;
   viewportRef: React.RefObject<HTMLDivElement>;
   onChange: (patch: Partial<Segment>) => void;
+  onChangeCommitted: () => void;
   onEditingChange: (editing: boolean) => void;
+  onEditTiming: () => void;
 }) {
   const safeDuration = Math.max(0.001, props.duration);
   const segment = props.segment;
+  const [draggingEdge, setDraggingEdge] = useState<"start" | "end" | null>(null);
   const startX = segment ? (segment.start / safeDuration) * props.width : 0;
   const endX = segment ? (segment.end / safeDuration) * props.width : 0;
+  const draggingX = draggingEdge === "start" ? startX : draggingEdge === "end" ? endX : null;
+  const setHandleEditing = (edge: "start" | "end", editing: boolean) => {
+    setDraggingEdge(editing ? edge : null);
+    props.onEditingChange(editing);
+  };
   return (
     <div className="segment-timeline timeline-row" style={{ width: props.width }}>
       <div className="segment-track" style={{ width: props.width }}>
         {segment ? (
           <>
-            <div className="segment-range" style={{ left: startX, width: Math.max(2, endX - startX) }} />
+            {draggingX !== null ? (
+              <div className="cut-boundary-drag-guide" style={{ left: draggingX }} />
+            ) : null}
+            <button
+              type="button"
+              className="segment-range"
+              style={{ left: startX, width: Math.max(2, endX - startX) }}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                props.onEditTiming();
+              }}
+              aria-label={tr("segmentTiming.title")}
+            />
             <DragHandle
               left={startX}
               label="start"
               width={props.width}
               duration={safeDuration}
               viewportRef={props.viewportRef}
-              onEditingChange={props.onEditingChange}
+              onEditingChange={(editing) => setHandleEditing("start", editing)}
               onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
+              onChangeCommitted={props.onChangeCommitted}
             />
             <DragHandle
               left={endX}
@@ -3080,8 +3754,9 @@ function SegmentTimeline(props: {
               width={props.width}
               duration={safeDuration}
               viewportRef={props.viewportRef}
-              onEditingChange={props.onEditingChange}
+              onEditingChange={(editing) => setHandleEditing("end", editing)}
               onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
+              onChangeCommitted={props.onChangeCommitted}
             />
           </>
         ) : null}
@@ -3098,6 +3773,7 @@ function DragHandle(props: {
   viewportRef: React.RefObject<HTMLDivElement>;
   onEditingChange: (editing: boolean) => void;
   onChange: (time: number) => void;
+  onChangeCommitted: () => void;
 }) {
   const pointerIdRef = useRef<number | null>(null);
   const mouseDraggingRef = useRef(false);
@@ -3114,6 +3790,7 @@ function DragHandle(props: {
     }
     pointerIdRef.current = null;
     props.onEditingChange(false);
+    props.onChangeCommitted();
   };
 
   return (
@@ -3143,6 +3820,7 @@ function DragHandle(props: {
         finishDrag(event.currentTarget, event.pointerId);
       }}
       onMouseDown={(event) => {
+        if (pointerIdRef.current !== null) return;
         event.preventDefault();
         event.stopPropagation();
         mouseDraggingRef.current = true;
@@ -3155,6 +3833,7 @@ function DragHandle(props: {
         const up = () => {
           mouseDraggingRef.current = false;
           props.onEditingChange(false);
+          props.onChangeCommitted();
           window.removeEventListener("mousemove", move);
           window.removeEventListener("mouseup", up);
         };
@@ -3681,6 +4360,88 @@ function exportRenderDetail(plan: ExportRenderPlanItem) {
 
 function formatDuration(seconds: number) {
   return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+}
+
+function WhisperDownloadProgressDialog(props: {
+  open: boolean;
+  job: JobRecord | null;
+  onClose: () => void;
+}) {
+  return (
+    <ModelDownloadProgressDialog
+      {...props}
+      title={tr("dialogs.whisperDownloadTitle")}
+      description={tr("dialogs.whisperDownloadDescription")}
+      preparing={tr("dialogs.whisperDownloadPreparing")}
+      failed={tr("dialogs.whisperDownloadFailed")}
+      complete={tr("dialogs.whisperDownloadComplete")}
+    />
+  );
+}
+
+function ModelDownloadProgressDialog(props: {
+  open: boolean;
+  job: JobRecord | null;
+  title: string;
+  description: string;
+  preparing: string;
+  failed: string;
+  complete: string;
+  onClose: () => void;
+}) {
+  const status = props.job?.status ?? "queued";
+  const result =
+    props.job?.result && typeof props.job.result === "object"
+      ? props.job.result as {
+          downloaded_bytes?: number;
+          total_bytes?: number;
+          installed_bytes?: number | null;
+        }
+      : null;
+  const downloadedBytes = result?.downloaded_bytes ?? (status === "completed" ? result?.installed_bytes : null);
+  const totalBytes = result?.total_bytes ?? (status === "completed" ? result?.installed_bytes : null);
+  const progress =
+    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
+      ? clamp(downloadedBytes / totalBytes, 0, 1)
+      : clamp(props.job?.progress ?? 0, 0, 1);
+  const transferLabel =
+    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
+      ? `${formatDownloadBytes(downloadedBytes)} / ${formatDownloadBytes(totalBytes)}`
+      : null;
+  return (
+    <Dialog open={props.open} title={props.title} onClose={props.onClose}>
+      <div className="export-progress">
+        <p className="dialog-message">{props.description}</p>
+        <div className={`export-progress-status export-progress-status-${status}`}>
+          <span>
+            {status === "completed"
+              ? props.complete
+              : status === "failed"
+                ? props.failed
+                : props.preparing}
+          </span>
+          <strong>{Math.round(progress * 100)}%</strong>
+        </div>
+        <progress value={progress} max={1} />
+        {transferLabel ? <div className="export-progress-note">{transferLabel}</div> : null}
+        {props.job?.error ? <div className="warning-text">{props.job.error}</div> : null}
+      </div>
+      {status === "completed" || status === "failed" ? (
+        <div className="dialog-actions">
+          <Button variant="secondary" onClick={props.onClose}>
+            {tr("common.close")}
+          </Button>
+        </div>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function formatDownloadBytes(value: number) {
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
+  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${Math.max(0, Math.round(value))} B`;
 }
 
 function ExportProgressDialog(props: {

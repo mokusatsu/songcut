@@ -9,6 +9,16 @@ __pycache__/
 .hf-xet/
 .ov-cache/
 third_party/
+!third_party/
+third_party/*
+!third_party/ass-effects23/
+!third_party/ass-effects23/**
+!third_party/uta_align/
+!third_party/uta_align/**
+third_party/uta_align/**/__pycache__/
+third_party/uta_align/**/*.pyc
+third_party/uta_align/.pytest_cache/
+third_party/uta_align/src/*.egg-info/
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/

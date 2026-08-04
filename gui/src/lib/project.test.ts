@@ -7,6 +7,8 @@ import {
   createProjectDocument,
   filenameTemplateFromProject,
   normalizeInterruptedOperation,
+  projectMode,
+  subtitleStateFromProject,
   transcriptSettingsAreStale,
   waveformFromProject,
 } from "./project";
@@ -68,6 +70,22 @@ const segment: Segment = {
   },
 };
 
+describe("sub-mode project", () => {
+  it("creates a separate document with one default lyrics lane", () => {
+    const document = createProjectDocument(
+      "C:\\media\\archive.mp4.sub.songcut",
+      source,
+      videoInfo,
+      "sub"
+    );
+
+    expect(projectMode(document)).toBe("sub");
+    expect(subtitleStateFromProject(document).lanes).toHaveLength(1);
+    expect(subtitleStateFromProject(document).lanes[0].style.alignment).toBe(2);
+    expect(() => assertProjectDocument(document)).not.toThrow();
+  });
+});
+
 const analysis: AnalysisResult = {
   schema_version: 3,
   source_path: source.path,
@@ -117,7 +135,15 @@ describe("project document composition", () => {
       segments: [segment],
       exportCandidates: analysis.export_candidates,
       analysisDevice: "gpu",
-      whisper: { enabled: true, model: "small", language: "ja", device: "auto" },
+      whisper: {
+        enabled: true,
+        model: "small",
+        language: "ja",
+        device: "auto",
+        demucsDevice: "auto",
+        mmsDevice: "auto",
+        lyricsAlignmentAlgorithm: "songcut-standard"
+      },
       filenameTemplate: "{title}_{start}",
       selectedSegmentId: segment.id,
       currentTime: 2,
@@ -213,8 +239,16 @@ describe("project document composition", () => {
     });
   });
 
-  it("defaults new projects to Whisper off, Small, Japanese, and Auto", () => {
-    expect(DEFAULT_WHISPER_SETTINGS).toEqual({ enabled: false, model: "small", language: "ja", device: "auto" });
+  it("defaults new projects to Whisper off, Large v3 Turbo INT8, Japanese, and Auto", () => {
+    expect(DEFAULT_WHISPER_SETTINGS).toEqual({
+      enabled: false,
+      model: "whisper-large-v3-turbo-int8-ov",
+      language: "ja",
+      device: "auto",
+      demucsDevice: "auto",
+      mmsDevice: "auto",
+      lyricsAlignmentAlgorithm: "songcut-standard",
+    });
   });
 
   it("defaults new and existing v3 projects to the standard filename template", () => {
@@ -235,10 +269,11 @@ describe("project document composition", () => {
   });
 
   it("marks only model or requested-language changes as transcript-stale", () => {
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, enabled: true })).toBe(false);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, device: "gpu" })).toBe(false);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, model: "base" })).toBe(true);
-    expect(transcriptSettingsAreStale(segment, { ...DEFAULT_WHISPER_SETTINGS, language: "auto" })).toBe(true);
+    const matchingSettings = { ...DEFAULT_WHISPER_SETTINGS, model: "small" as const };
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, enabled: true })).toBe(false);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, device: "gpu" })).toBe(false);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, model: "base" })).toBe(true);
+    expect(transcriptSettingsAreStale(segment, { ...matchingSettings, language: "auto" })).toBe(true);
   });
 
   it("turns a persisted running operation into an interrupted operation", () => {

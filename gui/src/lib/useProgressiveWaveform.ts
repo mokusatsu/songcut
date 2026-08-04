@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cancelOrReleaseWaveform, getWaveformUpdates, startWaveform } from "@/lib/api";
+import { createPendingTask, failTask } from "@/lib/useTaskRegistry";
 import type { JobRecord, WaveformMetadata, WaveformPoint, WaveformUpdate } from "@/types";
 import { tr } from "@/i18n";
 
@@ -90,7 +91,9 @@ export function useProgressiveWaveform(
         metadata: null,
         generated: true
       });
+      let trackedJob = createPendingTask("waveform", tr("messages.waveformPreparing"));
       let started: JobRecord | null = null;
+      onJobUpdateRef.current(trackedJob);
       try {
         if (!baseUrlRef.current) throw new Error("songcut API is unavailable");
         started = await startWaveform(baseUrlRef.current, sourcePath);
@@ -99,6 +102,7 @@ export function useProgressiveWaveform(
           return;
         }
         jobIdRef.current = started.id;
+        trackedJob = started;
         onJobUpdateRef.current(started);
         let cursor = 0;
         for (;;) {
@@ -125,7 +129,8 @@ export function useProgressiveWaveform(
                 : current
             );
           }
-          onJobUpdateRef.current(jobFromWaveformUpdate(started, update));
+          trackedJob = jobFromWaveformUpdate(started, update);
+          onJobUpdateRef.current(trackedJob);
           if (update.has_more) continue;
           if (update.status === "failed") throw new Error(update.error || "waveform generation failed");
           if (update.status === "cancelled") return;
@@ -167,16 +172,7 @@ export function useProgressiveWaveform(
             ? { ...current, phase: "failed", progress: 1, message: tr("messages.waveformUnavailable"), error: message }
             : current
         );
-        if (started) {
-          onJobUpdateRef.current({
-            ...started,
-            status: "failed",
-            progress: 1,
-            message: tr("messages.waveformUnavailable"),
-            error: message,
-            updated_at: Date.now() / 1000
-          });
-        }
+        onJobUpdateRef.current(failTask(trackedJob, message, tr("messages.waveformUnavailable")));
       }
     },
     [cancelActive]

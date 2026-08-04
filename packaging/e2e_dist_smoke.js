@@ -255,6 +255,29 @@ async function clickAt(cdp, selector, xRatio = 0.5, yRatio = 0.5) {
   await sleep(300);
 }
 
+async function doubleClickAt(cdp, selector, xRatio = 0.5, yRatio = 0.5) {
+  const point = await evaluate(
+    cdp,
+    `(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width * ${xRatio},
+        y: rect.top + rect.height * ${yRatio}
+      };
+    })()`
+  );
+  if (!point) throw new Error(`Selector not found: ${selector}`);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await sleep(80);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 2 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 2 });
+  await sleep(300);
+}
+
 async function clickSelector(cdp, selector, occurrence = 0) {
   const ok = await evaluate(
     cdp,
@@ -411,6 +434,10 @@ async function shortcutState(cdp) {
       const video = document.querySelector("video");
       const selected = document.querySelector(".segment-list tbody tr.selected");
       const handles = [...document.querySelectorAll(".drag-handle")].map((handle) => handle.style.left);
+      const timelineWidth = document.querySelector(".timeline-content")?.getBoundingClientRect().width || 0;
+      const handleRatios = [...document.querySelectorAll(".drag-handle")].map(
+        (handle) => timelineWidth > 0 ? Number.parseFloat(handle.style.left) / timelineWidth : 0
+      );
       const zoom = [...document.querySelectorAll("button")]
         .map((button) => button.innerText.trim())
         .find((text) => /^\\d+%$/.test(text)) || "";
@@ -419,6 +446,7 @@ async function shortcutState(cdp) {
         currentTime: video?.currentTime ?? null,
         paused: video?.paused ?? null,
         handles,
+        handleRatios,
         zoom
       };
     })()`
@@ -430,7 +458,8 @@ function assertShortcutStateEqual(before, after, message) {
     before.selectedId === after.selectedId &&
     before.paused === after.paused &&
     before.zoom === after.zoom &&
-    JSON.stringify(before.handles) === JSON.stringify(after.handles) &&
+    before.handleRatios.length === after.handleRatios.length &&
+    before.handleRatios.every((value, index) => Math.abs(value - after.handleRatios[index]) <= 0.0001) &&
     Math.abs((before.currentTime ?? 0) - (after.currentTime ?? 0)) <= 0.04;
   assertPass(same, message, { before, after });
 }
@@ -1374,6 +1403,55 @@ function cleanup(processHandle, cdp) {
   }
 }
 
+async function runJapaneseLocaleCheck(env) {
+  fs.writeFileSync(path.join(e2eUserDataDir, "app-preferences.json"), `${JSON.stringify({ uiLanguage: "ja" }, null, 2)}\n`);
+  const japanesePort = port + 1;
+  const japaneseProcess = spawn(
+    path.join(root, "songcut.exe"),
+    [`--remote-debugging-port=${japanesePort}`],
+    { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }
+  );
+  let japaneseCdp;
+  try {
+    const japanesePage = await getPage(japanesePort);
+    japaneseCdp = await connect(japanesePage.webSocketDebuggerUrl);
+    await japaneseCdp.send("Runtime.enable");
+    await waitFor(
+      japaneseCdp,
+      `document.body.innerText.includes("読み込む") && document.body.innerText.includes("設定")`,
+      30_000,
+      "Japanese initial render"
+    );
+    await clickButton(japaneseCdp, "設定");
+    await clickAt(japaneseCdp, '.dialog[aria-label="設定"] .settings-tabs-list [role="tab"]:nth-child(1)');
+    await waitFor(
+      japaneseCdp,
+      `document.querySelector('.dialog[aria-label="設定"] [role="tab"][data-state="active"]')?.innerText === "共通"`,
+      5000,
+      "Japanese Common settings tab"
+    );
+    const languageSettings = await waitFor(
+      japaneseCdp,
+      `(() => {
+        const dialog = document.querySelector('.dialog[aria-label="設定"]');
+        if (!dialog) return false;
+        const options = [...dialog.querySelectorAll('#ui-language option')].map((option) => option.textContent.trim());
+        const text = dialog.innerText;
+        return text.includes("Language / 言語") &&
+          text.includes("Changes apply the next time songcut starts. / 変更は次回の songcut 起動時に適用されます。") &&
+          JSON.stringify(options) === JSON.stringify(["System default / システムの設定", "English / 英語", "Japanese / 日本語"])
+          ? { text, options }
+          : false;
+      })()`,
+      10_000,
+      "Japanese bilingual language settings"
+    );
+    log("JAPANESE_LOCALE_OK", languageSettings);
+  } finally {
+    cleanup(japaneseProcess, japaneseCdp);
+  }
+}
+
 (async () => {
   ensureTestVideo();
   for (const localeFile of ["en-US.pak", "ja.pak"]) {
@@ -1386,6 +1464,10 @@ function cleanup(processHandle, cdp) {
     SONGCUT_E2E_OUTPUT_DIR: outputDir,
     SONGCUT_E2E_USER_DATA_DIR: e2eUserDataDir
   };
+  if (process.env.SONGCUT_E2E_JAPANESE_ONLY === "1") {
+    await runJapaneseLocaleCheck(env);
+    return;
+  }
   const processHandle = spawn(
     path.join(root, "songcut.exe"),
     [`--remote-debugging-port=${port}`],
@@ -1509,7 +1591,7 @@ function cleanup(processHandle, cdp) {
         initialProject.schema_version === 3 &&
         (initialProject.waveform_snapshot === null || typeof initialProject.waveform_snapshot?.data_base64 === "string") &&
         initialProject.settings?.whisper?.enabled === false &&
-        initialProject.settings?.whisper?.model === "small" &&
+        initialProject.settings?.whisper?.model === "whisper-large-v3-turbo-int8-ov" &&
         initialProject.settings?.whisper?.language === "ja" &&
         initialProject.settings?.whisper?.device === "auto" &&
         initialProject.settings?.export?.filename_template === "{index}_{title}",
@@ -1574,18 +1656,20 @@ function cleanup(processHandle, cdp) {
     const settingsDialog = await waitFor(
       cdp,
       `(() => {
-        const dialog = [...document.querySelectorAll(".dialog")].find((node) => node.innerText.includes("Whisper transcription"));
+        const dialog = document.querySelector('.dialog[aria-label="Settings"]');
         const text = dialog?.innerText || "";
         const filenameTemplate = dialog?.querySelector("#export-filename-template")?.value;
         const hasSettingsScrollArea = !!dialog?.querySelector(".settings-dialog-scroll.scroll-area .scroll-area-viewport");
-        return dialog && text.includes("Prepare Whisper Model") && text.includes("Playback and analysis") &&
+        const activeTab = dialog?.querySelector('[role="tab"][data-state="active"]')?.innerText;
+        return dialog && activeTab === "Cut" && text.includes("Display") && text.includes("Analysis") &&
+          text.includes("Local boundary refinement") && text.includes("Transcription") &&
           text.includes("Export") && text.includes("Filename template") && filenameTemplate === "{index}_{title}" &&
           hasSettingsScrollArea ? text : false;
       })()`,
       10_000,
-      "Settings dialog with Whisper controls"
+      "Settings dialog Cut tab"
     );
-    log("SETTINGS_DIALOG_OK", settingsDialog);
+    log("SETTINGS_CUT_TAB_OK", settingsDialog);
     const settingsScrollArea = await evaluate(
       cdp,
       `(() => {
@@ -1642,6 +1726,43 @@ function cleanup(processHandle, cdp) {
     );
     assertPass(boundaryPostRollChanged, "Boundary refinement value was not editable.");
     log("BOUNDARY_REFINEMENT_SETTINGS_OK", boundarySettings);
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(4)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "AI Models"`,
+      5000,
+      "AI model settings tab activation"
+    );
+    const aiModelSettings = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('.dialog[aria-label="Settings"]');
+        const activeTab = dialog?.querySelector('[role="tab"][data-state="active"]')?.innerText;
+        const sections = [...(dialog?.querySelectorAll(".settings-section") || [])];
+        const demucs = sections.find((section) => section.innerText.includes("Vocal separation (Demucs)"));
+        const mms = sections.find((section) => section.innerText.includes("Local onset recognition (MMS)"));
+        const values = (section) => [...(section?.querySelectorAll("select option") || [])].map((option) => option.value);
+        return {
+          activeTab,
+          text: dialog?.innerText || "",
+          demucsDevices: values(demucs),
+          mmsDevices: values(mms),
+          mmsText: mms?.innerText || ""
+        };
+      })()`
+    );
+    assertPass(
+      aiModelSettings.activeTab === "AI Models" &&
+        aiModelSettings.text.includes("Prepare Whisper Model") &&
+        aiModelSettings.text.includes("Prepare Demucs Model") &&
+        aiModelSettings.text.includes("Prepare MMS Model") &&
+        JSON.stringify(aiModelSettings.demucsDevices) === JSON.stringify(["auto", "npu", "gpu", "cpu"]) &&
+        JSON.stringify(aiModelSettings.mmsDevices) === JSON.stringify(["auto", "gpu", "cpu"]) &&
+        aiModelSettings.mmsText.includes("NPU is not supported"),
+      "OpenVINO device choices were not organized per model capability.",
+      aiModelSettings
+    );
+    log("AI_MODEL_DEVICE_SETTINGS_OK", aiModelSettings);
     assertPass(
       await evaluate(cdp, `!document.querySelector('input[list], datalist')`),
       "Settings still uses the native language datalist."
@@ -1721,10 +1842,19 @@ function cleanup(processHandle, cdp) {
       10_000,
       "Settings dialog Whisper ready state"
     );
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(2)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "Cut"`,
+      5000,
+      "Cut settings tab restore"
+    );
     const whisperEnabled = await evaluate(
       cdp,
       `(() => {
-        const checkbox = document.querySelector('.settings-dialog-content .whisper-settings input[type="checkbox"]');
+        const section = [...document.querySelectorAll(".settings-section")]
+          .find((node) => node.innerText.includes("Automatically transcribe with Whisper"));
+        const checkbox = section?.querySelector('input[type="checkbox"]');
         if (!checkbox) return false;
         if (!checkbox.checked) checkbox.click();
         return checkbox.checked;
@@ -1800,6 +1930,52 @@ function cleanup(processHandle, cdp) {
     assertPass(beforeRows[1][1] === "Encore Song", "Second guide title was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][2] === "guide-002", "Second guide entry was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][3] === "0:02" && beforeRows[1][4] === "0:04", "Second guided segment range was not reflected in the analysis segment list.", beforeRows);
+
+    await doubleClickAt(cdp, ".segment-range");
+    const timingDialog = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('.dialog[aria-label="Segment timing"]');
+        const values = [...(dialog?.querySelectorAll(".segment-timing-field input") || [])].map((input) => input.value);
+        return dialog && values.length === 2 ? { values, text: dialog.innerText } : false;
+      })()`,
+      5000,
+      "Cut segment timing dialog"
+    );
+    assertPass(
+      JSON.stringify(timingDialog.values) === JSON.stringify(["0:00.000", "0:02.000"]) &&
+        timingDialog.text.includes("Specify duration") &&
+        timingDialog.text.includes("Specify end time"),
+      "Cut segment timing dialog did not open with the selected segment range.",
+      timingDialog
+    );
+    await clickAt(cdp, '.dialog[aria-label="Segment timing"] .segment-timing-field input');
+    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38);
+    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38, { modifiers: 8 });
+    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38, { modifiers: 2 });
+    const timingKeyboardValue = await evaluate(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Segment timing"] .segment-timing-field input')?.value`
+    );
+    assertPass(
+      timingKeyboardValue === "0:01.101",
+      "Cut timing keyboard increments did not apply 0.1, 0.001, and 1 second steps.",
+      timingKeyboardValue
+    );
+    await clickSelector(cdp, '.dialog[aria-label="Segment timing"] .segment-timing-mode input[type="radio"]', 1);
+    const endModeValue = await waitFor(
+      cdp,
+      `(() => {
+        const inputs = document.querySelectorAll('.dialog[aria-label="Segment timing"] .segment-timing-field input');
+        return inputs.length === 2 && inputs[1].value === "0:03.101" ? inputs[1].value : false;
+      })()`,
+      5000,
+      "Cut end-time specification"
+    );
+    log("SEGMENT_TIMING_DIALOG_OK", { timingKeyboardValue, endModeValue });
+    await clickButton(cdp, "Cancel");
+    await waitFor(cdp, `!document.querySelector('.dialog[aria-label="Segment timing"]')`, 5000, "Cut segment timing dialog close");
+
     const waveformRender = await evaluate(
       cdp,
       `(() => {
@@ -2713,45 +2889,7 @@ function cleanup(processHandle, cdp) {
   }
 
   await sleep(750);
-  fs.writeFileSync(path.join(e2eUserDataDir, "app-preferences.json"), `${JSON.stringify({ uiLanguage: "ja" }, null, 2)}\n`);
-  const japanesePort = port + 1;
-  const japaneseProcess = spawn(
-    path.join(root, "songcut.exe"),
-    [`--remote-debugging-port=${japanesePort}`],
-    { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] }
-  );
-  let japaneseCdp;
-  try {
-    const japanesePage = await getPage(japanesePort);
-    japaneseCdp = await connect(japanesePage.webSocketDebuggerUrl);
-    await japaneseCdp.send("Runtime.enable");
-    await waitFor(
-      japaneseCdp,
-      `document.body.innerText.includes("読み込む") && document.body.innerText.includes("設定")`,
-      30_000,
-      "Japanese initial render"
-    );
-    await clickButton(japaneseCdp, "設定");
-    const languageSettings = await waitFor(
-      japaneseCdp,
-      `(() => {
-        const dialog = document.querySelector('.dialog[aria-label="設定"]');
-        if (!dialog) return false;
-        const options = [...dialog.querySelectorAll('#ui-language option')].map((option) => option.textContent.trim());
-        const text = dialog.innerText;
-        return text.includes("Language / 言語") &&
-          text.includes("Changes apply the next time songcut starts. / 変更は次回の songcut 起動時に適用されます。") &&
-          JSON.stringify(options) === JSON.stringify(["System default / システムの設定", "English / 英語", "Japanese / 日本語"])
-          ? { text, options }
-          : false;
-      })()`,
-      10_000,
-      "Japanese bilingual language settings"
-    );
-    log("JAPANESE_LOCALE_OK", languageSettings);
-  } finally {
-    cleanup(japaneseProcess, japaneseCdp);
-  }
+  await runJapaneseLocaleCheck(env);
 })().catch((error) => {
   log("E2E_FAIL", { message: error.message, stack: error.stack });
   for (const imageName of ["songcut.exe", "songcut-electron.exe"]) {

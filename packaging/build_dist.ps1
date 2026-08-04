@@ -52,29 +52,46 @@ function ConvertTo-ZipEntryName {
 function Test-ExcludedArchivePath {
   param(
     [string]$EntryName,
-    [string[]]$ExcludedTopLevelDirectories
+    [string[]]$ExcludedTopLevelDirectories,
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
-  if ($ExcludedTopLevelDirectories.Count -eq 0) {
-    return $false
+  $TopLevelName = ($EntryName -split "/", 2)[0]
+  if ($ExcludedTopLevelDirectories -contains $TopLevelName) {
+    return $true
   }
 
-  $TopLevelName = ($EntryName -split "/", 2)[0]
-  return $ExcludedTopLevelDirectories -contains $TopLevelName
+  foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+    $NormalizedDirectoryName = $DirectoryName.Trim([char[]]@("/", "\")) -replace "\\", "/"
+    if (
+      $EntryName.Equals($NormalizedDirectoryName, [System.StringComparison]::OrdinalIgnoreCase) -or
+      $EntryName.StartsWith("$NormalizedDirectoryName/", [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Assert-ReleaseArchive {
   param(
     [string]$SourceDirectory,
     [string]$ArchivePath,
-    [string[]]$EmptyTopLevelDirectories = @()
+    [string[]]$EmptyTopLevelDirectories = @(),
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
   $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
   $ExpectedFiles = @(
     Get-ChildItem -LiteralPath $SourceRoot -Recurse -Force -File |
       ForEach-Object { ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName } |
-      Where-Object { -not (Test-ExcludedArchivePath -EntryName $_ -ExcludedTopLevelDirectories $EmptyTopLevelDirectories) } |
+      Where-Object {
+        -not (Test-ExcludedArchivePath `
+          -EntryName $_ `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)
+      } |
       Sort-Object
   )
 
@@ -110,6 +127,19 @@ function Assert-ReleaseArchive {
         throw "Release archive directory '$RootEntryName' was not empty: $UnexpectedEntry"
       }
     }
+
+    foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+      $NormalizedDirectoryName = $DirectoryName.Trim([char[]]@("/", "\")) -replace "\\", "/"
+      $UnexpectedEntry = $EntryNames |
+        Where-Object {
+          $_.Equals($NormalizedDirectoryName, [System.StringComparison]::OrdinalIgnoreCase) -or
+          $_.StartsWith("$NormalizedDirectoryName/", [System.StringComparison]::OrdinalIgnoreCase)
+        } |
+        Select-Object -First 1
+      if ($UnexpectedEntry) {
+        throw "Release archive unexpectedly contains excluded directory '$NormalizedDirectoryName': $UnexpectedEntry"
+      }
+    }
   }
   finally {
     $Archive.Dispose()
@@ -120,7 +150,8 @@ function New-ReleaseArchive {
   param(
     [string]$SourceDirectory,
     [string]$DestinationPath,
-    [string[]]$EmptyTopLevelDirectories = @()
+    [string[]]$EmptyTopLevelDirectories = @(),
+    [string[]]$ExcludedArchiveDirectories = @()
   )
 
   $SourceRoot = (Resolve-Path -LiteralPath $SourceDirectory).ProviderPath.TrimEnd([char[]]@("\", "/"))
@@ -130,6 +161,16 @@ function New-ReleaseArchive {
   foreach ($DirectoryName in $EmptyTopLevelDirectories) {
     if ([string]::IsNullOrWhiteSpace($DirectoryName) -or $DirectoryName -match "[\\/]") {
       throw "Empty archive directory names must be top-level names: $DirectoryName"
+    }
+  }
+
+  foreach ($DirectoryName in $ExcludedArchiveDirectories) {
+    if (
+      [string]::IsNullOrWhiteSpace($DirectoryName) -or
+      [System.IO.Path]::IsPathRooted($DirectoryName) -or
+      ($DirectoryName -replace "\\", "/") -match "(^|/)\.\.(/|$)"
+    ) {
+      throw "Excluded archive directories must be safe relative paths: $DirectoryName"
     }
   }
 
@@ -149,7 +190,10 @@ function New-ReleaseArchive {
       Sort-Object FullName |
       ForEach-Object {
         $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
-        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+        if (-not (Test-ExcludedArchivePath `
+          -EntryName $EntryName `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)) {
           $Archive.CreateEntry("$EntryName/") | Out-Null
         }
       }
@@ -158,7 +202,10 @@ function New-ReleaseArchive {
       Sort-Object FullName |
       ForEach-Object {
         $EntryName = ConvertTo-ZipEntryName -SourceRoot $SourceRoot -ItemPath $_.FullName
-        if (-not (Test-ExcludedArchivePath -EntryName $EntryName -ExcludedTopLevelDirectories $EmptyTopLevelDirectories)) {
+        if (-not (Test-ExcludedArchivePath `
+          -EntryName $EntryName `
+          -ExcludedTopLevelDirectories $EmptyTopLevelDirectories `
+          -ExcludedArchiveDirectories $ExcludedArchiveDirectories)) {
           [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
             $Archive,
             $_.FullName,
@@ -174,7 +221,8 @@ function New-ReleaseArchive {
     Assert-ReleaseArchive `
       -SourceDirectory $SourceRoot `
       -ArchivePath $TemporaryPath `
-      -EmptyTopLevelDirectories $EmptyTopLevelDirectories
+      -EmptyTopLevelDirectories $EmptyTopLevelDirectories `
+      -ExcludedArchiveDirectories $ExcludedArchiveDirectories
 
     if (Test-Path -LiteralPath $DestinationPath) {
       Remove-Item -LiteralPath $DestinationPath -Force
@@ -229,13 +277,11 @@ if ($BuildNumber -notmatch "^\d+$") {
 }
 $AppVersion = "$BaseVersion.$BuildNumber"
 
-$env:CI = "true"
-
 New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
 
 Push-Location $GuiRoot
 try {
-  & $PnpmExe run build
+  & $PnpmExe --config.verify-deps-before-run=warn run build
   if ($LASTEXITCODE -ne 0) {
     throw "GUI build failed with exit code $LASTEXITCODE"
   }
@@ -252,6 +298,7 @@ finally {
   --contents-directory runtime `
   --name songcut `
   --icon $AppIcon `
+  --paths (Join-Path $RepoRoot "third_party\uta_align\src") `
   --distpath $PyinstallerDist `
   --workpath $PyinstallerWork `
   --specpath $PyinstallerWork `
@@ -263,16 +310,26 @@ finally {
   --collect-all starlette `
   --collect-all pydantic `
   --collect-all pydantic_core `
+  --collect-all librosa `
+  --collect-all soundfile `
+  --collect-data uroman `
+  --collect-data pykakasi `
   --collect-all win_safesubprocess `
-  --exclude-module torch `
+  --collect-submodules uta_align `
   --exclude-module tensorflow `
   --exclude-module transformers `
   --exclude-module optimum `
   --exclude-module pandas `
-  --exclude-module scipy `
   --exclude-module sklearn `
   --exclude-module PIL `
   --exclude-module matplotlib `
+  --exclude-module pytest `
+  --exclude-module torch `
+  --exclude-module torchaudio `
+  --exclude-module demucs `
+  --exclude-module openvino.torch `
+  --exclude-module openvino.frontend.pytorch `
+  --exclude-module openvino.preprocess.torchvision `
   --exclude-module openpyxl `
   --hidden-import uvicorn.logging `
   --hidden-import uvicorn.loops `
@@ -295,6 +352,26 @@ $LauncherBundle = Join-Path $PyinstallerDist "songcut"
 if (-not (Test-Path $LauncherBundle)) {
   throw "PyInstaller output was not found: $LauncherBundle"
 }
+
+# `--collect-all openvino` also includes model-conversion frontends. Songcut
+# executes pre-converted IR only, so remove every PyTorch adapter and header.
+$OpenVinoRuntime = Join-Path $LauncherBundle "runtime\openvino"
+$UnusedPytorchArtifacts = @(
+  (Join-Path $OpenVinoRuntime "torch"),
+  (Join-Path $OpenVinoRuntime "frontend\pytorch"),
+  (Join-Path $OpenVinoRuntime "include\openvino\frontend\pytorch"),
+  (Join-Path $OpenVinoRuntime "preprocess\torchvision"),
+  (Join-Path $OpenVinoRuntime "libs\openvino_pytorch_frontend.dll"),
+  (Join-Path $OpenVinoRuntime "libs\openvino_pytorch_frontend.lib"),
+  (Join-Path $OpenVinoRuntime "tools\ovc\moc_frontend\pytorch_frontend_utils.py"),
+  (Join-Path $OpenVinoRuntime "tools\ovc\moc_frontend\pytorch_frontend_utils.pyi")
+)
+foreach ($Artifact in $UnusedPytorchArtifacts) {
+  if (Test-Path -LiteralPath $Artifact) {
+    Remove-Item -LiteralPath $Artifact -Recurse -Force
+  }
+}
+
 Copy-Item -Path (Join-Path $LauncherBundle "*") -Destination $PackageRoot -Recurse
 
 $ElectronRuntime = Join-Path $GuiRoot "node_modules\electron\dist"
@@ -338,11 +415,30 @@ if (Test-Path $ThirdPartySource) {
   Copy-Item -Path $ThirdPartySource -Destination (Join-Path $PackageRoot "third_party") -Recurse
 }
 
-$ModelSource = Join-Path $RepoRoot ".models\openvino\whisper-small"
-if (Test-Path $ModelSource) {
-  $ModelTarget = Join-Path $PackageRoot "models\openvino"
+$BundledModels = @(
+  @{
+    Source = Join-Path $RepoRoot ".models\openvino\whisper-large-v3-turbo-int8-ov"
+    Name = "whisper-large-v3-turbo-int8-ov"
+    TargetSubdirectory = "openvino"
+  },
+  @{
+    Source = Join-Path $RepoRoot ".models\openvino\demucs-htdemucs-v4"
+    Name = "demucs-htdemucs-v4"
+    TargetSubdirectory = "openvino"
+  },
+  @{
+    Source = Join-Path $RepoRoot ".models\onnx\mms-300m-1130-forced-aligner"
+    Name = "mms-300m-1130-forced-aligner"
+    TargetSubdirectory = "onnx"
+  }
+)
+foreach ($BundledModel in $BundledModels) {
+  if (-not (Test-Path $BundledModel.Source)) {
+    continue
+  }
+  $ModelTarget = Join-Path $PackageRoot "models\$($BundledModel.TargetSubdirectory)"
   New-Item -ItemType Directory -Force -Path $ModelTarget | Out-Null
-  Copy-Item -Path $ModelSource -Destination (Join-Path $ModelTarget "whisper-small") -Recurse
+  Copy-Item -Path $BundledModel.Source -Destination (Join-Path $ModelTarget $BundledModel.Name) -Recurse
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $PackageRoot "logs") | Out-Null
@@ -359,7 +455,8 @@ if ($Release) {
   New-ReleaseArchive `
     -SourceDirectory $PackageRoot `
     -DestinationPath $StandardArchivePath `
-    -EmptyTopLevelDirectories @("third_party", "models")
+    -EmptyTopLevelDirectories @("models") `
+    -ExcludedArchiveDirectories @("third_party/ffmpeg")
 
   Write-Host "Created full release archive: $FullArchivePath"
   Write-Host "Created standard release archive: $StandardArchivePath"

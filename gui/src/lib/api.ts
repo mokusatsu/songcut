@@ -9,15 +9,22 @@ import type {
   WaveformUpdate
 } from "@/types";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
+import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
-export type WhisperModelKey = "tiny" | "base" | "small";
+export type DemucsDevice = "auto" | "npu" | "gpu" | "cpu";
+export type MmsDevice = "auto" | "gpu" | "cpu";
+export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
+export type LyricsAlignmentAlgorithm = "songcut-standard" | "uta-align";
 export type WhisperSettings = {
   enabled: boolean;
   model: WhisperModelKey;
   language: string;
   device: WhisperDevice;
+  demucsDevice: DemucsDevice;
+  mmsDevice: MmsDevice;
+  lyricsAlignmentAlgorithm: LyricsAlignmentAlgorithm;
 };
 
 export type WhisperModelStatus = {
@@ -40,6 +47,25 @@ export type WhisperStatus = {
   devices: Record<WhisperDevice, { device_used?: string; error?: string }>;
   model_id: string;
   ready: boolean;
+};
+
+export type DemucsStatus = {
+  model: string;
+  repo_id: string;
+  ready: boolean;
+  source: "bundled" | "downloaded" | null;
+  model_dir: string;
+  installed_bytes: number | null;
+};
+
+export type MmsStatus = {
+  model: string;
+  variant: string;
+  repo_id: string;
+  ready: boolean;
+  source: "bundled" | "downloaded" | null;
+  model_dir: string;
+  installed_bytes: number | null;
 };
 
 export class ApiError extends Error {
@@ -121,8 +147,24 @@ export function getWhisperStatus(baseUrl: string) {
   return getJson<WhisperStatus>(baseUrl, "/models/whisper");
 }
 
-export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "small") {
+export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "whisper-large-v3-turbo-int8-ov") {
   return postJson<JobRecord>(baseUrl, "/models/whisper/download", { model });
+}
+
+export function getDemucsStatus(baseUrl: string) {
+  return getJson<DemucsStatus>(baseUrl, "/models/demucs");
+}
+
+export function startDemucsDownload(baseUrl: string) {
+  return postJson<JobRecord>(baseUrl, "/models/demucs/download", {});
+}
+
+export function getMmsStatus(baseUrl: string) {
+  return getJson<MmsStatus>(baseUrl, "/models/mms");
+}
+
+export function startMmsDownload(baseUrl: string) {
+  return postJson<JobRecord>(baseUrl, "/models/mms/download", {});
 }
 
 export function startTranscription(
@@ -160,6 +202,69 @@ export function startExport(
     items,
     timestamp_comment_text: timestampCommentText,
     create_source_folder: createSourceFolder
+  });
+}
+
+export function startLyricsAnalysis(
+  baseUrl: string,
+  sourcePath: string,
+  lyricsText: string,
+  settings: WhisperSettings
+) {
+  return postJson<JobRecord>(baseUrl, "/lyrics-analysis/jobs", {
+    source_path: sourcePath,
+    lyrics_text: lyricsText,
+    model: settings.model,
+    language: settings.language,
+    device: settings.device,
+    demucs_device: settings.demucsDevice,
+    mms_device: settings.mmsDevice,
+    algorithm: settings.lyricsAlignmentAlgorithm,
+  });
+}
+
+export function startSubtitleExport(
+  baseUrl: string,
+  sourcePath: string,
+  outputDir: string,
+  videoWidth: number,
+  videoHeight: number,
+  lanes: LyricsLane[]
+) {
+  return postJson<JobRecord>(baseUrl, "/subtitle-export/jobs", {
+    source_path: sourcePath,
+    output_dir: outputDir,
+    play_res_x: videoWidth,
+    play_res_y: videoHeight,
+    lanes: lanes.map((lane) => ({ ...lane, style: normalizeSubtitleStyle(lane.style) })),
+  });
+}
+
+export type SubtitleRenderRequestItem = {
+  segment_id: string;
+  signature: string;
+  text: string;
+  style: LyricsLane["style"];
+};
+
+export type SubtitleRenderResultItem = {
+  segment_id: string;
+  signature: string;
+  png_base64: string;
+  width: number;
+  height: number;
+};
+
+export function startSubtitleRender(
+  baseUrl: string,
+  videoWidth: number,
+  videoHeight: number,
+  items: SubtitleRenderRequestItem[]
+) {
+  return postJson<JobRecord>(baseUrl, "/subtitle-render/jobs", {
+    play_res_x: videoWidth,
+    play_res_y: videoHeight,
+    items: items.map((item) => ({ ...item, style: normalizeSubtitleStyle(item.style) })),
   });
 }
 

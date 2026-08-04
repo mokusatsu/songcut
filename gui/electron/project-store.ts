@@ -16,9 +16,19 @@ import {
 } from "./project-schema.js";
 
 const FINGERPRINT_BYTES = 1024 * 1024;
+let saveQueue: Promise<void> = Promise.resolve();
 
-export function projectPathForVideo(videoPath: string) {
-  return sidecarPathForVideo(path.resolve(videoPath));
+function serializeSave<T>(operation: () => Promise<T>): Promise<T> {
+  const result = saveQueue.then(operation, operation);
+  saveQueue = result.then(
+    () => undefined,
+    () => undefined
+  );
+  return result;
+}
+
+export function projectPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
+  return sidecarPathForVideo(path.resolve(videoPath), mode);
 }
 
 export async function loadProject(projectPath: string): Promise<ProjectOpenResult> {
@@ -50,8 +60,10 @@ export async function loadProject(projectPath: string): Promise<ProjectOpenResul
 export async function saveProject(projectPath: string, document: ProjectDocumentV1): Promise<ProjectSaveResult> {
   ensureProjectExtension(projectPath);
   assertProjectDocument(document);
-  await atomicWriteJson(projectPath, document, (value) => assertProjectDocument(value));
-  return { projectPath, revision: document.revision, savedAt: new Date().toISOString() };
+  return serializeSave(async () => {
+    await atomicWriteJson(projectPath, document, (value) => assertProjectDocument(value));
+    return { projectPath, revision: document.revision, savedAt: new Date().toISOString() };
+  });
 }
 
 export function recoveryPath(userDataPath: string) {
@@ -68,14 +80,18 @@ export async function loadRecovery(userDataPath: string): Promise<RecoverySnapsh
 
 export async function saveRecovery(userDataPath: string, snapshot: RecoverySnapshot): Promise<void> {
   assertRecoverySnapshot(snapshot);
-  await atomicWriteJson(recoveryPath(userDataPath), snapshot, (value) => assertRecoverySnapshot(value));
+  await serializeSave(() =>
+    atomicWriteJson(recoveryPath(userDataPath), snapshot, (value) => assertRecoverySnapshot(value))
+  );
 }
 
 export async function clearRecovery(userDataPath: string): Promise<void> {
-  const target = recoveryPath(userDataPath);
-  await rm(target, { force: true });
-  await rm(`${target}.tmp`, { force: true });
-  await rm(`${target}.bak`, { force: true });
+  await serializeSave(async () => {
+    const target = recoveryPath(userDataPath);
+    await rm(target, { force: true });
+    await rm(`${target}.tmp`, { force: true });
+    await rm(`${target}.bak`, { force: true });
+  });
 }
 
 export async function fingerprintSource(filePath: string): Promise<SourceIdentity> {
