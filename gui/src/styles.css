@@ -774,15 +774,28 @@ progress {
   position: relative;
 }
 
-.waveform-timeline {
+.timeline-waveform-surface {
+  position: relative;
   height: 88px;
   cursor: crosshair;
   touch-action: none;
   user-select: none;
 }
 
-.waveform-timeline svg {
+.timeline-waveform-surface svg {
   display: block;
+}
+
+.timeline-waveform-background {
+  fill: #101820;
+}
+
+.timeline-waveform-background.sub {
+  fill: #122127;
+}
+
+.waveform-timeline {
+  height: 88px;
 }
 
 .waveform-progressive-layer {
@@ -802,6 +815,10 @@ progress {
   stroke: rgba(103, 211, 189, 0.9);
   stroke-width: 1;
   stroke-dasharray: 3 3;
+}
+
+.waveform-path-symmetric-peak {
+  stroke: #d0af42;
 }
 
 @keyframes waveform-final-layer-in {
@@ -1902,19 +1919,15 @@ tr.selected:hover {
   min-height: 350px;
 }
 
-.sub-waveform {
+.sub-waveform-surface {
   position: sticky;
   z-index: 20;
   top: 0;
-  display: block;
-  background: #122127;
-  cursor: crosshair;
+  height: 86px;
 }
 
-.sub-waveform path {
-  fill: none;
-  stroke: #d0af42;
-  stroke-width: 1;
+.sub-waveform {
+  display: block;
 }
 
 .sub-waveform-segment {

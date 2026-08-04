@@ -283,6 +283,21 @@ function cleanup(processHandle, cdp) {
       )
     );
     await waitFor(cdp, `!!document.querySelector(".sub-toolbar")`, 120_000, "Sub mode");
+    const subWaveformDefault = await waitFor(
+      cdp,
+      `(() => {
+        const waveform = document.querySelector(".sub-waveform");
+        const stored = localStorage.getItem("songcut:waveform-display-mode:sub");
+        return waveform?.dataset.waveformMode === "symmetric-peak" &&
+          waveform?.dataset.waveformAmplitudeProfile === "adaptive" &&
+          stored === "symmetric-peak"
+          ? { mode: waveform.dataset.waveformMode, amplitudeProfile: waveform.dataset.waveformAmplitudeProfile, phase: waveform.dataset.waveformPhase, stored }
+          : false;
+      })()`,
+      10_000,
+      "Sub symmetric-peak waveform default"
+    );
+    log("SUB_WAVEFORM_DEFAULT_OK", subWaveformDefault);
     const proxyAfterModeSwitch = await waitFor(
       cdp,
       `(() => {
@@ -1332,7 +1347,7 @@ function cleanup(processHandle, cdp) {
       `(() => {
         const label = [...document.querySelectorAll(".lyrics-label")].find((item) => item.textContent.trim() === ${JSON.stringify(firstLyrics.text)});
         label?.click();
-        const button = [...document.querySelectorAll("button")].find((item) => item.title === "終点を再生");
+        const button = document.querySelector('.sub-toolbar .boundary-controls button[aria-keyshortcuts="D"]');
         button?.click();
         return {
           clicked: !!label && !!button,

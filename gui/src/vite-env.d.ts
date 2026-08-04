@@ -3,7 +3,7 @@
 type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
 type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
-type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
+type WaveformDisplayMode = "rms" | "peak" | "peak-rms" | "symmetric-peak";
 type UiLanguage = "en" | "ja";
 type UiLanguagePreference = "system" | UiLanguage;
 type TimestampExportFormat = "timestamp-comment" | "youtube-chapter" | "tsv-excel" | "csv" | "audacity-label";

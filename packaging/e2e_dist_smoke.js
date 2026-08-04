@@ -19,7 +19,8 @@ const editorSettingStorageKeys = {
   boundaryPreview: "songcut:boundary-preview-seconds",
   boundaryNudge: "songcut:boundary-nudge-seconds",
   videoSplit: "songcut:video-split-percent",
-  waveformDisplay: "songcut:waveform-display-mode",
+  waveformDisplay: "songcut:waveform-display-mode:cut",
+  waveformAmplitude: "songcut:waveform-amplitude-profile:cut",
   createSourceFolder: "songcut:create-source-folder"
 };
 
@@ -554,7 +555,8 @@ async function editorSettingState(cdp) {
         boundaryPreviewStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)}),
         boundaryNudgeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)}),
         videoSplitStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}),
-        waveformDisplayStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)})
+        waveformDisplayStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)}),
+        waveformAmplitudeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)})
       };
     })()`
   );
@@ -568,7 +570,8 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = document.querySelector(".boundary-nudge-seconds-input")?.value;
       const split = Number.parseFloat(getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split"));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "5" && nudge === "0.5" && Math.abs(split - 35) < 0.01 && waveformDisplay === "rms";
+      const waveformAmplitude = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)});
+      return preview === "5" && nudge === "0.5" && Math.abs(split - 35) < 0.01 && waveformDisplay === "rms" && waveformAmplitude === "singing-mc-contrast";
     })()`,
     5000,
     "default editor settings"
@@ -590,8 +593,9 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)});
       const split = Number(localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 35) > 0.1 && waveformDisplay === "peak-rms"
-        ? { preview, nudge, split, waveformDisplay }
+      const waveformAmplitude = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)});
+      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 35) > 0.1 && waveformDisplay === "peak-rms" && waveformAmplitude === "singing-mc-contrast"
+        ? { preview, nudge, split, waveformDisplay, waveformAmplitude }
         : false;
     })()`,
     5000,
@@ -1670,6 +1674,94 @@ async function runJapaneseLocaleCheck(env) {
       "Settings dialog Cut tab"
     );
     log("SETTINGS_CUT_TAB_OK", settingsDialog);
+    const cutWaveformOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelector('select');
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      cutWaveformOptions?.value === "rms" &&
+        JSON.stringify(cutWaveformOptions.options) === JSON.stringify(["rms", "peak", "peak-rms", "symmetric-peak"]),
+      "Cut waveform settings do not expose all four display modes.",
+      cutWaveformOptions
+    );
+    const cutAmplitudeOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelectorAll('select')?.[1];
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      cutAmplitudeOptions?.value === "singing-mc-contrast" &&
+        JSON.stringify(cutAmplitudeOptions.options) === JSON.stringify(["adaptive", "singing-mc-contrast"]),
+      "Cut waveform amplitude range does not expose the expected x1100 default.",
+      cutAmplitudeOptions
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelectorAll('select')?.[1];
+        if (!select) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+        setter.call(select, "adaptive");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      })()`
+    );
+    await waitFor(
+      cdp,
+      `localStorage.getItem("songcut:waveform-amplitude-profile:cut") === "adaptive"`,
+      5000,
+      "Cut waveform amplitude profile persistence"
+    );
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(3)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "Sub"`,
+      5000,
+      "Sub settings tab activation"
+    );
+    const subWaveformOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelector('select');
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      subWaveformOptions?.value === "symmetric-peak" &&
+        JSON.stringify(subWaveformOptions.options) === JSON.stringify(["rms", "peak", "peak-rms", "symmetric-peak"]),
+      "Sub waveform settings do not expose all four display modes with the expected default.",
+      subWaveformOptions
+    );
+    const subAmplitudeSelectCount = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        return section?.querySelectorAll('select').length ?? -1;
+      })()`
+    );
+    assertPass(subAmplitudeSelectCount === 1, "Sub settings unexpectedly expose an amplitude range.", subAmplitudeSelectCount);
+    log("WAVEFORM_SETTINGS_MODES_OK", { cut: cutWaveformOptions, sub: subWaveformOptions, amplitude: cutAmplitudeOptions });
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(2)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "Cut"`,
+      5000,
+      "Cut settings tab reactivation"
+    );
     const settingsScrollArea = await evaluate(
       cdp,
       `(() => {

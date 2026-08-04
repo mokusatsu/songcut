@@ -1,26 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
   Bold,
-  ChevronsLeft,
-  ChevronsRight,
   FolderOpen,
-  Minus,
-  Pause,
-  Play,
   Plus,
-  Rewind,
   Save,
   Settings2,
-  SkipBack,
-  SkipForward,
   Trash2,
   Italic,
   Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EditorTransportControls } from "@/components/EditorTransportControls";
+import { TimelinePlayhead, TimelineWaveform } from "@/components/TimelineWaveform";
 import { Dialog } from "@/components/ui/dialog";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { Input } from "@/components/ui/input";
@@ -71,7 +63,8 @@ import {
 } from "@/lib/subtitles";
 import { clamp, formatTime } from "@/lib/time";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
-import type { JobRecord, VideoInfo, WaveformPoint } from "@/types";
+import type { WaveformPhase } from "@/lib/useProgressiveWaveform";
+import type { JobRecord, VideoInfo, WaveformDisplayMode, WaveformPoint } from "@/types";
 
 type Props = {
   apiBaseUrl: string;
@@ -79,6 +72,10 @@ type Props = {
   sourceAvailable: boolean;
   videoInfo: VideoInfo | null;
   waveform: WaveformPoint[];
+  progressiveWaveformChunks: WaveformPoint[][];
+  waveformPhase: WaveformPhase;
+  waveformProgress: number;
+  waveformDisplayMode: WaveformDisplayMode;
   duration: number;
   currentTime: number;
   playing: boolean;
@@ -105,11 +102,11 @@ type Props = {
   onFocusSegment: (segment: LyricsSegment) => void;
   onAddSegment: () => void;
   onDeleteSelectedSegment: () => void;
-  onPreviewRange: (start: number, end: number) => void;
   boundarySecondsInput: string;
-  boundaryPreviewSeconds: number;
   onBoundarySecondsInput: (value: string) => void;
   onBoundarySecondsBlur: () => void;
+  onPlayStartBoundary: () => void;
+  onPlayEndBoundary: () => void;
   onNudge: (direction: -1 | 1) => void;
   onPreviousBoundary: () => void;
   onNextBoundary: () => void;
@@ -412,48 +409,36 @@ export function SubModePanel(props: Props) {
           設定
         </Button>
         <div className="spacer" />
-        <span className="project-save-status">{props.saveStatus}</span>
-        <div className="icon-group boundary-controls">
-          <Button size="icon" variant="ghost" title="始点を再生" onClick={() => selected && props.onPreviewRange(selected.segment.start, Math.min(selected.segment.end, selected.segment.start + props.boundaryPreviewSeconds))} disabled={!selected}>
-            <SkipBack size={17} />
-          </Button>
-          <Button size="icon" variant="ghost" title="終点を再生" onClick={() => selected && props.onPreviewRange(Math.max(selected.segment.start, selected.segment.end - props.boundaryPreviewSeconds), selected.segment.end)} disabled={!selected}>
-            <SkipForward size={17} />
-          </Button>
-          <Input
-            className="boundary-seconds-input"
-            type="number"
-            min="1"
-            max="60"
-            step="1"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            aria-label="区間境界を再生する秒数"
-            value={props.boundarySecondsInput}
-            onChange={(event) => props.onBoundarySecondsInput(event.currentTarget.value)}
-            onBlur={props.onBoundarySecondsBlur}
-          />
-        </div>
-        <div className="icon-group boundary-nudge-controls">
-          <Button size="icon" variant="ghost" title="近い境界を左の1/4拍へ" onClick={() => props.onNudge(-1)} disabled={!selected || !props.state.rhythm_grid.length}>
-            <ArrowLeft size={17} />
-          </Button>
-          <Button size="icon" variant="ghost" title="近い境界を右の1/4拍へ" onClick={() => props.onNudge(1)} disabled={!selected || !props.state.rhythm_grid.length}>
-            <ArrowRight size={17} />
-          </Button>
-        </div>
-        <div className="icon-group">
-          <Button size="icon" variant="ghost" onClick={() => props.onSeek(0)} title="先頭"><Rewind size={17} /></Button>
-          <Button size="icon" variant="ghost" onClick={props.onPreviousBoundary} title="前の境界"><ChevronsLeft size={17} /></Button>
-          <Button size="icon" variant="ghost" onClick={props.onPlay} title="再生"><Play size={17} /></Button>
-          <Button size="icon" variant="ghost" onClick={props.onPause} title="一時停止"><Pause size={17} /></Button>
-          <Button size="icon" variant="ghost" onClick={props.onNextBoundary} title="次の境界"><ChevronsRight size={17} /></Button>
-        </div>
-        <div className="icon-group">
-          <Button size="icon" variant="ghost" onClick={props.onZoomOut}><Minus size={16} /></Button>
-          <Button size="sm" variant="ghost" onClick={props.onZoomReset}>{Math.round(props.zoom * 100)}%</Button>
-          <Button size="icon" variant="ghost" onClick={props.onZoomIn}><Plus size={16} /></Button>
-        </div>
+        <EditorTransportControls
+          saveStatus={props.saveStatus}
+          boundaryPreview={{
+            disabled: !selected,
+            value: props.boundarySecondsInput,
+            onChange: props.onBoundarySecondsInput,
+            onBlur: props.onBoundarySecondsBlur,
+            onStart: props.onPlayStartBoundary,
+            onEnd: props.onPlayEndBoundary,
+          }}
+          boundaryNudge={{
+            kind: "rhythm-grid",
+            disabled: !selected || !props.state.rhythm_grid.length,
+            onLeft: () => props.onNudge(-1),
+            onRight: () => props.onNudge(1),
+          }}
+          playback={{
+            onStart: () => props.onSeek(0),
+            onPrevious: props.onPreviousBoundary,
+            onPlay: props.onPlay,
+            onPause: props.onPause,
+            onNext: props.onNextBoundary,
+          }}
+          zoom={{
+            value: props.zoom,
+            onIn: props.onZoomIn,
+            onOut: props.onZoomOut,
+            onReset: props.onZoomReset,
+          }}
+        />
       </header>
       {props.taskStatus}
       <div className="sub-status-row">
@@ -470,6 +455,10 @@ export function SubModePanel(props: Props) {
       <LyricsTimelineEditor
         state={props.state}
         waveform={props.waveform}
+        progressiveWaveformChunks={props.progressiveWaveformChunks}
+        waveformPhase={props.waveformPhase}
+        waveformProgress={props.waveformProgress}
+        waveformDisplayMode={props.waveformDisplayMode}
         duration={props.duration}
         currentTime={props.currentTime}
         playing={props.playing}
@@ -571,6 +560,10 @@ export function SubModePanel(props: Props) {
 function LyricsTimelineEditor(props: {
   state: SubtitleProjectState;
   waveform: WaveformPoint[];
+  progressiveWaveformChunks: WaveformPoint[][];
+  waveformPhase: WaveformPhase;
+  waveformProgress: number;
+  waveformDisplayMode: WaveformDisplayMode;
   duration: number;
   currentTime: number;
   playing: boolean;
@@ -596,7 +589,6 @@ function LyricsTimelineEditor(props: {
     segmentId: string;
     edge: "start" | "end";
   } | null>(null);
-  const waveformRef = useRef<SVGSVGElement>(null);
   const timelineViewport = useTimelineViewport({
     duration: props.duration,
     currentTime: props.currentTime,
@@ -607,22 +599,7 @@ function LyricsTimelineEditor(props: {
     focusRange: props.selectedSegment,
     onScrub: props.onScrub,
   });
-  useEffect(() => {
-    const waveform = waveformRef.current;
-    if (!waveform) return;
-    const handleWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      timelineViewport.scrollByWheel(event);
-    };
-    waveform.addEventListener("wheel", handleWheel, { passive: false });
-    return () => waveform.removeEventListener("wheel", handleWheel);
-  }, [timelineViewport.scrollByWheel]);
   const width = timelineViewport.contentWidth;
-  const waveformPath = useMemo(
-    () => simpleWaveformPath(props.waveform, safeDuration, width, 86),
-    [props.waveform, safeDuration, width]
-  );
   const draggingLaneIndex = draggingBoundary
     ? props.state.lanes.findIndex((lane) => lane.id === draggingBoundary.laneId)
     : -1;
@@ -642,7 +619,7 @@ function LyricsTimelineEditor(props: {
       type="always"
     >
       <div className="sub-timeline-content" style={{ width }}>
-        <div className="sub-playhead" style={{ left: `${(props.currentTime / safeDuration) * width}px` }} />
+        <TimelinePlayhead currentTime={props.currentTime} duration={props.duration} className="sub-playhead" />
         {draggingBoundaryX !== null ? (
           <div
             className={`sub-boundary-drag-guide ${
@@ -654,39 +631,19 @@ function LyricsTimelineEditor(props: {
             }}
           />
         ) : null}
-        <svg
-          ref={waveformRef}
-          className="sub-waveform"
+        <TimelineWaveform
+          className="sub-waveform-surface"
+          svgClassName="sub-waveform"
+          backgroundClassName="timeline-waveform-background sub"
+          duration={props.duration}
+          waveform={props.waveform}
+          progressiveChunks={props.progressiveWaveformChunks}
+          phase={props.waveformPhase}
+          progress={props.waveformProgress}
+          displayMode={props.waveformDisplayMode}
+          amplitudeProfile="adaptive"
           width={width}
-          height={86}
-          viewBox={`0 0 ${width} 86`}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            props.onSeekingChange(true);
-            event.currentTarget.setPointerCapture(event.pointerId);
-            timelineViewport.scrubFromClientX(event.clientX);
-          }}
-          onPointerMove={(event) => {
-            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            timelineViewport.scrubFromClientX(event.clientX);
-          }}
-          onPointerUp={(event) => {
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId);
-            }
-            timelineViewport.stopScrubAutoScroll();
-            props.onSeekingChange(false);
-          }}
-          onPointerCancel={(event) => {
-            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-              event.currentTarget.releasePointerCapture(event.pointerId);
-            }
-            timelineViewport.stopScrubAutoScroll();
-            props.onSeekingChange(false);
-          }}
-        >
-          {[
+          rangeLayer={[
             ...props.state.lanes.filter((lane) => lane.id !== props.state.active_lane_id),
             ...props.state.lanes.filter((lane) => lane.id === props.state.active_lane_id),
           ].flatMap((lane) =>
@@ -703,8 +660,13 @@ function LyricsTimelineEditor(props: {
               />
             ))
           )}
-          <path d={waveformPath} />
-        </svg>
+          onSeek={props.onSeek}
+          timeFromClientX={timelineViewport.timeFromClientX}
+          scrubFromClientX={timelineViewport.scrubFromClientX}
+          stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
+          onSeekingChange={props.onSeekingChange}
+          onWheelScroll={timelineViewport.scrollByWheel}
+        />
         {props.state.rhythm_grid.slice(0, 6000).map((point) => (
           <span
             key={`${point.time}-${point.grid}`}
@@ -1340,16 +1302,4 @@ function selectedSegment(state: SubtitleProjectState) {
 
 function hasSubtitleSegments(state: SubtitleProjectState) {
   return state.lanes.some((lane) => lane.segments.length > 0);
-}
-
-function simpleWaveformPath(points: WaveformPoint[], duration: number, width: number, height: number) {
-  if (!points.length) return "";
-  const middle = height / 2;
-  return points
-    .map((point) => {
-      const x = clamp(point.t / duration, 0, 1) * width;
-      const amplitude = clamp(Math.max(Math.abs(point.min), Math.abs(point.max)), 0, 1) * middle;
-      return `M${x.toFixed(2)},${(middle - amplitude).toFixed(2)}V${(middle + amplitude).toFixed(2)}`;
-    })
-    .join("");
 }

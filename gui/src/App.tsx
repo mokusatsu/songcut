@@ -1,24 +1,14 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
   CircleAlert,
   CheckCircle2,
-  ChevronsLeft,
-  ChevronsRight,
   Copy,
   FileVideo2,
   FolderOpen,
-  Minus,
-  Pause,
-  Play,
   Plus,
-  Rewind,
   Scissors,
   Settings2,
-  SkipBack,
-  SkipForward,
   Wand2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,6 +39,8 @@ import {
 } from "@/lib/api";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
+import { EditorTransportControls } from "@/components/EditorTransportControls";
+import { TimelinePlayhead, TimelineWaveform } from "@/components/TimelineWaveform";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { formatTimeInput } from "@/lib/segmentTiming";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
@@ -118,11 +110,15 @@ import type { TimestampCommentFlow } from "@/lib/timestampComments";
 import { buildTimestampExportText, timestampExportFormats } from "@/lib/timestampExport";
 import type { TimestampExportFormat } from "@/lib/timestampExport";
 import {
-  buildWaveformPathSpecs,
-  buildWaveformPyramid,
-  normalizeWaveformDisplayMode,
-  selectWaveformLevel
-} from "@/lib/waveform";
+  DEFAULT_WAVEFORM_DISPLAY_MODES,
+  DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE,
+  readCutWaveformAmplitudeProfile,
+  readWaveformDisplayModes,
+  writeCutWaveformAmplitudeProfile,
+  writeWaveformDisplayMode,
+  type WaveformDisplayModes,
+} from "@/lib/waveformPreferences";
+import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
 import type { ScratchProxyState } from "@/lib/scratchProxy";
 import {
   addFourBeatSegment,
@@ -166,7 +162,6 @@ const SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY = "songcut:scratch-audio-proxy-ena
 const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
 const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
 const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
-const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
 const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
@@ -275,7 +270,9 @@ export default function App(props: {
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
-  const [waveformDisplayMode, setWaveformDisplayMode] = useState<WaveformDisplayMode>(readWaveformDisplayMode);
+  const [waveformDisplayModes, setWaveformDisplayModes] = useState<WaveformDisplayModes>(readStoredWaveformDisplayModes);
+  const [cutWaveformAmplitudeProfile, setCutWaveformAmplitudeProfile] =
+    useState<CutWaveformAmplitudeProfile>(readStoredCutWaveformAmplitudeProfile);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
   const [subtitleFocusRequest, setSubtitleFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
@@ -355,6 +352,7 @@ export default function App(props: {
   const canSelectNextSegment = selectedSegmentIndex >= 0 && selectedSegmentIndex < segments.length - 1;
   const duration = videoInfo?.duration ?? analysis?.duration ?? projectBase?.source.duration_seconds ?? videoRef.current?.duration ?? 0;
   const zoom = zoomLevels[zoomIndex];
+  const waveformDisplayMode = waveformDisplayModes[mode];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
   const uncheckedCount = segments.length - checkedCount;
   const visibleTranscriptSegment = useMemo(
@@ -549,11 +547,20 @@ export default function App(props: {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY, waveformDisplayMode);
+      writeWaveformDisplayMode(window.localStorage, "cut", waveformDisplayModes.cut);
+      writeWaveformDisplayMode(window.localStorage, "sub", waveformDisplayModes.sub);
+    } catch {
+      // Keep the settings for this session when persistent storage is unavailable.
+    }
+  }, [waveformDisplayModes]);
+
+  useEffect(() => {
+    try {
+      writeCutWaveformAmplitudeProfile(window.localStorage, cutWaveformAmplitudeProfile);
     } catch {
       // Keep the setting for this session when persistent storage is unavailable.
     }
-  }, [waveformDisplayMode]);
+  }, [cutWaveformAmplitudeProfile]);
 
   useEffect(() => {
     try {
@@ -2525,39 +2532,40 @@ export default function App(props: {
             {tr("common.settings")}
           </Button>
           <div className="spacer" />
-          <span className={`project-save-status status-${persistence.status}`}>
-            {projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
-          </span>
-          <BoundaryControls
-            value={boundarySecondsInput}
-            disabled={!selectedSegment || !videoUrl}
-            onChange={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
-            onBlur={() => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))}
-            onStart={playStartBoundary}
-            onEnd={playEndBoundary}
-          />
-          <BoundaryNudgeControls
-            value={boundaryNudgeSecondsInput}
-            disabled={!segments.length || !videoUrl}
-            onChange={setBoundaryNudgeSecondsInput}
-            onBlur={() =>
-              setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput)))
-            }
-            onLeft={() => nudgeNearestBoundary(-1)}
-            onRight={() => nudgeNearestBoundary(1)}
-          />
-          <PlaybackControls
-            onPlay={playVideo}
-            onPause={pauseVideo}
-            onStart={() => seek(0)}
-            onPrev={() => jumpBoundary(-1)}
-            onNext={() => jumpBoundary(1)}
-          />
-          <ZoomControls
-            zoom={zoom}
-            onIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
-            onOut={() => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1))}
-            onReset={() => setZoomIndex(0)}
+          <EditorTransportControls
+            saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
+            saveStatusClassName={`status-${persistence.status}`}
+            boundaryPreview={{
+              disabled: !selectedSegment || !videoUrl,
+              value: boundarySecondsInput,
+              onChange: (value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value)),
+              onBlur: () => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))),
+              onStart: playStartBoundary,
+              onEnd: playEndBoundary,
+            }}
+            boundaryNudge={{
+              kind: "seconds",
+              disabled: !segments.length || !videoUrl,
+              value: boundaryNudgeSecondsInput,
+              onChange: setBoundaryNudgeSecondsInput,
+              onBlur: () =>
+                setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))),
+              onLeft: () => nudgeNearestBoundary(-1),
+              onRight: () => nudgeNearestBoundary(1),
+            }}
+            playback={{
+              onStart: () => seek(0),
+              onPrevious: () => jumpBoundary(-1),
+              onPlay: playVideo,
+              onPause: pauseVideo,
+              onNext: () => jumpBoundary(1),
+            }}
+            zoom={{
+              value: zoom,
+              onIn: () => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1)),
+              onOut: () => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1)),
+              onReset: () => setZoomIndex(0),
+            }}
           />
         </header>
         <div className="guide-row">
@@ -2583,6 +2591,7 @@ export default function App(props: {
           playing={playing}
           zoom={zoom}
           waveformDisplayMode={waveformDisplayMode}
+          waveformAmplitudeProfile={cutWaveformAmplitudeProfile}
           focusRequest={segmentFocusRequest}
           editing={waveformSeeking || handleEditing}
           onSeek={seek}
@@ -2609,6 +2618,10 @@ export default function App(props: {
             sourceAvailable={sourceAvailable}
             videoInfo={videoInfo}
             waveform={progressiveWaveform.waveform}
+            progressiveWaveformChunks={progressiveWaveform.chunks}
+            waveformPhase={progressiveWaveform.phase}
+            waveformProgress={progressiveWaveform.progress}
+            waveformDisplayMode={waveformDisplayMode}
             duration={duration}
             currentTime={currentTime}
             playing={playing}
@@ -2647,13 +2660,13 @@ export default function App(props: {
             onFocusSegment={focusSubtitleSegment}
             onAddSegment={addNewSubtitleSegment}
             onDeleteSelectedSegment={removeSelectedSubtitleSegment}
-            onPreviewRange={(start, end) => playFrom(start, end)}
             boundarySecondsInput={boundarySecondsInput}
-            boundaryPreviewSeconds={parseBoundarySeconds(boundarySecondsInput)}
             onBoundarySecondsInput={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
             onBoundarySecondsBlur={() =>
               setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))
             }
+            onPlayStartBoundary={() => playSubtitleBoundary("start")}
+            onPlayEndBoundary={() => playSubtitleBoundary("end")}
             onNudge={nudgeSelectedSubtitleBoundary}
             onPreviousBoundary={() => jumpSubtitleBoundary(-1)}
             onNextBoundary={() => jumpSubtitleBoundary(1)}
@@ -2813,7 +2826,8 @@ export default function App(props: {
         apiReady={Boolean(apiBaseUrl)}
         scratchPreviewMillisecondsInput={scratchPreviewMillisecondsInput}
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
-        waveformDisplayMode={waveformDisplayMode}
+        waveformDisplayModes={waveformDisplayModes}
+        cutWaveformAmplitudeProfile={cutWaveformAmplitudeProfile}
         analysisDevice={analysisDevice}
         boundaryRefinementSettings={boundaryRefinementSettings}
         filenameTemplate={filenameTemplate}
@@ -2836,9 +2850,26 @@ export default function App(props: {
           setScratchAudioProxyEnabled(enabled);
           setMessage(tr(enabled ? "app.proxyEnabled" : "app.proxyDisabled"));
         }}
-        onWaveformDisplayMode={(mode) => {
-          setWaveformDisplayMode(mode);
-          setMessage(tr("app.waveformSet", { mode: waveformDisplayModeLabel(mode) }));
+        onWaveformDisplayMode={(appMode, displayMode) => {
+          setWaveformDisplayModes((current) => ({ ...current, [appMode]: displayMode }));
+          setMessage(
+            tr("app.waveformSet", {
+              appMode: appMode === "sub" ? "Sub" : "Cut",
+              mode: waveformDisplayModeLabel(displayMode),
+            })
+          );
+        }}
+        onCutWaveformAmplitudeProfile={(profile) => {
+          setCutWaveformAmplitudeProfile(profile);
+          setMessage(
+            tr("app.waveformAmplitudeSet", {
+              profile: tr(
+                profile === "singing-mc-contrast"
+                  ? "settings.waveformAmplitudeSingingMc"
+                  : "settings.waveformAmplitudeStandard"
+              ),
+            })
+          );
         }}
         onAnalysisDevice={(device) => {
           setAnalysisDevice(device);
@@ -3155,137 +3186,6 @@ function localizedError(error: unknown) {
   return localizeUiMessage(String(error));
 }
 
-function BoundaryControls(props: {
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  onStart: () => void;
-  onEnd: () => void;
-}) {
-  return (
-    <div className="icon-group boundary-controls">
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onStart}
-        disabled={props.disabled}
-        title={tr("controls.playStart")}
-        aria-keyshortcuts="A"
-      >
-        <SkipBack size={17} />
-      </Button>
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onEnd}
-        disabled={props.disabled}
-        title={tr("controls.playEnd")}
-        aria-keyshortcuts="D"
-      >
-        <SkipForward size={17} />
-      </Button>
-      <Input
-        className="boundary-seconds-input"
-        type="number"
-        min="1"
-        max="60"
-        step="1"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        aria-label={tr("controls.boundarySeconds")}
-        value={props.value}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        onBlur={props.onBlur}
-      />
-    </div>
-  );
-}
-
-function BoundaryNudgeControls(props: {
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  onLeft: () => void;
-  onRight: () => void;
-}) {
-  return (
-    <div className="icon-group boundary-nudge-controls">
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onLeft}
-        disabled={props.disabled}
-        title={tr("controls.nudgeLeft")}
-        aria-keyshortcuts="Q"
-      >
-        <ArrowLeft size={17} />
-      </Button>
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onRight}
-        disabled={props.disabled}
-        title={tr("controls.nudgeRight")}
-        aria-keyshortcuts="E"
-      >
-        <ArrowRight size={17} />
-      </Button>
-      <Input
-        className="boundary-nudge-seconds-input"
-        type="number"
-        min="0.1"
-        max="60"
-        step="0.1"
-        inputMode="decimal"
-        aria-label={tr("controls.nudgeSeconds")}
-        value={props.value}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        onBlur={props.onBlur}
-      />
-    </div>
-  );
-}
-
-function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onStart: () => void; onPrev: () => void; onNext: () => void }) {
-  return (
-    <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onStart} title={tr("controls.start")}>
-        <Rewind size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPrev} title={tr("controls.previous")} aria-keyshortcuts="Control+A">
-        <ChevronsLeft size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPlay} title={tr("controls.play")} aria-keyshortcuts="Space">
-        <Play size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPause} title={tr("controls.pause")} aria-keyshortcuts="Space">
-        <Pause size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onNext} title={tr("controls.next")} aria-keyshortcuts="Control+D">
-        <ChevronsRight size={17} />
-      </Button>
-    </div>
-  );
-}
-
-function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void; onReset: () => void }) {
-  return (
-    <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onOut} title={tr("controls.zoomOut")} aria-keyshortcuts="Z">
-        <Minus size={17} />
-      </Button>
-      <Button variant="ghost" size="sm" onClick={props.onReset} title={tr("controls.zoomReset")} aria-keyshortcuts="X">
-        {props.zoom * 100}%
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onIn} title={tr("controls.zoomIn")} aria-keyshortcuts="C">
-        <Plus size={17} />
-      </Button>
-    </div>
-  );
-}
-
 function TaskStatusPanel({
   runningTasks,
   failedTasks,
@@ -3400,6 +3300,7 @@ function TimelineStack(props: {
   playing: boolean;
   zoom: number;
   waveformDisplayMode: WaveformDisplayMode;
+  waveformAmplitudeProfile: CutWaveformAmplitudeProfile;
   focusRequest: number;
   editing: boolean;
   onSeek: (time: number) => void;
@@ -3410,7 +3311,6 @@ function TimelineStack(props: {
   onChangeCommitted: () => void;
   onEditTiming: () => void;
 }) {
-  const safeDuration = Math.max(0.001, props.duration);
   const timelineViewport = useTimelineViewport({
     duration: props.duration,
     currentTime: props.currentTime,
@@ -3432,17 +3332,30 @@ function TimelineStack(props: {
       onWheel={timelineViewport.scrollByWheel}
     >
       <div className="timeline-content" style={{ width }}>
-        <div className="timeline-playhead" style={{ left: (props.currentTime / safeDuration) * width }} />
-        <WaveformTimeline
+        <TimelinePlayhead currentTime={props.currentTime} duration={props.duration} />
+        <TimelineWaveform
           duration={props.duration}
           waveform={props.waveform}
-          progressiveWaveformChunks={props.progressiveWaveformChunks}
-          waveformPhase={props.waveformPhase}
-          waveformProgress={props.waveformProgress}
-          waveformDisplayMode={props.waveformDisplayMode}
-          segments={props.segments}
-          selectedSegmentId={props.selectedSegment?.id ?? null}
+          progressiveChunks={props.progressiveWaveformChunks}
+          phase={props.waveformPhase}
+          progress={props.waveformProgress}
+          displayMode={props.waveformDisplayMode}
+          amplitudeProfile={props.waveformAmplitudeProfile === "singing-mc-contrast" ? "cut-legacy" : "adaptive"}
           width={width}
+          className="waveform-timeline timeline-row"
+          rangeLayer={[
+            ...props.segments.filter((segment) => segment.id !== props.selectedSegment?.id),
+            ...props.segments.filter((segment) => segment.id === props.selectedSegment?.id),
+          ].map((segment) => (
+            <rect
+              key={segment.id}
+              x={(segment.start / Math.max(0.001, props.duration)) * width}
+              y="10"
+              width={Math.max(1, ((segment.end - segment.start) / Math.max(0.001, props.duration)) * width)}
+              height="66"
+              fill={segment.id === props.selectedSegment?.id ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
+            />
+          ))}
           timeFromClientX={timelineViewport.timeFromClientX}
           scrubFromClientX={timelineViewport.scrubFromClientX}
           stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
@@ -3464,239 +3377,6 @@ function TimelineStack(props: {
     </ScrollArea>
   );
 }
-
-function WaveformTimeline(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  segments: Segment[];
-  selectedSegmentId: string | null;
-  width: number;
-  timeFromClientX: (clientX: number) => number;
-  scrubFromClientX: (clientX: number) => void;
-  stopScrubAutoScroll: () => void;
-  onSeek: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const suppressClickRef = useRef(false);
-  const pointerSeekingRef = useRef(false);
-  const mouseSeekingRef = useRef(false);
-  const seekFromClientX = (clientX: number) => {
-    props.onSeek(props.timeFromClientX(clientX));
-  };
-  return (
-    <div
-      className="waveform-timeline timeline-row"
-      style={{ width: props.width }}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        suppressClickRef.current = true;
-        pointerSeekingRef.current = true;
-        props.onSeekingChange(true);
-        event.currentTarget.setPointerCapture(event.pointerId);
-        props.scrubFromClientX(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if ((event.buttons & 1) !== 1 || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        props.scrubFromClientX(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-        pointerSeekingRef.current = false;
-        props.stopScrubAutoScroll();
-        props.onSeekingChange(false);
-        window.setTimeout(() => {
-          suppressClickRef.current = false;
-        }, 0);
-      }}
-      onPointerCancel={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-        pointerSeekingRef.current = false;
-        props.stopScrubAutoScroll();
-        props.onSeekingChange(false);
-        window.setTimeout(() => {
-          suppressClickRef.current = false;
-        }, 0);
-      }}
-      onClick={(event) => {
-        if (suppressClickRef.current) {
-          event.preventDefault();
-          return;
-        }
-        seekFromClientX(event.clientX);
-      }}
-      onMouseDown={(event) => {
-        if (event.button !== 0 || pointerSeekingRef.current) return;
-        event.preventDefault();
-        suppressClickRef.current = true;
-        mouseSeekingRef.current = true;
-        props.onSeekingChange(true);
-        props.scrubFromClientX(event.clientX);
-        const move = (moveEvent: MouseEvent) => {
-          if (!mouseSeekingRef.current) return;
-          props.scrubFromClientX(moveEvent.clientX);
-        };
-        const up = () => {
-          mouseSeekingRef.current = false;
-          props.stopScrubAutoScroll();
-          props.onSeekingChange(false);
-          window.setTimeout(() => {
-            suppressClickRef.current = false;
-          }, 0);
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      }}
-    >
-      <svg width={props.width} height="86" viewBox={`0 0 ${props.width} 86`} preserveAspectRatio="none">
-        <rect width={props.width} height="86" fill="#101820" />
-        {[
-          ...props.segments.filter((segment) => segment.id !== props.selectedSegmentId),
-          ...props.segments.filter((segment) => segment.id === props.selectedSegmentId),
-        ].map((segment) => (
-          <rect
-            key={segment.id}
-            x={(segment.start / safeDuration) * props.width}
-            y="10"
-            width={Math.max(1, ((segment.end - segment.start) / safeDuration) * props.width)}
-            height="66"
-            fill={segment.id === props.selectedSegmentId ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
-          />
-        ))}
-        {props.waveformPhase === "streaming" || props.waveformPhase === "finalizing" ? (
-          <ProgressiveWaveformLayer
-            duration={props.duration}
-            chunks={props.progressiveWaveformChunks}
-            width={props.width}
-            mode={props.waveformDisplayMode}
-            finalizing={props.waveformPhase === "finalizing"}
-          />
-        ) : null}
-        {props.waveformPhase === "ready" || props.waveformPhase === "finalizing" ? (
-          <StaticWaveformLayer
-            duration={props.duration}
-            waveform={props.waveform}
-            width={props.width}
-            mode={props.waveformDisplayMode}
-            finalizing={props.waveformPhase === "finalizing"}
-          />
-        ) : null}
-        {props.waveformPhase === "streaming" ? (
-          <line
-            className="waveform-progress-frontier"
-            x1={clamp(props.waveformProgress, 0, 1) * props.width}
-            x2={clamp(props.waveformProgress, 0, 1) * props.width}
-            y1="4"
-            y2="82"
-            pointerEvents="none"
-          />
-        ) : null}
-      </svg>
-    </div>
-  );
-}
-
-const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  width: number;
-  mode: WaveformDisplayMode;
-  finalizing?: boolean;
-}) {
-  const pyramid = useMemo(() => buildWaveformPyramid(props.waveform), [props.waveform]);
-  const selectedLevel = useMemo(
-    () => selectWaveformLevel(pyramid, props.duration, props.width),
-    [pyramid, props.duration, props.width]
-  );
-  const points = pyramid[selectedLevel] ?? [];
-  const paths = useMemo(
-    () => buildWaveformPathSpecs(points, props.duration, props.width, props.mode),
-    [points, props.duration, props.width, props.mode]
-  );
-
-  return (
-    <g
-      className={props.finalizing ? "waveform-static-layer is-finalizing" : "waveform-static-layer"}
-      data-waveform-level={selectedLevel}
-      data-waveform-points={points.length}
-    >
-      {paths.map((path) => (
-        <path
-          key={path.kind}
-          className={`waveform-path waveform-path-${path.kind}`}
-          data-waveform-path={path.kind}
-          d={path.d}
-          fill="none"
-          stroke="#f2cf63"
-          strokeWidth="1"
-          opacity={path.opacity}
-          pointerEvents="none"
-        />
-      ))}
-    </g>
-  );
-});
-
-const ProgressiveWaveformLayer = memo(function ProgressiveWaveformLayer(props: {
-  duration: number;
-  chunks: WaveformPoint[][];
-  width: number;
-  mode: WaveformDisplayMode;
-  finalizing: boolean;
-}) {
-  return (
-    <g
-      className={props.finalizing ? "waveform-progressive-layer is-finalizing" : "waveform-progressive-layer"}
-      data-waveform-chunks={props.chunks.length}
-    >
-      {props.chunks.map((chunk, index) => (
-        <ProgressiveWaveformChunk
-          key={index}
-          points={chunk}
-          duration={props.duration}
-          width={props.width}
-          mode={props.mode}
-        />
-      ))}
-    </g>
-  );
-});
-
-const ProgressiveWaveformChunk = memo(function ProgressiveWaveformChunk(props: {
-  points: WaveformPoint[];
-  duration: number;
-  width: number;
-  mode: WaveformDisplayMode;
-}) {
-  const paths = useMemo(
-    () => buildWaveformPathSpecs(props.points, props.duration, props.width, props.mode),
-    [props.points, props.duration, props.width, props.mode]
-  );
-  return paths.map((path) => (
-    <path
-      key={path.kind}
-      className={`waveform-path waveform-path-${path.kind}`}
-      data-waveform-path={`progressive-${path.kind}`}
-      d={path.d}
-      fill="none"
-      stroke="#f2cf63"
-      strokeWidth="1"
-      opacity={path.opacity}
-      pointerEvents="none"
-    />
-  ));
-});
 
 function SegmentTimeline(props: {
   duration: number;
@@ -4690,11 +4370,19 @@ function readVideoSplitPercent() {
   }
 }
 
-function readWaveformDisplayMode(): WaveformDisplayMode {
+function readStoredWaveformDisplayModes(): WaveformDisplayModes {
   try {
-    return normalizeWaveformDisplayMode(window.localStorage.getItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY));
+    return readWaveformDisplayModes(window.localStorage);
   } catch {
-    return "rms";
+    return { ...DEFAULT_WAVEFORM_DISPLAY_MODES };
+  }
+}
+
+function readStoredCutWaveformAmplitudeProfile(): CutWaveformAmplitudeProfile {
+  try {
+    return readCutWaveformAmplitudeProfile(window.localStorage);
+  } catch {
+    return DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE;
   }
 }
 
@@ -4714,6 +4402,8 @@ function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
       return tr("settings.peak");
     case "peak-rms":
       return tr("settings.peakRms");
+    case "symmetric-peak":
+      return tr("settings.symmetricPeak");
   }
 }
 

@@ -1,24 +1,40 @@
 import type { WaveformDisplayMode, WaveformPoint } from "@/types";
 
 export const DEFAULT_WAVEFORM_DISPLAY_MODE: WaveformDisplayMode = "rms";
-export const WAVEFORM_DISPLAY_MODES = ["rms", "peak", "peak-rms"] as const;
+export const WAVEFORM_DISPLAY_MODES = ["rms", "peak", "peak-rms", "symmetric-peak"] as const;
 
-const WAVEFORM_CENTER_Y = 43;
-const WAVEFORM_GAIN = 1100;
+const WAVEFORM_HEIGHT = 86;
+const WAVEFORM_CENTER_Y = WAVEFORM_HEIGHT / 2;
 const WAVEFORM_MIN_HALF_HEIGHT = 2;
+const WAVEFORM_MAX_HALF_HEIGHT = WAVEFORM_CENTER_Y - 3;
+const CUT_LEGACY_GAIN = 1100;
+const WAVEFORM_TARGET_HALF_HEIGHT = WAVEFORM_CENTER_Y * 0.7;
+const WAVEFORM_REFERENCE_PERCENTILE = 0.95;
+const WAVEFORM_MIN_GAIN = 40;
+const WAVEFORM_MAX_GAIN = 400;
 
 export type WaveformPyramid = WaveformPoint[][];
-export type WaveformPathKind = "rms" | "peak";
+export type WaveformPathKind = "rms" | "peak" | "symmetric-peak";
+export type WaveformAmplitudeProfile = "cut-legacy" | "adaptive";
+export type CutWaveformAmplitudeProfile = "adaptive" | "singing-mc-contrast";
 export type WaveformPathSpec = {
   kind: WaveformPathKind;
   d: string;
   opacity: number;
 };
+export type WaveformAmplitudeScale = {
+  profile: WaveformAmplitudeProfile;
+  peakGain: number;
+  rmsGain: number;
+};
 
-export function normalizeWaveformDisplayMode(value: unknown): WaveformDisplayMode {
+export function normalizeWaveformDisplayMode(
+  value: unknown,
+  fallback: WaveformDisplayMode = DEFAULT_WAVEFORM_DISPLAY_MODE
+): WaveformDisplayMode {
   return typeof value === "string" && WAVEFORM_DISPLAY_MODES.includes(value as WaveformDisplayMode)
     ? (value as WaveformDisplayMode)
-    : DEFAULT_WAVEFORM_DISPLAY_MODE;
+    : fallback;
 }
 
 export function buildWaveformPyramid(waveform: readonly WaveformPoint[]): WaveformPyramid {
@@ -69,7 +85,8 @@ export function buildWaveformPath(
   points: readonly WaveformPoint[],
   duration: number,
   width: number,
-  kind: WaveformPathKind
+  kind: WaveformPathKind,
+  scale: WaveformAmplitudeScale = calculateWaveformAmplitudeScale(points)
 ): string {
   if (points.length === 0 || duration <= 0 || width <= 0) return "";
 
@@ -77,20 +94,27 @@ export function buildWaveformPath(
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index];
     const x = (point.t / duration) * width;
+    const peak = Math.max(Math.abs(point.min), Math.abs(point.max));
     let yTop: number;
     let yBottom: number;
     if (kind === "rms") {
-      const halfHeight = Math.max(WAVEFORM_MIN_HALF_HEIGHT, Math.abs(point.rms) * WAVEFORM_GAIN);
+      const halfHeight = clampHalfHeight(Math.abs(point.rms) * scale.rmsGain);
+      yTop = WAVEFORM_CENTER_Y - halfHeight;
+      yBottom = WAVEFORM_CENTER_Y + halfHeight;
+    } else if (kind === "symmetric-peak") {
+      const halfHeight = clampHalfHeight(peak * scale.peakGain);
       yTop = WAVEFORM_CENTER_Y - halfHeight;
       yBottom = WAVEFORM_CENTER_Y + halfHeight;
     } else {
-      yTop = WAVEFORM_CENTER_Y - point.max * WAVEFORM_GAIN;
-      yBottom = WAVEFORM_CENTER_Y - point.min * WAVEFORM_GAIN;
+      yTop = WAVEFORM_CENTER_Y - clampSignedAmplitude(point.max * scale.peakGain);
+      yBottom = WAVEFORM_CENTER_Y - clampSignedAmplitude(point.min * scale.peakGain);
       if (yBottom - yTop < WAVEFORM_MIN_HALF_HEIGHT * 2) {
         const middle = (yTop + yBottom) / 2;
         yTop = middle - WAVEFORM_MIN_HALF_HEIGHT;
         yBottom = middle + WAVEFORM_MIN_HALF_HEIGHT;
       }
+      yTop = Math.max(WAVEFORM_CENTER_Y - WAVEFORM_MAX_HALF_HEIGHT, yTop);
+      yBottom = Math.min(WAVEFORM_CENTER_Y + WAVEFORM_MAX_HALF_HEIGHT, yBottom);
     }
     commands[index] = `M${formatPathNumber(x)} ${formatPathNumber(yTop)}V${formatPathNumber(yBottom)}`;
   }
@@ -101,18 +125,101 @@ export function buildWaveformPathSpecs(
   points: readonly WaveformPoint[],
   duration: number,
   width: number,
-  mode: WaveformDisplayMode
+  mode: WaveformDisplayMode,
+  scale: WaveformAmplitudeScale = calculateWaveformAmplitudeScale(points)
 ): WaveformPathSpec[] {
   if (mode === "rms") {
-    return [{ kind: "rms", d: buildWaveformPath(points, duration, width, "rms"), opacity: 1 }];
+    return [{ kind: "rms", d: buildWaveformPath(points, duration, width, "rms", scale), opacity: 1 }];
   }
   if (mode === "peak") {
-    return [{ kind: "peak", d: buildWaveformPath(points, duration, width, "peak"), opacity: 1 }];
+    return [{ kind: "peak", d: buildWaveformPath(points, duration, width, "peak", scale), opacity: 1 }];
+  }
+  if (mode === "symmetric-peak") {
+    return [
+      {
+        kind: "symmetric-peak",
+        d: buildWaveformPath(points, duration, width, "symmetric-peak", scale),
+        opacity: 1,
+      },
+    ];
   }
   return [
-    { kind: "peak", d: buildWaveformPath(points, duration, width, "peak"), opacity: 0.45 },
-    { kind: "rms", d: buildWaveformPath(points, duration, width, "rms"), opacity: 1 }
+    { kind: "peak", d: buildWaveformPath(points, duration, width, "peak", scale), opacity: 0.45 },
+    { kind: "rms", d: buildWaveformPath(points, duration, width, "rms", scale), opacity: 1 }
   ];
+}
+
+export function calculateWaveformAmplitudeScale(
+  points: readonly WaveformPoint[],
+  profile: WaveformAmplitudeProfile = "adaptive"
+): WaveformAmplitudeScale {
+  if (profile !== "adaptive") {
+    return { profile, peakGain: CUT_LEGACY_GAIN, rmsGain: CUT_LEGACY_GAIN };
+  }
+  if (points.length === 0) {
+    return { profile, peakGain: WAVEFORM_MIN_GAIN, rmsGain: WAVEFORM_MIN_GAIN };
+  }
+  const peaks = new Array<number>(points.length);
+  const rmsValues = new Array<number>(points.length);
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    peaks[index] = Math.max(Math.abs(point.min), Math.abs(point.max));
+    rmsValues[index] = Math.abs(point.rms);
+  }
+  return {
+    profile,
+    peakGain: gainForReference(percentileInPlace(peaks, WAVEFORM_REFERENCE_PERCENTILE)),
+    rmsGain: gainForReference(percentileInPlace(rmsValues, WAVEFORM_REFERENCE_PERCENTILE)),
+  };
+}
+
+function gainForReference(reference: number) {
+  if (!Number.isFinite(reference) || reference <= 0) return WAVEFORM_MAX_GAIN;
+  return Math.max(
+    WAVEFORM_MIN_GAIN,
+    Math.min(WAVEFORM_MAX_GAIN, WAVEFORM_TARGET_HALF_HEIGHT / reference)
+  );
+}
+
+function percentileInPlace(values: number[], ratio: number) {
+  if (values.length === 0) return 0;
+  const target = Math.max(0, Math.min(values.length - 1, Math.floor((values.length - 1) * ratio)));
+  let left = 0;
+  let right = values.length - 1;
+  while (left <= right) {
+    const pivot = values[left + Math.floor((right - left) / 2)];
+    let lower = left;
+    let cursor = left;
+    let upper = right;
+    while (cursor <= upper) {
+      if (values[cursor] < pivot) {
+        [values[lower], values[cursor]] = [values[cursor], values[lower]];
+        lower += 1;
+        cursor += 1;
+      } else if (values[cursor] > pivot) {
+        [values[cursor], values[upper]] = [values[upper], values[cursor]];
+        upper -= 1;
+      } else {
+        cursor += 1;
+      }
+    }
+    if (target < lower) {
+      right = lower - 1;
+    } else if (target > upper) {
+      left = upper + 1;
+    } else {
+      return values[target];
+    }
+  }
+  return values[target];
+}
+
+function clampHalfHeight(value: number) {
+  return Math.min(WAVEFORM_MAX_HALF_HEIGHT, Math.max(WAVEFORM_MIN_HALF_HEIGHT, value));
+}
+
+function clampSignedAmplitude(value: number) {
+  return Math.max(-WAVEFORM_MAX_HALF_HEIGHT, Math.min(WAVEFORM_MAX_HALF_HEIGHT, value));
 }
 
 function formatPathNumber(value: number) {
