@@ -33,6 +33,7 @@ export type { ProjectBaseComposeState, ProjectBaseHydratedState } from "@/lib/pr
 
 /** Cut-only payload accepted by the Cut project adapter. */
 export type CutProjectComposeState = ProjectBaseComposeState & {
+  selectedSegmentId: string | null;
   guideText: string;
   analysis: AnalysisResult | null;
   segments: Segment[];
@@ -48,6 +49,7 @@ export type SubProjectComposeState = ProjectBaseComposeState & {
 
 export type CutProjectHydratedState = ProjectBaseHydratedState & {
   mode: "cut";
+  selectedSegmentId: string | null;
   guideText: string;
   analysis: AnalysisResult | null;
   segments: Segment[];
@@ -111,7 +113,7 @@ export function composeCutProjectDocument(
     throw new Error("Cut adapter received Sub-only subtitle state.");
   }
   assertOperationForMode("cut", state.operation);
-  const common = serializeProjectBase(base, state, "cut");
+  const common = serializeProjectBase(base, state, "cut", state.selectedSegmentId);
   const segments = cloneValue(state.segments);
   const segmentIds = new Set(segments.map((segment) => segment.id));
   const exportCandidates: ProjectExportCandidate[] = state.exportCandidates
@@ -166,7 +168,7 @@ export function composeSubProjectDocument(
   }
   assertOperationForMode("sub", state.operation);
   if (!validateSubtitleState(state.subtitle)) throw new Error("Invalid Sub subtitle state.");
-  const common = serializeProjectBase(base, state, "sub");
+  const common = serializeProjectBase(base, state, "sub", null);
   const next: ProjectDocumentV1 = {
     ...common,
     analysis_snapshot: null,
@@ -206,6 +208,7 @@ export function hydrateCutProjectDocument(value: unknown): CutProjectHydratedSta
   return {
     ...common,
     mode: "cut",
+    selectedSegmentId: document.view_state.selected_segment_id,
     guideText: document.guide_text,
     analysis,
     segments: cloneValue(document.segments),

@@ -6,7 +6,7 @@ import {
   startSubtitleExport,
   startSubtitleRender,
   waitForJob,
-  type SubtitleRenderRequestItem,
+  type SubtitleRenderRequest,
   type SubtitleRenderResultItem,
   type WhisperSettings,
 } from "@/lib/api";
@@ -15,18 +15,13 @@ import { createPendingTask, failTask, type TaskSlot } from "@/lib/useTaskRegistr
 import {
   analysisLinesToSegments,
   createLyricsLane,
+  selectedSubtitleSegment,
   subtitleRenderSignature,
   type LyricsAnalysisResult,
   type LyricsSegment,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
 import type { JobRecord } from "@/types";
-
-export type SubtitleRenderRequest = {
-  width: number;
-  height: number;
-  items: SubtitleRenderRequestItem[];
-};
 
 export type SubOperationCoordinator = {
   readonly analysisJob: JobRecord | null;
@@ -77,14 +72,6 @@ const DEFAULT_SERVICES: SubOperationServices = {
 
 function isActive(job: JobRecord | null) {
   return job?.status === "queued" || job?.status === "running";
-}
-
-export function selectedSubtitleSegment(state: SubtitleProjectState) {
-  for (const lane of state.lanes) {
-    const segment = lane.segments.find((item) => item.id === state.selected_segment_id);
-    if (segment) return { laneId: lane.id, segment };
-  }
-  return null;
 }
 
 export function placeLyricsAnalysisResult(
@@ -208,7 +195,7 @@ export function createSubOperationCoordinator(
       try {
         await options.operationRunner.run({
           slot: "lyrics-analysis",
-          operation: { kind: "lyrics-analysis", settings: { ...options.whisperSettings } },
+          operation: { kind: "lyrics-analysis" },
           pendingMessage: tr("sub.lyricsAnalysisPreparing"),
           failureMessage: tr("sub.lyricsAnalysisFailed"),
           start: () => services.startLyricsAnalysis(

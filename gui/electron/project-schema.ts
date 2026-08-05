@@ -191,16 +191,25 @@ export type CutOperationKind = "analysis" | "transcription" | "export";
 export type SubOperationKind = "lyrics-analysis" | "subtitle-export";
 export type ProjectOperationKind = CutOperationKind | SubOperationKind;
 
-export type ProjectOperationRecord = {
-  kind: ProjectOperationKind;
+type ProjectOperationBase<K extends ProjectOperationKind> = {
+  kind: K;
   status: "running" | "interrupted";
+};
+
+export type TranscriptionProjectOperation = ProjectOperationBase<"transcription"> & {
   settings?: WhisperSettings;
   pending_segment_ids?: string[];
 };
 
+type ProjectOperationForKind<K extends ProjectOperationKind> = K extends "transcription"
+  ? TranscriptionProjectOperation
+  : ProjectOperationBase<K>;
+
+export type ProjectOperationRecord = ProjectOperationForKind<ProjectOperationKind>;
+
 export type ProjectOperation = ProjectOperationRecord | null;
-export type CutProjectOperation = (Omit<ProjectOperationRecord, "kind"> & { kind: CutOperationKind }) | null;
-export type SubProjectOperation = (Omit<ProjectOperationRecord, "kind"> & { kind: SubOperationKind }) | null;
+export type CutProjectOperation = Extract<ProjectOperationRecord, { kind: CutOperationKind }> | null;
+export type SubProjectOperation = Extract<ProjectOperationRecord, { kind: SubOperationKind }> | null;
 
 export type ProjectDocumentV1 = {
   format: typeof PROJECT_FORMAT;

@@ -61,6 +61,7 @@ import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
 import { useModeOperations } from "@/lib/useModeOperations";
+import { createSubModePanelAdapter } from "@/lib/subModePanelAdapter";
 import {
   ExportProgressDialog,
   FfmpegCheckDialog,
@@ -100,6 +101,7 @@ import {
   createCutBoundaryPolicy,
   nearestBoundaryTarget,
   nudgeBoundaryTime,
+  resolveBoundaryTime,
 } from "@/lib/boundaries";
 import {
   normalizeBoundaryRefinementSettings,
@@ -180,6 +182,11 @@ import { currentUiLanguage, localizeFilenameTemplateError, localizeJobMessage, l
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
+const cutDragBoundaryPolicy = createCutBoundaryPolicy("drag");
+
+function listSystemFonts() {
+  return window.songcut.listSystemFonts();
+}
 
 type RelinkConflict = {
   selectedPath: string;
@@ -409,7 +416,6 @@ export default function App(props: {
         analysisDevice,
         whisper: whisperSettings,
         filenameTemplate,
-        selectedSegmentId,
         currentTime,
         zoomIndex,
       };
@@ -423,8 +429,9 @@ export default function App(props: {
       }
       assertCutProjectOperation(projectOperation);
       return composeCutProjectDocument(projectBase, {
-        ...commonState,
-        guideText,
+          ...commonState,
+          selectedSegmentId,
+          guideText,
         analysis,
         segments,
         exportCandidates,
@@ -2187,6 +2194,35 @@ export default function App(props: {
       },
     },
   });
+  const subModePanelAdapter = createSubModePanelAdapter({
+    session: subModeSession,
+    load: selectVideo,
+    openSettings: () => openSettings("sub"),
+    prepareAnalysis: async () => {
+      await ensureDemucs();
+      setDemucsDownloadOpen(false);
+      await ensureWhisper();
+      setWhisperDownloadOpen(false);
+      if (whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
+        await ensureMms();
+        setMmsDownloadOpen(false);
+      }
+    },
+    exportSubtitles: async () => {
+      if (!videoInfo) return false;
+      const outputDir = await window.songcut.selectOutputDirectory();
+      if (!outputDir) return false;
+      void subModeSession.operations.exportSubtitles(
+        outputDir,
+        videoInfo.video.width || 1920,
+        videoInfo.video.height || 1080,
+      );
+      return true;
+    },
+    listSystemFonts,
+    confirmRemoveLane: () => window.confirm(tr("sub.removeLaneConfirm")),
+    showMessage: setMessage,
+  });
   const activeModeController = mode === "cut" ? cutModeSession.controller : subModeSession.controller;
 
   function runEditorCommand(action: EditorAction) {
@@ -2522,7 +2558,19 @@ export default function App(props: {
               segments,
               selectedSegment,
               waveformAmplitudeProfile: cutWaveformAmplitudeProfile,
-              onChange: (patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch),
+              onBoundaryPreview: (edge, time) => {
+                if (!selectedSegment) return;
+                const resolved = resolveBoundaryTime(
+                  selectedSegment,
+                  edge,
+                  time,
+                  cutDragBoundaryPolicy,
+                  { previousEnd: 0, nextStart: Math.max(0.001, duration) },
+                );
+                if (resolved !== null) {
+                  previewSegmentUpdate(selectedSegment.id, { [edge]: resolved, user_edited: true });
+                }
+              },
               onChangeCommitted: markProjectChanged,
               onEditTiming: () => selectedSegment && setCutTimingSegmentId(selectedSegment.id),
             }}
@@ -2540,22 +2588,8 @@ export default function App(props: {
           <SubModePanel
             view={subModeSession.view}
             state={subtitleState}
-            controller={subModeSession.controller}
-            whisperSettings={whisperSettings}
-            onPrepareWhisperModel={async () => {
-              await ensureWhisper();
-              setWhisperDownloadOpen(false);
-            }}
-            onPrepareDemucsModel={async () => {
-              await ensureDemucs();
-              setDemucsDownloadOpen(false);
-            }}
-            onPrepareMmsModel={async () => {
-              await ensureMms();
-              setMmsDownloadOpen(false);
-            }}
+            {...subModePanelAdapter}
             taskStatus={taskStatus}
-            operations={subModeSession.operations}
             onStateChange={(state) => {
               setSubtitleState(state);
               markProjectChanged();
@@ -2586,10 +2620,6 @@ export default function App(props: {
               }));
             }}
             onBoundaryCommit={markProjectChanged}
-            onFocusSegment={focusSubtitleSegment}
-            onLoad={selectVideo}
-            onSettings={() => openSettings("sub")}
-            onMessage={setMessage}
           />
         )}
       </section>

@@ -588,3 +588,22 @@ App.tsx
   - GUI横断contractでApp／panelの禁止依存、共通runner注入、mode別sidecar、5種の永続operation lifecycle、`subtitle-render`の非永続task lifecycleを固定した。既存boundary／dialog testでCut 0.1秒drag・0.001秒dialogとSub rhythm／non-overlapも維持した。Python横断contractでWhisper 3 callerの共通sessionとcaller固有offset、Cut/Sub FFmpeg共通runnerと固有progress／validationを固定した。
   - 最終検証はGUI Vitest 45 files／271 tests、typecheck、Python pytest 385 passed／2 skipped／36 subtests passed、production build、`git diff --check`が成功した。
   - portable版1.1.58を再buildした。Cut通常E2Eは343.6秒で`E2E_OK`（menu、shortcut、autosave、0.001秒dialog、background転写chunk、clip／TS export）、Sub実データE2Eは603.8秒で`SUB_E2E_OK`（39字幕、rhythm／non-overlap、PNG cache、overlay、2 laneのSRT／style、394.378秒の字幕動画）まで成功した。
+
+## 2026-08-05 レイヤー非互換の再精査
+
+SCUT-024完了後の再精査で、ModeSessionの生成は対称でも、Panelでの消費境界が非対称であることを確認した。Cut Panelは主に共通viewと操作callbackを受ける一方、Sub Panelはraw ModeController、SubOperationCoordinator、Electron API、モデル準備手順まで参照していた。
+
+最小計画ではCut/Subのドメインを統合せず、同じ意味を持つ境界だけを共有する。
+
+- 共有する: Panelの共通view、toolbar command、media/timeline契約、boundary drag lifecycle、operation lifecycle。
+- mode固有のまま保つ: Cutのclip・transcript・export candidate、Subのlane・style・lyrics alignment。
+- P0ではraw controller/coordinator/platform依存をPanelから除去する。Sub domain state ownershipはP3でeditor action moduleへ集約する。
+- 新しい状態管理ライブラリ、永続化schema migration、UI仕様変更は導入しない。
+- 詳細な目的、範囲、禁止事項、完了条件、検証、停止条件は各task briefを正本の一部として扱う。
+
+| ID | 段階 | タスク | 状態 | 優先度 | 依存 | 完了条件の要約 | 証拠 |
+|---|---|---|---|---|---|---|---|
+| SCUT-025 | P0 | Panel入力境界の統一 | 完了 | 最高 | SCUT-024 | Cut/Sub Panelからraw controller/coordinator/platform API依存を除き、表示値と操作意図だけを受ける | baselineはVitest 2件失敗、269件成功。Facade実装後はtypecheck、Vitest 45 files／271 tests、対象diff-check成功。詳細: [brief](tasks/SCUT-025.md) |
+| SCUT-026 | P1 | toolbar・timeline・boundary契約の共有 | 完了 | 高 | SCUT-025 | 共通toolbar、共通media型、Panel外boundary policyを両モードへ配線する | typecheck、対象30 tests、全Vitest 45 files／272 tests、source契約、diff-check成功。[brief](tasks/SCUT-026.md) |
+| SCUT-027 | P2 | operation・settings・project型の適正化 | 完了 | 中 | SCUT-026 | kind/slot対応、API設定入力、project selectionの過剰な共通型を縮小する | typecheck、対象22 tests、全Vitest 45 files／274 tests、diff-check成功。保存schema/API payloadは不変。[brief](tasks/SCUT-027.md) |
+| SCUT-028 | P3 | AppとSub Panelの責務単位分割 | 完了 | 中 | SCUT-025, SCUT-026, SCUT-027 | Sub timeline/editorとmode compositionを責務単位で分割し、P0境界を維持する | typecheck、composition 15 tests、全Vitest 45 files／275 tests、production build、diff-check成功。[brief](tasks/SCUT-028.md) |

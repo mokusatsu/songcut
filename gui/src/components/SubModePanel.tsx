@@ -2,17 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
   Bold,
-  FolderOpen,
   Plus,
   Save,
-  Settings2,
   Trash2,
   Italic,
-  Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { EditorTransportControls } from "@/components/EditorTransportControls";
-import { TimelineSurface } from "@/components/TimelineSurface";
+import { ModeToolbar } from "@/components/ModeToolbar";
+import { SubTimelineEditor } from "@/components/SubTimelineEditor";
 import { Dialog } from "@/components/ui/dialog";
 import { JobProgressDialog } from "@/components/JobProgressDialog";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
@@ -20,9 +17,12 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
-import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import { tr } from "@/i18n";
-import type { WhisperSettings } from "@/lib/api";
+import type {
+  SubModePanelActions,
+  SubModePanelCapabilities,
+  SubModePanelOperationView,
+} from "@/lib/modePanelContract";
 import {
   SUBTITLE_EFFECTS,
   defaultSubtitleEffectParams,
@@ -30,10 +30,6 @@ import {
   type SubtitleEffectParameterValue,
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
-import {
-  selectedSubtitleSegment,
-  type SubOperationCoordinator,
-} from "@/lib/useSubOperations";
 import {
   readSubtitleStylePresets,
   upsertSubtitleStylePreset,
@@ -43,8 +39,8 @@ import {
   activeSegmentsAt,
   addFourBeatSegment,
   createLyricsLane,
-  labelStackLevels,
   normalizeSubtitleStyle,
+  selectedSubtitleSegment,
   SUBTITLE_STYLE_LIMITS,
   subtitleRenderSignature,
   type LyricsLane,
@@ -53,27 +49,16 @@ import {
   type SubtitleStyle,
 } from "@/lib/subtitles";
 import { clamp, formatTime } from "@/lib/time";
-import { useBoundaryDrag } from "@/lib/useBoundaryDrag";
-import type { ModeController } from "@/lib/modeController";
 import type { ModePanelViewModel } from "@/lib/modeViewModel";
-import type { WaveformPhase } from "@/lib/useProgressiveWaveform";
-import type { WaveformDisplayMode, WaveformPoint } from "@/types";
 
-type Props = {
+export type SubModePanelProps = {
   view: ModePanelViewModel;
   state: SubtitleProjectState;
-  controller: ModeController<LyricsSegment, string>;
-  whisperSettings: WhisperSettings;
-  onPrepareWhisperModel: () => Promise<void> | undefined;
-  onPrepareDemucsModel: () => Promise<void> | undefined;
-  onPrepareMmsModel: () => Promise<void> | undefined;
+  capabilities: SubModePanelCapabilities;
+  operation: SubModePanelOperationView;
+  actions: SubModePanelActions;
   taskStatus: React.ReactNode;
-  operations: SubOperationCoordinator;
   onStateChange: (state: SubtitleProjectState) => void;
-  onFocusSegment: (segment: LyricsSegment) => void;
-  onLoad: () => void;
-  onSettings: () => void;
-  onMessage: (message: string) => void;
   /** Functional boundary preview keeps rapid moves based on the latest draft. */
   onBoundaryPreview: (
     laneId: string,
@@ -90,7 +75,7 @@ type Props = {
   onBoundaryCommit: () => void;
 };
 
-export function SubModePanel(props: Props) {
+export function SubModePanel(props: SubModePanelProps) {
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [lyricsText, setLyricsText] = useState("");
   const [laneDialogOpen, setLaneDialogOpen] = useState(false);
@@ -102,7 +87,7 @@ export function SubModePanel(props: Props) {
   const [exportProgressOpen, setExportProgressOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
   const [fontListError, setFontListError] = useState<string | null>(null);
-  const busy = props.operations.busy;
+  const busy = props.operation.busy;
   const media = props.view.media;
   const selected = selectedSubtitleSegment(props.state);
   const activeLane = props.state.lanes.find((lane) => lane.id === props.state.active_lane_id) ?? props.state.lanes[0];
@@ -117,7 +102,7 @@ export function SubModePanel(props: Props) {
   const timingSegmentIndex = timingSegment
     ? timingOrderedSegments.findIndex((segment) => segment.id === timingSegment.id)
     : -1;
-  const canAddSegment = props.controller.capabilities.canAddSegment;
+  const canAddSegment = props.capabilities.canAddSegment;
   const renderPlan = useMemo(() => {
     const width = media.videoInfo?.video.width || 1920;
     const height = media.videoInfo?.video.height || 1080;
@@ -142,7 +127,7 @@ export function SubModePanel(props: Props) {
     const timer = window.setTimeout(() => {
       const width = media.videoInfo?.video.width || 1920;
       const height = media.videoInfo?.video.height || 1080;
-      void props.operations.renderSubtitles({
+      void props.actions.renderSubtitles({
         width,
         height,
         items: missing.map(({ segment, style, signature }) => ({
@@ -155,14 +140,14 @@ export function SubModePanel(props: Props) {
     }, 300);
     return () => {
       window.clearTimeout(timer);
-      props.operations.invalidateSubtitleRender();
+      props.actions.invalidateSubtitleRender();
     };
-  }, [media.videoInfo, props.operations, renderPlanKey]);
+  }, [media.videoInfo, props.actions.renderSubtitles, props.actions.invalidateSubtitleRender, renderPlanKey]);
 
   useEffect(() => {
     if (!styleLane || systemFonts || fontListError) return;
     let cancelled = false;
-    window.songcut.listSystemFonts()
+    props.actions.listSystemFonts()
       .then((fonts) => {
         if (!cancelled) setSystemFonts(fonts);
       })
@@ -172,42 +157,29 @@ export function SubModePanel(props: Props) {
     return () => {
       cancelled = true;
     };
-  }, [styleLane, systemFonts, fontListError]);
+  }, [styleLane, systemFonts, fontListError, props.actions.listSystemFonts]);
 
   async function analyzeLyrics() {
     if (!lyricsText.trim()) return;
     setLyricsOpen(false);
     setAnalysisProgressOpen(true);
-    await props.operations.analyzeLyrics(lyricsText);
+    await props.actions.analyzeLyrics(lyricsText);
   }
 
   async function openLyricsDialog() {
     setPreparingModel(true);
     try {
-      await props.onPrepareDemucsModel();
-      await props.onPrepareWhisperModel();
-      if (props.whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
-        await props.onPrepareMmsModel();
-      }
+      await props.actions.prepareAnalysis();
       setLyricsOpen(true);
     } catch (error) {
-      props.onMessage(tr("sub.modelDownloadFailed", { detail: String(error) }));
+      props.actions.showMessage(tr("sub.modelDownloadFailed", { detail: String(error) }));
     } finally {
       setPreparingModel(false);
     }
   }
 
   async function exportSubtitles() {
-    if (!media.videoInfo) return;
-    const videoInfo = media.videoInfo;
-    const outputDir = await window.songcut.selectOutputDirectory();
-    if (!outputDir) return;
-    setExportProgressOpen(true);
-    await props.operations.exportSubtitles(
-      outputDir,
-      videoInfo.video.width || 1920,
-      videoInfo.video.height || 1080,
-    );
+    if (await props.actions.exportSubtitles()) setExportProgressOpen(true);
   }
 
   function addLane(alignment: number) {
@@ -225,7 +197,7 @@ export function SubModePanel(props: Props) {
   function removeLane(laneId: string) {
     if (props.state.lanes.length <= 1) return;
     const lane = props.state.lanes.find((item) => item.id === laneId);
-    if (lane?.segments.length && !window.confirm(tr("sub.removeLaneConfirm"))) return;
+    if (lane?.segments.length && !props.actions.confirmRemoveLane(lane)) return;
     const lanes = props.state.lanes.filter((item) => item.id !== laneId);
     props.onStateChange({
       ...props.state,
@@ -249,26 +221,21 @@ export function SubModePanel(props: Props) {
 
   return (
     <>
-      <header className="toolbar sub-toolbar">
-        <Button onClick={props.onLoad}>
-          <FolderOpen size={16} />
-          {tr("common.load")}
-        </Button>
-        <Button
-          onClick={() => void openLyricsDialog()}
-          disabled={!media.sourceAvailable || Boolean(busy) || preparingModel}
-        >
-          <Wand2 size={16} />
-          {tr("common.analyze")}
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={() => void exportSubtitles()}
-          disabled={!media.sourceAvailable || !hasSubtitleSegments(props.state) || Boolean(busy)}
-        >
-          <Save size={16} />
-          {tr("common.export")}
-        </Button>
+      <ModeToolbar
+        className="sub-toolbar"
+        transport={props.view.transport}
+        load={{ onClick: props.actions.load }}
+        analyze={{
+          onClick: () => void openLyricsDialog(),
+          disabled: !media.sourceAvailable || Boolean(busy) || preparingModel,
+        }}
+        exportAction={{
+          onClick: () => void exportSubtitles(),
+          disabled: !media.sourceAvailable || !hasSubtitleSegments(props.state) || Boolean(busy),
+          icon: <Save size={16} />,
+        }}
+        settings={{ onClick: props.actions.openSettings }}
+      >
         <Button
           variant="secondary"
           onClick={() => setLaneDialogOpen(true)}
@@ -277,24 +244,18 @@ export function SubModePanel(props: Props) {
           <Plus size={16} />
           {tr("sub.timeline")}
         </Button>
-        <Button variant="secondary" onClick={props.controller.actions.add} disabled={!canAddSegment || Boolean(busy)}>
+        <Button variant="secondary" onClick={props.actions.addSegment} disabled={!canAddSegment || Boolean(busy)}>
           <Plus size={16} />
           {tr("sub.segment")}
         </Button>
         <Button
           variant="secondary"
-          onClick={props.controller.actions.remove}
-          disabled={!props.controller.capabilities.canDeleteSelectedSegment || Boolean(busy)}
+          onClick={props.actions.removeSelectedSegment}
+          disabled={!props.capabilities.canDeleteSelectedSegment || Boolean(busy)}
         >
           <Trash2 size={16} />
         </Button>
-        <Button variant="secondary" onClick={props.onSettings}>
-          <Settings2 size={16} />
-          {tr("common.settings")}
-        </Button>
-        <div className="spacer" />
-        <EditorTransportControls {...props.view.transport} />
-      </header>
+      </ModeToolbar>
       {props.taskStatus}
       <div className="sub-status-row">
         {props.state.tempo_bpm > 0 ? <span>BPM {props.state.tempo_bpm.toFixed(1)}</span> : null}
@@ -307,20 +268,10 @@ export function SubModePanel(props: Props) {
         ) : null}
         {props.state.beat_warning ? <span className="warning-text">{props.state.beat_warning}</span> : null}
       </div>
-      <LyricsTimelineEditor
+      <SubTimelineEditor
+        {...media}
         state={props.state}
-        waveform={media.waveform}
-        progressiveWaveformChunks={media.progressiveWaveformChunks}
-        waveformPhase={media.waveformPhase}
-        waveformProgress={media.waveformProgress}
-        waveformDisplayMode={media.waveformDisplayMode}
-        duration={media.duration}
-        currentTime={media.currentTime}
-        playing={media.playing}
-        zoom={media.zoom}
-        focusRequest={media.focusRequest}
         selectedSegment={selected?.segment ?? null}
-        editing={media.editing}
         editingSegmentId={editingSegmentId}
         onEditingSegmentId={setEditingSegmentId}
         onStateChange={props.onStateChange}
@@ -329,11 +280,7 @@ export function SubModePanel(props: Props) {
         onBoundaryCommit={props.onBoundaryCommit}
         onStyle={(laneId) => setStyleLaneId(laneId)}
         onRemoveLane={removeLane}
-        onSeek={media.onSeek}
-        onScrub={media.onScrub}
-        onSeekingChange={media.onSeekingChange}
-        onHandleEditingChange={media.onHandleEditingChange}
-        onSelectSegment={(laneId, segment) => props.controller.actions.select(segment, laneId)}
+        onSelectSegment={props.actions.selectSegment}
         onEditTiming={(laneId, segmentId) => setTimingTarget({ laneId, segmentId })}
       />
       <Dialog open={lyricsOpen} title={tr("sub.lyricsPasteTitle")} onClose={() => setLyricsOpen(false)}>
@@ -351,7 +298,7 @@ export function SubModePanel(props: Props) {
       <JobProgressDialog
         open={analysisProgressOpen}
         title={tr("sub.lyricsAnalyzeTitle")}
-        job={props.operations.analysisJob}
+        job={props.operation.analysisJob}
         pendingMessage={tr("sub.lyricsAnalysisPreparing")}
         onClose={() => setAnalysisProgressOpen(false)}
         className="job-progress-dialog"
@@ -361,7 +308,7 @@ export function SubModePanel(props: Props) {
       <JobProgressDialog
         open={exportProgressOpen}
         title={tr("sub.subtitleExportTitle")}
-        job={props.operations.exportJob}
+        job={props.operation.exportJob}
         pendingMessage={tr("sub.subtitleExportPreparing")}
         onClose={() => setExportProgressOpen(false)}
         className="job-progress-dialog"
@@ -423,365 +370,6 @@ export function SubModePanel(props: Props) {
   );
 }
 
-function LyricsTimelineEditor(props: {
-  state: SubtitleProjectState;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: WaveformPhase;
-  waveformProgress: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  duration: number;
-  currentTime: number;
-  playing: boolean;
-  zoom: number;
-  focusRequest: number;
-  selectedSegment: LyricsSegment | null;
-  editing: boolean;
-  editingSegmentId: string | null;
-  onEditingSegmentId: (id: string | null) => void;
-  onStateChange: (state: SubtitleProjectState) => void;
-  onBoundaryPreview: (
-    laneId: string,
-    segmentId: string,
-    edge: "start" | "end",
-    time: number,
-  ) => void;
-  onBoundaryCancel: (
-    laneId: string,
-    segmentId: string,
-    segment: LyricsSegment,
-  ) => void;
-  onBoundaryCommit: () => void;
-  onStyle: (laneId: string) => void;
-  onRemoveLane: (laneId: string) => void;
-  onSeek: (time: number) => void;
-  onScrub: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-  onHandleEditingChange: (editing: boolean) => void;
-  onSelectSegment: (laneId: string, segment: LyricsSegment) => void;
-  onEditTiming: (laneId: string, segmentId: string) => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const [draggingBoundary, setDraggingBoundary] = useState<{
-    laneId: string;
-    segmentId: string;
-    edge: "start" | "end";
-  } | null>(null);
-  return (
-    <TimelineSurface
-      surfaceClassName="sub-timeline-scroll"
-      contentClassName="sub-timeline-content"
-      duration={props.duration}
-      waveform={props.waveform}
-      progressiveWaveformChunks={props.progressiveWaveformChunks}
-      waveformPhase={props.waveformPhase}
-      waveformProgress={props.waveformProgress}
-      waveformDisplayMode={props.waveformDisplayMode}
-      waveformAmplitudeProfile="adaptive"
-      currentTime={props.currentTime}
-      playing={props.playing}
-      zoom={props.zoom}
-      focusRequest={props.focusRequest}
-      focusRange={props.selectedSegment}
-      editing={props.editing}
-      onSeek={props.onSeek}
-      onScrub={props.onScrub}
-      onSeekingChange={props.onSeekingChange}
-      playheadClassName="sub-playhead"
-      waveformClassName="sub-waveform-surface"
-      waveformSvgClassName="sub-waveform"
-      waveformBackgroundClassName="timeline-waveform-background sub"
-      scrollbars={["horizontal", "vertical"]}
-      scrollAreaType="always"
-      wheelScope="waveform"
-      rangeLayer={({ width }) => [
-        ...props.state.lanes.filter((lane) => lane.id !== props.state.active_lane_id),
-        ...props.state.lanes.filter((lane) => lane.id === props.state.active_lane_id),
-      ].flatMap((lane) =>
-        lane.segments.map((segment) => (
-          <rect
-            key={`${lane.id}-${segment.id}`}
-            className={`sub-waveform-segment ${
-              lane.id === props.state.active_lane_id ? "active-lane" : ""
-            } ${segment.id === props.state.selected_segment_id ? "selected" : ""}`}
-            x={(segment.start / safeDuration) * width}
-            y={10}
-            width={Math.max(2, ((segment.end - segment.start) / safeDuration) * width)}
-            height={66}
-          />
-        ))
-      )}
-    >
-      {({ width }) => {
-        const draggingLaneIndex = draggingBoundary
-          ? props.state.lanes.findIndex((lane) => lane.id === draggingBoundary.laneId)
-          : -1;
-        const draggingSegment = draggingBoundary && draggingLaneIndex >= 0
-          ? props.state.lanes[draggingLaneIndex]?.segments.find(
-              (segment) => segment.id === draggingBoundary.segmentId
-            )
-          : null;
-        const draggingBoundaryX = draggingSegment && draggingBoundary
-          ? ((draggingBoundary.edge === "start" ? draggingSegment.start : draggingSegment.end) / safeDuration) * width
-          : null;
-        return (
-          <>
-            {draggingBoundaryX !== null ? (
-              <div
-                className={`sub-boundary-drag-guide ${
-                  draggingBoundary?.segmentId === props.state.selected_segment_id ? "selected" : ""
-                }`}
-                style={{
-                  left: draggingBoundaryX,
-                  height: 86 + draggingLaneIndex * 240 + 46,
-                }}
-              />
-            ) : null}
-            {props.state.rhythm_grid.slice(0, 6000).map((point) => (
-              <span
-                key={`${point.time}-${point.grid}`}
-                className={`rhythm-grid-line grid-${point.grid}`}
-                style={{ left: `${(point.time / safeDuration) * width}px` }}
-              />
-            ))}
-            {props.state.lanes.map((lane) => {
-              const levels = labelStackLevels(lane.segments);
-              const labelWidths = new Map(
-                lane.segments.map((segment, index) => {
-                  const level = levels.get(segment.id) ?? 0;
-                  const nextAtSameLevel = lane.segments
-                    .slice(index + 1)
-                    .find((candidate) => (levels.get(candidate.id) ?? 0) === level);
-                  const left = (segment.start / safeDuration) * width;
-                  const nextLeft = nextAtSameLevel
-                    ? (nextAtSameLevel.start / safeDuration) * width
-                    : width;
-                  return [segment.id, Math.max(20, Math.min(360, nextLeft - left - 8))];
-                })
-              );
-              return (
-                <div
-                  key={lane.id}
-                  className={`lyrics-lane ${lane.id === props.state.active_lane_id ? "active" : ""}`}
-                  onPointerDown={() =>
-                    props.onStateChange({ ...props.state, active_lane_id: lane.id })
-                  }
-                >
-                  <div className="lyrics-lane-header">
-                    <span>{lane.name}</span>
-                    <Button size="sm" variant="ghost" onClick={() => props.onStyle(lane.id)}>Style {lane.style.alignment}</Button>
-                    <Button size="icon" variant="ghost" onClick={() => props.onRemoveLane(lane.id)} disabled={props.state.lanes.length <= 1}><Trash2 size={14} /></Button>
-                  </div>
-                  <div className="lyrics-segment-track">
-                    {lane.segments.map((segment) => (
-                      <LyricsSegmentView
-                        key={segment.id}
-                        lane={lane}
-                        segment={segment}
-                        level={levels.get(segment.id) ?? 0}
-                        labelWidth={labelWidths.get(segment.id) ?? 20}
-                        width={width}
-                        duration={safeDuration}
-                        selected={segment.id === props.state.selected_segment_id}
-                        editing={segment.id === props.editingSegmentId}
-                        grid={props.state.rhythm_grid}
-                        onSelect={() => props.onSelectSegment(lane.id, segment)}
-                        onEditTiming={() => props.onEditTiming(lane.id, segment.id)}
-                        onEdit={() => props.onEditingSegmentId(segment.id)}
-                        onEditDone={(text) => {
-                          props.onEditingSegmentId(null);
-                          props.onStateChange({
-                            ...props.state,
-                            lanes: props.state.lanes.map((item) =>
-                              item.id === lane.id
-                                ? {
-                                    ...item,
-                                    segments: item.segments.map((candidate) =>
-                                      candidate.id === segment.id ? { ...candidate, text } : candidate
-                                    ),
-                                  }
-                                : item
-                            ),
-                          });
-                        }}
-                        onBoundaryPreview={(edge, time) =>
-                          props.onBoundaryPreview(lane.id, segment.id, edge, time)
-                        }
-                        onBoundaryCancel={(_edge, _time, startSegment) =>
-                          props.onBoundaryCancel(lane.id, segment.id, startSegment)
-                        }
-                        onBoundaryCommit={props.onBoundaryCommit}
-                        onEditingChange={props.onHandleEditingChange}
-                        onDraggingBoundary={(edge) =>
-                          setDraggingBoundary(
-                            edge ? { laneId: lane.id, segmentId: segment.id, edge } : null
-                          )
-                        }
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </>
-        );
-      }}
-    </TimelineSurface>
-  );
-}
-
-function LyricsSegmentView(props: {
-  lane: LyricsLane;
-  segment: LyricsSegment;
-  level: number;
-  labelWidth: number;
-  width: number;
-  duration: number;
-  selected: boolean;
-  editing: boolean;
-  grid: SubtitleProjectState["rhythm_grid"];
-  onSelect: () => void;
-  onEditTiming: () => void;
-  onEdit: () => void;
-  onEditDone: (text: string) => void;
-  onBoundaryPreview: (edge: "start" | "end", time: number) => void;
-  onBoundaryCancel: (
-    edge: "start" | "end",
-    time: number,
-    segment: LyricsSegment,
-  ) => void;
-  onBoundaryCommit: () => void;
-  onEditingChange: (editing: boolean) => void;
-  onDraggingBoundary: (edge: "start" | "end" | null) => void;
-}) {
-  const selectActionFocusProps = useEditorActionFocusProps<HTMLButtonElement>((event) => {
-    event.stopPropagation();
-    props.onSelect();
-  });
-  const left = (props.segment.start / props.duration) * props.width;
-  const right = (props.segment.end / props.duration) * props.width;
-  const [draft, setDraft] = useState(props.segment.text);
-  const boundaryEdgeRef = useRef<"start" | "end" | null>(null);
-  const boundaryStartTimeRef = useRef<number | null>(null);
-  const boundaryStartSegmentRef = useRef<LyricsSegment | null>(null);
-  const boundaryContentRef = useRef<HTMLElement | null>(null);
-  const drag = useBoundaryDrag({
-    onPreview: (clientX) => {
-      const content = boundaryContentRef.current;
-      const edge = boundaryEdgeRef.current;
-      if (!content || !edge) return;
-      const rect = content.getBoundingClientRect();
-      const time = clamp(((clientX - rect.left) / rect.width) * props.duration, 0, props.duration);
-      props.onBoundaryPreview(edge, time);
-    },
-    onCommit: props.onBoundaryCommit,
-    onCancel: () => {
-      const edge = boundaryEdgeRef.current;
-      const startTime = boundaryStartTimeRef.current;
-      const startSegment = boundaryStartSegmentRef.current;
-      if (edge && startTime !== null && startSegment) {
-        props.onBoundaryCancel(edge, startTime, startSegment);
-      }
-    },
-    onEditingChange: (editing) => {
-      props.onEditingChange(editing);
-      if (!editing) {
-        props.onDraggingBoundary(null);
-        boundaryEdgeRef.current = null;
-        boundaryStartTimeRef.current = null;
-        boundaryStartSegmentRef.current = null;
-        boundaryContentRef.current = null;
-      }
-    },
-  });
-
-  function prepareDrag(edge: "start" | "end", target: EventTarget | null) {
-    // Pointer-capable browsers dispatch a compatibility mousedown after
-    // pointerdown. Do not let that second event clear the active drag guide.
-    if (drag.isActive()) return false;
-    const content = target instanceof Element
-      ? target.closest(".sub-timeline-content") as HTMLElement | null
-      : null;
-    if (!content) return false;
-    boundaryEdgeRef.current = edge;
-    boundaryStartTimeRef.current = props.segment[edge];
-    boundaryStartSegmentRef.current = { ...props.segment };
-    boundaryContentRef.current = content;
-    props.onDraggingBoundary(edge);
-    return true;
-  }
-
-  function beginPointerDrag(event: React.PointerEvent, edge: "start" | "end") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (prepareDrag(edge, event.currentTarget) && !drag.startPointer(event)) {
-      props.onDraggingBoundary(null);
-    }
-  }
-
-  function beginMouseDrag(event: React.MouseEvent, edge: "start" | "end") {
-    event.preventDefault();
-    event.stopPropagation();
-    if (prepareDrag(edge, event.currentTarget) && !drag.startMouse(event)) {
-      props.onDraggingBoundary(null);
-    }
-  }
-  return (
-    <>
-      <button
-        {...selectActionFocusProps}
-        type="button"
-        className={`lyrics-segment ${props.selected ? "selected" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}
-        style={{ left, width: Math.max(4, right - left) }}
-        onDoubleClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          props.onSelect();
-          props.onEditTiming();
-        }}
-        title={`${props.segment.text}\nconfidence ${props.segment.confidence.toFixed(3)}`}
-      >
-        <span
-          className="lyrics-handle start"
-          onPointerDown={(event) => beginPointerDrag(event, "start")}
-          onMouseDown={(event) => beginMouseDrag(event, "start")}
-          onDoubleClick={(event) => event.stopPropagation()}
-        />
-        <span
-          className="lyrics-handle end"
-          onPointerDown={(event) => beginPointerDrag(event, "end")}
-          onMouseDown={(event) => beginMouseDrag(event, "end")}
-          onDoubleClick={(event) => event.stopPropagation()}
-        />
-      </button>
-      <div
-        className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}
-        style={{ left, top: 38 + props.level * 27, width: props.labelWidth }}
-        onClick={props.onSelect}
-        onDoubleClick={() => {
-          setDraft(props.segment.text);
-          props.onEdit();
-        }}
-      >
-        <span className="lyrics-connector" />
-        {props.editing ? (
-          <Input
-            autoFocus
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => props.onEditDone(draft.trim())}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") props.onEditDone(draft.trim());
-              if (event.key === "Escape") props.onEditDone(props.segment.text);
-            }}
-          />
-        ) : (
-          props.segment.text
-        )}
-      </div>
-    </>
-  );
-}
 
 export function SubtitleOverlay(props: {
   state: SubtitleProjectState;

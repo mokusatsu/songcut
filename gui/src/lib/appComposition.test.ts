@@ -8,7 +8,7 @@ describe("App composition root contract", () => {
     expect(appSource.match(/createModeSession</g)).toHaveLength(2);
     expect(appSource).toContain("view={cutModeSession.view}");
     expect(appSource).toContain("view={subModeSession.view}");
-    expect(appSource).toContain("operations={subModeSession.operations}");
+    expect(appSource).not.toContain("operations={subModeSession.operations}");
     expect(appSource).not.toContain("createModeController");
   });
 

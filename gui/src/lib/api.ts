@@ -27,6 +27,12 @@ export type WhisperSettings = {
   lyricsAlignmentAlgorithm: LyricsAlignmentAlgorithm;
 };
 
+export type TranscriptionSettings = Pick<WhisperSettings, "model" | "language" | "device">;
+export type LyricsAnalysisSettings = Pick<
+  WhisperSettings,
+  "model" | "language" | "device" | "demucsDevice" | "mmsDevice" | "lyricsAlignmentAlgorithm"
+>;
+
 export type WhisperModelStatus = {
   key: WhisperModelKey;
   display_name: string;
@@ -171,7 +177,7 @@ export function startTranscription(
   baseUrl: string,
   sourcePath: string,
   segments: Pick<Segment, "id" | "start" | "end">[],
-  settings: WhisperSettings,
+  settings: TranscriptionSettings,
   initialPrompt: string
 ) {
   return postJson<JobRecord>(baseUrl, "/transcription/jobs", {
@@ -209,7 +215,7 @@ export function startLyricsAnalysis(
   baseUrl: string,
   sourcePath: string,
   lyricsText: string,
-  settings: WhisperSettings
+  settings: LyricsAnalysisSettings
 ) {
   return postJson<JobRecord>(baseUrl, "/lyrics-analysis/jobs", {
     source_path: sourcePath,
@@ -245,6 +251,12 @@ export type SubtitleRenderRequestItem = {
   signature: string;
   text: string;
   style: LyricsLane["style"];
+};
+
+export type SubtitleRenderRequest = {
+  width: number;
+  height: number;
+  items: SubtitleRenderRequestItem[];
 };
 
 export type SubtitleRenderResultItem = {

@@ -12,6 +12,8 @@ import type {
   ProjectExportCandidate,
   ProjectOpenResult,
   ProjectOperation,
+  ProjectOperationKind,
+  ProjectOperationRecord,
   RecoverySnapshot,
   SourceIdentity,
   SubProjectDocumentV3,
@@ -89,7 +91,6 @@ export function composeProjectDocument(
     analysisDevice: projectSettings.analysisDevice,
     whisper: projectSettings.whisper,
     filenameTemplate: projectSettings.filenameTemplate,
-    selectedSegmentId: state.selectedSegmentId,
     currentTime: state.currentTime,
     zoomIndex: state.zoomIndex,
   };
@@ -103,6 +104,7 @@ export function composeProjectDocument(
   }
   return composeCutProjectDocument(base, {
     ...baseState,
+    selectedSegmentId: state.selectedSegmentId,
     guideText: state.guideText,
     analysis: state.analysis,
     segments: state.segments,
@@ -235,6 +237,8 @@ export type {
   ProjectDocumentV1,
   ProjectOpenResult,
   ProjectOperation,
+  ProjectOperationKind,
+  ProjectOperationRecord,
   RecoverySnapshot,
   SourceIdentity,
   SubProjectDocumentV3,

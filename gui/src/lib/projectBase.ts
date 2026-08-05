@@ -34,7 +34,6 @@ export type ProjectBaseComposeState = {
   analysisDevice: ProjectDocumentV1["settings"]["analysis_device"];
   whisper: WhisperSettings;
   filenameTemplate: string;
-  selectedSegmentId: string | null;
   currentTime: number;
   zoomIndex: number;
 };
@@ -46,7 +45,6 @@ export type ProjectBaseHydratedState = {
   duration: number;
   waveform: WaveformPoint[];
   projectSettings: Pick<ProjectOwnedSettings, "analysisDevice" | "whisper" | "filenameTemplate">;
-  selectedSegmentId: string | null;
   currentTime: number;
   zoomIndex: number;
 };
@@ -103,6 +101,7 @@ export function serializeProjectBase(
   base: ProjectDocumentV1,
   state: ProjectBaseComposeState,
   mode: AppMode,
+  selectedSegmentId: string | null,
 ): ProjectDocumentV1 {
   const sourceDuration = state.duration || base.source.duration_seconds;
   const priorExport = base.settings.export;
@@ -142,7 +141,7 @@ export function serializeProjectBase(
         }
       : null,
     view_state: {
-      selected_segment_id: state.selectedSegmentId,
+      selected_segment_id: selectedSegmentId,
       current_time: Math.max(0, state.currentTime),
       zoom_index: Math.max(0, Math.round(state.zoomIndex)),
     },
@@ -177,7 +176,6 @@ export function hydrateProjectBase(document: ProjectDocumentV1): ProjectBaseHydr
       whisper: cloneValue(document.settings.whisper) as WhisperSettings,
       filenameTemplate: document.settings.export?.filename_template ?? DEFAULT_FILENAME_TEMPLATE,
     },
-    selectedSegmentId: document.view_state.selected_segment_id,
     currentTime: document.view_state.current_time,
     zoomIndex: document.view_state.zoom_index,
   };

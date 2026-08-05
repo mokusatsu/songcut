@@ -46,7 +46,6 @@ function commonState() {
     analysisDevice: "auto" as const,
     whisper: { ...DEFAULT_WHISPER_SETTINGS },
     filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
-    selectedSegmentId: null,
     currentTime: 2.25,
     zoomIndex: 3,
   };
@@ -55,6 +54,7 @@ function commonState() {
 function cutState(): CutProjectComposeState {
   return {
     ...commonState(),
+    selectedSegmentId: null,
     guideText: "",
     analysis: null,
     segments: [],
@@ -74,6 +74,7 @@ function subState(base: ReturnType<typeof createProjectDocument>): SubProjectCom
 describe("mode project adapters", () => {
   it("keeps Cut payloads out of the Sub compose type", () => {
     expectTypeOf<SubProjectComposeState>().not.toHaveProperty("segments");
+    expectTypeOf<SubProjectComposeState>().not.toHaveProperty("selectedSegmentId");
     const sub: SubProjectComposeState = subState(createSubProjectDocument(
       "C:\\media\\adapter.mp4.sub.songcut",
       source,
@@ -145,11 +146,13 @@ describe("mode project adapters", () => {
     expect(composed.subtitle?.lanes[0].name).not.toBe("changed");
     expect(hydrated).not.toHaveProperty("segments");
     expect(hydrated).not.toHaveProperty("analysis");
+    expect(hydrated).not.toHaveProperty("selectedSegmentId");
 
     const legacy = createCutProjectDocument("C:\\media\\adapter.mp4.songcut", source, videoInfo);
     delete legacy.mode;
     const cutHydrated = hydrateCutProjectDocument(legacy);
     expect(cutHydrated.mode).toBe("cut");
+    expect(cutHydrated.selectedSegmentId).toBeNull();
     expect("subtitle" in cutHydrated).toBe(false);
     expect(hydrateProjectDocument(legacy).mode).toBe("cut");
   });

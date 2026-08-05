@@ -1,6 +1,10 @@
 import { useRef } from "react";
 
-import type { ProjectOperation } from "@/lib/project";
+import type {
+  ProjectOperation,
+  ProjectOperationKind,
+  ProjectOperationRecord,
+} from "@/lib/project";
 import {
   createPendingTask,
   failTask,
@@ -13,7 +17,13 @@ import type { JobRecord } from "@/types";
  * The runner supplies the `running` status and keeps mode-specific result data
  * outside of the lifecycle itself.
  */
-export type OperationDescriptor = Omit<NonNullable<ProjectOperation>, "status">;
+type OperationRecordFor<K extends ProjectOperationKind> = Extract<ProjectOperationRecord, { kind: K }>;
+
+export type OperationDescriptorFor<K extends ProjectOperationKind> = Omit<OperationRecordFor<K>, "status">;
+
+export type OperationDescriptor = {
+  [K in ProjectOperationKind]: OperationDescriptorFor<K>;
+}[ProjectOperationKind];
 
 export type OperationRunnerCallbacks = {
   updateTask: (slot: TaskSlot, job: JobRecord | null) => void;
@@ -25,9 +35,7 @@ export type OperationRunnerCallbacks = {
   markProjectChanged?: () => void;
 };
 
-export type OperationLifecycleOptions<TResult> = {
-  slot: TaskSlot;
-  operation: OperationDescriptor;
+type OperationLifecycleCallbacks<TResult> = {
   pendingMessage: string;
   failureMessage: string;
   start: () => Promise<JobRecord>;
@@ -40,20 +48,29 @@ export type OperationLifecycleOptions<TResult> = {
   clearOperationOnSuccess?: boolean;
 };
 
+export type OperationIdentity = {
+  [K in ProjectOperationKind]: {
+    slot: K;
+    operation: OperationDescriptorFor<K>;
+  };
+}[ProjectOperationKind];
+
+export type OperationLifecycleOptions<TResult> = OperationLifecycleCallbacks<TResult> & OperationIdentity;
+
 export type OperationRunner = {
   run: <TResult>(options: OperationLifecycleOptions<TResult>) => Promise<TResult | undefined>;
-  isRunning: (slot?: TaskSlot) => boolean;
+  isRunning: (slot?: ProjectOperationKind) => boolean;
 };
 
 type RunnerState = {
-  activeSlots: Set<TaskSlot>;
+  activeSlots: Set<ProjectOperationKind>;
 };
 
 function setOperationStatus(
   operation: OperationDescriptor,
   status: "running" | "interrupted",
 ): ProjectOperation {
-  return { ...operation, status };
+  return { ...operation, status } as ProjectOperationRecord;
 }
 
 /**
@@ -64,7 +81,7 @@ function setOperationStatus(
 export async function runOperationLifecycle<TResult>(
   options: OperationLifecycleOptions<TResult>,
   callbacks: OperationRunnerCallbacks,
-  state: RunnerState = { activeSlots: new Set<TaskSlot>() },
+  state: RunnerState = { activeSlots: new Set<ProjectOperationKind>() },
 ): Promise<TResult | undefined> {
   // A project document records one foreground operation. Do not let another
   // slot overwrite its running/interrupted state while the first job polls.
@@ -112,7 +129,7 @@ export async function runOperationLifecycle<TResult>(
 
 /** Create a runner with a shared per-slot duplicate-start guard. */
 export function createOperationRunner(callbacks: OperationRunnerCallbacks): OperationRunner {
-  const state: RunnerState = { activeSlots: new Set<TaskSlot>() };
+  const state: RunnerState = { activeSlots: new Set<ProjectOperationKind>() };
   return {
     run: (options) => runOperationLifecycle(options, callbacks, state),
     isRunning: (slot) => (slot ? state.activeSlots.has(slot) : state.activeSlots.size > 0),

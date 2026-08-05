@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createOperationRunner,
+  type OperationIdentity,
   type OperationRunnerCallbacks,
 } from "@/lib/useOperationRunner";
 import type { ProjectOperation } from "@/lib/project";
@@ -47,6 +48,26 @@ function harness() {
 }
 
 describe("operation runner", () => {
+  it("requires the persistent operation kind to match its task slot", () => {
+    const valid: OperationIdentity = {
+      slot: "transcription",
+      operation: { kind: "transcription", pending_segment_ids: ["segment-1"] },
+    };
+    // @ts-expect-error An export operation cannot be registered in the analysis slot.
+    const invalid: OperationIdentity = {
+      slot: "analysis",
+      operation: { kind: "export" },
+    };
+    const lyricsIdentity: OperationIdentity = {
+      slot: "lyrics-analysis",
+      // @ts-expect-error Only transcription persists resume settings.
+      operation: { kind: "lyrics-analysis", settings: {} },
+    };
+    expect(valid.operation.kind).toBe("transcription");
+    expect(invalid).toBeDefined();
+    expect(lyricsIdentity).toBeDefined();
+  });
+
   it("registers pending/start/progress and clears the operation on success", async () => {
     const state = harness();
     const runner = createOperationRunner(state.callbacks);
@@ -82,7 +103,7 @@ describe("operation runner", () => {
     await expect(
       runner.run({
         slot: "lyrics-analysis",
-        operation: { kind: "lyrics-analysis", settings: { enabled: true, model: "tiny", language: "ja", device: "cpu" } },
+        operation: { kind: "lyrics-analysis" },
         pendingMessage: "Preparing",
         failureMessage: "Lyrics failed",
         start: async () => job("running", { kind: "lyrics-analysis" }),

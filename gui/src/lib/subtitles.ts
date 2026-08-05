@@ -121,6 +121,14 @@ export type SubtitleProjectState = {
   confidence_statistics: ConfidenceStatistics | null;
 };
 
+export function selectedSubtitleSegment(state: SubtitleProjectState) {
+  for (const lane of state.lanes) {
+    const segment = lane.segments.find((item) => item.id === state.selected_segment_id);
+    if (segment) return { laneId: lane.id, segment };
+  }
+  return null;
+}
+
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   font_name: "Yu Gothic UI",
   font_size: 90,
