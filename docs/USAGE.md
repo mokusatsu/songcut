@@ -2,13 +2,21 @@
 
 ## Overview
 
-`Cut` turns detected singing sections into separate video clips, while `Sub` aligns lyrics to a video and creates subtitles.
+Songcut has two modes: `Cut` and `Sub`.
+
+- `Cut`: Extracts singing sections from videos
+- `Sub`: Aligns lyrics with a video to create subtitles
+
 After loading a video, choose `Cut` or `Sub` in the tabs at the top of the window to select the task.
+
+### Cut Mode
 
 In Cut, review detected singing sections as segments and edit their titles, boundaries, and export selection.
 Use the waveform and preview to make one clip or timestamp entry per song.
 
 ![Cut mode editor](image/screenshot-cut.png)
+
+### Sub Mode
 
 In Sub, align lyrics to the audio and edit text, timing, and position across subtitle timelines.
 After setting subtitle styles, export a subtitled video and one subtitle file set per timeline.
