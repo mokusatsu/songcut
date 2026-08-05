@@ -23,11 +23,14 @@ afterEach(async () => {
 
 describe("songcut project storage", () => {
   it("uses the complete video filename for the sidecar", () => {
-    expect(projectPathForVideo("C:\\media\\archive.mp4")).toBe(path.resolve("C:\\media\\archive.mp4.songcut"));
+    const cutPath = projectPathForVideo("C:\\media\\archive.mp4");
+    const subPath = projectPathForVideo("C:\\media\\archive.mp4", "sub");
+    expect(cutPath).toBe(path.resolve("C:\\media\\archive.mp4.songcut"));
     expect(projectPathForVideo("C:\\media\\archive.mkv")).not.toBe(projectPathForVideo("C:\\media\\archive.mp4"));
-    expect(projectPathForVideo("C:\\media\\archive.mp4", "sub")).toBe(
+    expect(subPath).toBe(
       path.resolve("C:\\media\\archive.mp4.sub.songcut")
     );
+    expect(subPath).not.toBe(cutPath);
   });
 
   it("round-trips a project through an atomic save", async () => {
@@ -143,6 +146,96 @@ describe("songcut project storage", () => {
 
     await expect(loadProject(projectPath)).rejects.toThrow(/newer version/i);
   });
+
+  it("accepts only operation kinds compatible with each mode", () => {
+    for (const kind of ["analysis", "transcription", "export"] as const) {
+      expect(() => parseProjectText(JSON.stringify({
+        ...projectDocument(1),
+        operation: { kind, status: "interrupted" as const },
+      }))).not.toThrow();
+    }
+    for (const kind of ["lyrics-analysis", "subtitle-export"] as const) {
+      expect(() => parseProjectText(JSON.stringify({
+        ...subProjectDocument(1),
+        operation: { kind, status: "interrupted" as const },
+      }))).not.toThrow();
+    }
+  });
+
+  it("rejects operation kinds from the other mode", () => {
+    for (const kind of ["lyrics-analysis", "subtitle-export"] as const) {
+      expect(() => parseProjectText(JSON.stringify({
+        ...projectDocument(1),
+        operation: { kind, status: "interrupted" as const },
+      }))).toThrow(/incompatible with cut/i);
+    }
+    for (const kind of ["analysis", "transcription", "export"] as const) {
+      expect(() => parseProjectText(JSON.stringify({
+        ...subProjectDocument(1),
+        operation: { kind, status: "interrupted" as const },
+      }))).toThrow(/incompatible with sub/i);
+    }
+  });
+
+  it("rejects mixed Cut/Sub payloads with a precise invariant error", () => {
+    expect(() => parseProjectText(JSON.stringify({
+      ...projectDocument(1),
+      subtitle: subtitleState(),
+    }))).toThrow(/Cut project must not contain subtitle/i);
+
+    expect(() => parseProjectText(JSON.stringify({
+      ...subProjectDocument(1),
+      analysis_snapshot: {
+        timestamp_source: "",
+        backend: "",
+        device_requested: "",
+        device_used: "",
+        model_versions: {},
+        elapsed_seconds: 0,
+        frame_scores: [],
+        raw_segments: [],
+      },
+    }))).toThrow(/Sub project must not contain analysis_snapshot/i);
+
+    expect(() => parseProjectText(JSON.stringify({
+      ...subProjectDocument(1),
+      segments: [segmentFixture()],
+    }))).toThrow(/Sub project must not contain Cut segments/i);
+
+    expect(() => parseProjectText(JSON.stringify({
+      ...subProjectDocument(1),
+      export_candidates: [{
+        id: "candidate-1",
+        segment_id: "segment-1",
+        title: "title",
+        filename_stem: "title",
+        start: 0,
+        end: 1,
+        duration: 1,
+        match_source: "manual",
+        checked: true,
+      }],
+      segments: [segmentFixture()],
+    }))).toThrow(/Sub project must not contain Cut export_candidates/i);
+
+    const missingSubtitle = { ...subProjectDocument(1) };
+    delete missingSubtitle.subtitle;
+    expect(() => parseProjectText(JSON.stringify(missingSubtitle))).toThrow(/missing subtitle/i);
+  });
+
+  it("round-trips valid Cut and Sub documents through atomic storage", async () => {
+    const directory = await tempDirectory();
+    const cutPath = path.join(directory, "video.mp4.songcut");
+    const subPath = path.join(directory, "video.mp4.sub.songcut");
+    const cut = { ...projectDocument(3), mode: "cut" as const };
+    const sub = subProjectDocument(4);
+
+    await saveProject(cutPath, cut);
+    await saveProject(subPath, sub);
+
+    expect((await loadProject(cutPath)).document).toEqual(cut);
+    expect((await loadProject(subPath)).document).toEqual(sub);
+  });
 });
 
 async function tempDirectory() {
@@ -181,5 +274,60 @@ function projectDocument(revision: number): ProjectDocumentV1 {
     export_candidates: [],
     view_state: { selected_segment_id: null, current_time: 0, zoom_index: 0 },
     operation: null,
+  };
+}
+
+function subProjectDocument(revision: number): ProjectDocumentV1 {
+  return {
+    ...projectDocument(revision),
+    mode: "sub",
+    subtitle: subtitleState(),
+  };
+}
+
+function subtitleState() {
+  return {
+    lanes: [{
+      id: "lane-1",
+      name: "Lyrics 1",
+      style: {
+        font_name: "Yu Gothic UI",
+        font_size: 90,
+        primary_color: "#FFFFFF",
+        outline_color: "#000000",
+        background_color: "#00000080",
+        bold: false,
+        italic: false,
+        outline: 2,
+        shadow: 0,
+        alignment: 2,
+        margin_l: 60,
+        margin_r: 60,
+        margin_v: 54,
+      },
+      segments: [],
+    }],
+    active_lane_id: "lane-1",
+    selected_segment_id: null,
+    tempo_bpm: 0,
+    beat_times: [],
+    rhythm_grid: [],
+    beat_warning: null,
+    confidence_statistics: null,
+  };
+}
+
+function segmentFixture() {
+  return {
+    id: "segment-1",
+    start: 0,
+    end: 1,
+    start_timecode: "00:00",
+    end_timecode: "00:01",
+    duration: 1,
+    confidence: 1,
+    source: "manual",
+    flags: [],
+    user_edited: true,
   };
 }

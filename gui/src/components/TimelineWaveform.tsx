@@ -30,6 +30,7 @@ export type TimelineWaveformProps = {
   scrubFromClientX: (clientX: number) => void;
   stopScrubAutoScroll: () => void;
   onSeekingChange: (seeking: boolean) => void;
+  onInteractionStart?: () => void;
   onWheelScroll?: (event: WheelEvent) => void;
 };
 
@@ -69,6 +70,7 @@ export function TimelineWaveform(props: TimelineWaveformProps) {
       data-waveform-phase={props.phase}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
+        props.onInteractionStart?.();
         event.preventDefault();
         suppressClickRef.current = true;
         pointerSeekingRef.current = true;
@@ -93,6 +95,7 @@ export function TimelineWaveform(props: TimelineWaveformProps) {
         finishSeeking();
       }}
       onClick={(event) => {
+        props.onInteractionStart?.();
         if (suppressClickRef.current) {
           event.preventDefault();
           return;
@@ -101,6 +104,7 @@ export function TimelineWaveform(props: TimelineWaveformProps) {
       }}
       onMouseDown={(event) => {
         if (event.button !== 0 || pointerSeekingRef.current) return;
+        props.onInteractionStart?.();
         event.preventDefault();
         suppressClickRef.current = true;
         mouseSeekingRef.current = true;

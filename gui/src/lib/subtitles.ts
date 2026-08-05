@@ -1,11 +1,21 @@
 import { clamp } from "@/lib/time";
 import {
+  nudgeBoundaryTime,
+  resolveBoundaryTime,
+  type BoundaryPolicy,
+  type BoundaryPolicyContext,
+} from "@/lib/boundaries";
+import {
+  nearestRhythmTimeInRange,
+  nudgedRhythmTime,
+} from "@/lib/segmentTiming";
+import { rangesOverlap } from "@/lib/timeRange";
+import {
   DEFAULT_SUBTITLE_EFFECT,
   normalizeSubtitleEffect,
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
 
-export type AppMode = "cut" | "sub";
 export type SubtitleSegmentSource = "lyrics" | "title" | "manual";
 
 export type SubtitleStyle = {
@@ -252,7 +262,7 @@ export function addFourBeatSegment(
   if (endIndex <= startIndex) return null;
   const start = times[startIndex];
   const end = times[endIndex];
-  if (ordered.some((segment) => rangesOverlap(start, end, segment.start, segment.end))) return null;
+  if (ordered.some((segment) => rangesOverlap({ start, end }, segment))) return null;
   return {
     id: `manual-${crypto.randomUUID()}`,
     text: "New subtitle",
@@ -272,20 +282,21 @@ export function updateSegmentBoundary(
   proposedTime: number,
   grid: readonly RhythmGridPoint[],
 ): LyricsLane {
-  const times = normalizedGridTimes(grid);
   const ordered = chronologicalSegments(lane.segments);
   const index = ordered.findIndex((segment) => segment.id === segmentId);
-  if (index < 0 || times.length < 2) return lane;
+  if (index < 0 || normalizedGridTimes(grid).length < 2) return lane;
   const segment = ordered[index];
-  const previousEnd = ordered[index - 1]?.end ?? -Infinity;
-  const nextStart = ordered[index + 1]?.start ?? Infinity;
-  const valid = times.filter((time) =>
-    edge === "start"
-      ? time > previousEnd + 1e-6 && time < segment.end - 1e-6
-      : time > segment.start + 1e-6 && time < nextStart - 1e-6
+  const snapped = resolveBoundaryTime(
+    segment,
+    edge,
+    proposedTime,
+    createSubtitleBoundaryPolicy(grid),
+    {
+      previousEnd: ordered[index - 1]?.end,
+      nextStart: ordered[index + 1]?.start,
+    },
   );
-  if (!valid.length) return lane;
-  const snapped = nearestTime(valid, proposedTime);
+  if (snapped === null) return lane;
   return {
     ...lane,
     segments: lane.segments.map((item) =>
@@ -301,15 +312,46 @@ export function nudgeSegmentBoundary(
   direction: -1 | 1,
   grid: readonly RhythmGridPoint[],
 ): LyricsLane {
-  const segment = lane.segments.find((item) => item.id === segmentId);
-  if (!segment) return lane;
-  const times = normalizedGridTimes(grid);
-  const current = edge === "start" ? segment.start : segment.end;
-  const index = nearestTimeIndex(times, current);
-  if (index < 0) return lane;
-  const target = times[clamp(index + direction, 0, times.length - 1)];
-  return updateSegmentBoundary(lane, segmentId, edge, target, grid);
+  const ordered = chronologicalSegments(lane.segments);
+  const index = ordered.findIndex((item) => item.id === segmentId);
+  if (index < 0 || normalizedGridTimes(grid).length < 2) return lane;
+  const segment = ordered[index];
+  const target = nudgeBoundaryTime(
+    segment,
+    edge,
+    direction,
+    createSubtitleBoundaryPolicy(grid),
+    {
+      previousEnd: ordered[index - 1]?.end,
+      nextStart: ordered[index + 1]?.start,
+    },
+  );
+  if (target === null) return lane;
+  return {
+    ...lane,
+    segments: lane.segments.map((item) =>
+      item.id === segmentId ? { ...item, [edge]: target, user_edited: true } : item
+    ),
+  };
 }
+
+/** Sub boundaries snap to the rhythm grid and remain strictly inside neighbors. */
+export function createSubtitleBoundaryPolicy(
+  grid: readonly RhythmGridPoint[],
+): BoundaryPolicy {
+  return {
+    // The strict resolver and rhythm-range helper each apply the existing
+    // single-epsilon edge predicate. Keeping this at zero avoids subtracting
+    // the epsilon twice from the opposite boundary.
+    minimumDuration: 0,
+    strict: true,
+    snap: (value: number, context: BoundaryPolicyContext) =>
+      nearestRhythmTimeInRange(grid, value, context.minimum, context.maximum),
+    nudge: (value: number, direction: -1 | 1) => nudgedRhythmTime(grid, value, direction),
+  };
+}
+
+export const createSubBoundaryPolicy = createSubtitleBoundaryPolicy;
 
 export function labelStackLevels(segments: readonly LyricsSegment[], maximumLevels = 6) {
   const ordered = chronologicalSegments(segments);
@@ -466,30 +508,11 @@ function normalizedStyleInteger(value: unknown, fallback: number, minimum: numbe
   return Math.round(normalizedStyleNumber(value, fallback, minimum, maximum));
 }
 
-function nearestTime(times: readonly number[], target: number) {
-  return times.reduce((best, value) =>
-    Math.abs(value - target) < Math.abs(best - target) ? value : best
-  );
-}
-
-function nearestTimeIndex(times: readonly number[], target: number) {
-  if (!times.length) return -1;
-  let best = 0;
-  for (let index = 1; index < times.length; index += 1) {
-    if (Math.abs(times[index] - target) < Math.abs(times[best] - target)) best = index;
-  }
-  return best;
-}
-
 function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean) {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     if (predicate(values[index])) return index;
   }
   return -1;
-}
-
-function rangesOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number) {
-  return leftStart < rightEnd - 1e-6 && rightStart < leftEnd - 1e-6;
 }
 
 function median(values: readonly number[]) {

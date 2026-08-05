@@ -187,12 +187,20 @@ export type ProjectSubtitleState = {
   confidence_statistics: Record<string, unknown> | null;
 };
 
-export type ProjectOperation = {
-  kind: "analysis" | "transcription" | "export" | "lyrics-analysis" | "subtitle-export";
+export type CutOperationKind = "analysis" | "transcription" | "export";
+export type SubOperationKind = "lyrics-analysis" | "subtitle-export";
+export type ProjectOperationKind = CutOperationKind | SubOperationKind;
+
+export type ProjectOperationRecord = {
+  kind: ProjectOperationKind;
   status: "running" | "interrupted";
   settings?: WhisperSettings;
   pending_segment_ids?: string[];
-} | null;
+};
+
+export type ProjectOperation = ProjectOperationRecord | null;
+export type CutProjectOperation = (Omit<ProjectOperationRecord, "kind"> & { kind: CutOperationKind }) | null;
+export type SubProjectOperation = (Omit<ProjectOperationRecord, "kind"> & { kind: SubOperationKind }) | null;
 
 export type ProjectDocumentV1 = {
   format: typeof PROJECT_FORMAT;
@@ -245,6 +253,26 @@ export type ProjectDocumentV1 = {
   subtitle?: ProjectSubtitleState;
 };
 
+/**
+ * Mode-specific views of the v3 document.  `mode` remains optional for Cut so
+ * sidecars written before the mode field was introduced continue to type-check
+ * and round-trip unchanged.  Runtime validation below enforces the stronger
+ * field and operation invariants at the document boundary.
+ */
+export type CutProjectDocumentV3 = ProjectDocumentV1 & {
+  mode?: "cut";
+  subtitle?: never;
+  operation: CutProjectOperation;
+};
+
+export type SubProjectDocumentV3 = ProjectDocumentV1 & {
+  mode: "sub";
+  subtitle: ProjectSubtitleState;
+  operation: SubProjectOperation;
+};
+
+export type ModeProjectDocument = CutProjectDocumentV3 | SubProjectDocumentV3;
+
 export type SourceIdentity = {
   path: string;
   filename: string;
@@ -284,9 +312,15 @@ const whisperModels = new Set<WhisperModelKey>([
   "small",
   "whisper-large-v3-turbo-int8-ov",
 ]);
+const cutOperationKinds = new Set<CutOperationKind>(["analysis", "transcription", "export"]);
+const subOperationKinds = new Set<SubOperationKind>(["lyrics-analysis", "subtitle-export"]);
 
 export function sidecarPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
   return mode === "sub" ? `${videoPath}.sub.songcut` : `${videoPath}.songcut`;
+}
+
+export function isProjectOperationKindForMode(mode: "cut" | "sub", kind: string): boolean {
+  return mode === "sub" ? subOperationKinds.has(kind as SubOperationKind) : cutOperationKinds.has(kind as CutOperationKind);
 }
 
 export function parseProjectText(text: string): ProjectDocumentV1 {
@@ -300,7 +334,7 @@ export function parseProjectText(text: string): ProjectDocumentV1 {
   return value;
 }
 
-export function assertProjectDocument(value: unknown): asserts value is ProjectDocumentV1 {
+export function assertProjectDocument(value: unknown): asserts value is ModeProjectDocument {
   const root = objectValue(value, "project");
   if (root.format !== PROJECT_FORMAT) throw new Error("Not a songcut project.");
   if (root.schema_version !== PROJECT_SCHEMA_VERSION) {
@@ -396,7 +430,50 @@ export function assertProjectDocument(value: unknown): asserts value is ProjectD
   nonNegativeInteger(view.zoom_index, "view_state.zoom_index");
   validateOperation(root.operation);
   if (root.subtitle !== undefined) validateSubtitleState(root.subtitle, "subtitle");
-  if (root.mode === "sub" && root.subtitle === undefined) throw new Error("Sub project is missing subtitle state.");
+  validateModeInvariants(root);
+}
+
+/**
+ * Return a strict mode-discriminated view for internal callers.  Legacy v3
+ * Cut documents omit `mode`; this helper supplies the semantic default on a
+ * shallow copy while parse/load continue returning the original object shape
+ * for byte-compatible round trips.
+ */
+export function normalizeProjectDocument(value: unknown): ModeProjectDocument {
+  assertProjectDocument(value);
+  if (value.mode === undefined) return { ...value, mode: "cut" } as CutProjectDocumentV3;
+  return value;
+}
+
+/**
+ * Validate mode-specific fields after the common v3 shape has been checked.
+ * A missing mode is the historical Cut representation, so it is intentionally
+ * normalized semantically without mutating the parsed object.
+ */
+function validateModeInvariants(root: Record<string, unknown>) {
+  const mode = root.mode === "sub" ? "sub" : "cut";
+  const operation = root.operation === null ? null : objectValue(root.operation, "operation");
+  if (mode === "cut") {
+    if (root.subtitle !== undefined) throw new Error("Cut project must not contain subtitle state.");
+    if (operation && !isProjectOperationKindForMode(mode, String(operation.kind))) {
+      throw new Error(`Operation kind ${JSON.stringify(String(operation.kind))} is incompatible with cut project.`);
+    }
+    return;
+  }
+
+  if (root.subtitle === undefined) throw new Error("Sub project is missing subtitle state.");
+  if (root.analysis_snapshot !== null) {
+    throw new Error("Sub project must not contain analysis_snapshot.");
+  }
+  if (!Array.isArray(root.export_candidates) || root.export_candidates.length > 0) {
+    throw new Error("Sub project must not contain Cut export_candidates.");
+  }
+  if (!Array.isArray(root.segments) || root.segments.length > 0) {
+    throw new Error("Sub project must not contain Cut segments.");
+  }
+  if (operation && !isProjectOperationKindForMode(mode, String(operation.kind))) {
+    throw new Error(`Operation kind ${JSON.stringify(String(operation.kind))} is incompatible with sub project.`);
+  }
 }
 
 export function assertRecoverySnapshot(value: unknown): asserts value is RecoverySnapshot {
@@ -650,7 +727,13 @@ function whisperSettings(value: unknown, label: string) {
 function validateOperation(value: unknown) {
   if (value === null) return;
   const row = objectValue(value, "operation");
-  if (!new Set(["analysis", "transcription", "export"]).has(String(row.kind))) throw new Error("Invalid operation.kind.");
+  if (
+    !new Set(["analysis", "transcription", "export", "lyrics-analysis", "subtitle-export"]).has(
+      String(row.kind)
+    )
+  ) {
+    throw new Error("Invalid operation.kind.");
+  }
   if (row.status !== "running" && row.status !== "interrupted") throw new Error("Invalid operation.status.");
   if (row.settings !== undefined) whisperSettings(row.settings, "operation.settings");
   if (row.pending_segment_ids !== undefined) {

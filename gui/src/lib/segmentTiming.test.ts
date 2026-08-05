@@ -4,6 +4,8 @@ import {
   cutTimeArrowStep,
   formatTimeInput,
   nearestRhythmTime,
+  nearestRhythmTimeInRange,
+  nudgedRhythmTime,
   parseTimeInput,
 } from "@/lib/segmentTiming";
 
@@ -32,8 +34,17 @@ describe("segment timing input", () => {
     expect(cutTimeArrowStep(true, true)).toBe(1);
   });
 
+  it("keeps Cut boundary movement in decimal seconds", () => {
+    const start = 0.37;
+    expect(formatTimeInput(start + cutTimeArrowStep(false, false))).toBe("0:00.470");
+  });
+
   it("finds nearest and bounded adjacent quarter-beat positions", () => {
     expect(nearestRhythmTime(grid, 0.62)).toBe(0.5);
+    expect(nearestRhythmTimeInRange(grid, 0.62, 0.25, 0.9)).toBe(0.5);
+    expect(nearestRhythmTimeInRange(grid, 0.1, 0.25, 0.5)).toBeNull();
+    expect(nudgedRhythmTime(grid, 0.5, 1)).toBe(0.75);
+    expect(nudgedRhythmTime(grid, 0, -1)).toBe(0);
     expect(adjacentRhythmTime(grid, 0.5, 1, 0, 0.75)).toBe(0.75);
     expect(adjacentRhythmTime(grid, 0.5, -1, 0.25, 1)).toBe(0.25);
     expect(adjacentRhythmTime(grid, 0.75, 1, 0, 0.75)).toBeNull();

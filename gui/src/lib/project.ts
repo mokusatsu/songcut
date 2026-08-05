@@ -1,25 +1,38 @@
-import { assertProjectDocument } from "../../electron/project-schema";
+import {
+  assertProjectDocument,
+  isProjectOperationKindForMode,
+  normalizeProjectDocument as normalizeSchemaProjectDocument,
+} from "../../electron/project-schema";
 import { WAVEFORM_BINARY_ENCODING, decodeWaveformPoints, encodeWaveformPoints } from "../../electron/waveform-codec";
 import type {
+  CutProjectDocumentV3,
+  CutProjectOperation,
+  ModeProjectDocument,
   ProjectDocumentV1,
   ProjectExportCandidate,
   ProjectOpenResult,
   ProjectOperation,
   RecoverySnapshot,
   SourceIdentity,
+  SubProjectDocumentV3,
+  SubProjectOperation,
   WhisperSettings as ProjectWhisperSettings,
 } from "../../electron/project-schema";
 import type { WhisperSettings } from "@/lib/api";
 import { DEFAULT_FILENAME_TEMPLATE } from "@/lib/exportNaming";
 import type { AnalysisResult, ExportCandidate, Segment, VideoInfo, WaveformPoint } from "@/types";
+import type { AppMode } from "@/lib/modes";
+import { projectOwnedSettingsFromDocument } from "@/lib/settingsScopes";
+import type { ProjectOwnedSettings } from "@/lib/settingsScopes";
 import {
   createDefaultSubtitleState,
   validateSubtitleState,
-  type AppMode,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
 
 export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | "save-failed" | "read-only";
+
+export { projectOwnedSettingsFromDocument };
 
 export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = {
   enabled: false,
@@ -91,8 +104,16 @@ export function composeProjectDocument(
     operation: ProjectOperation;
     mode?: AppMode;
     subtitle?: SubtitleProjectState;
+    /** Typed boundary for values serialized under schema-v3 `settings`/`subtitle`. */
+    projectSettings?: ProjectOwnedSettings;
   },
 ): ProjectDocumentV1 {
+  const projectSettings: ProjectOwnedSettings = state.projectSettings ?? {
+    analysisDevice: state.analysisDevice,
+    whisper: state.whisper,
+    filenameTemplate: state.filenameTemplate,
+    subtitle: state.subtitle,
+  };
   const segmentIds = new Set(state.segments.map((segment) => segment.id));
   const exportCandidates: ProjectExportCandidate[] = state.exportCandidates
     .map((candidate, index) => {
@@ -123,9 +144,9 @@ export function composeProjectDocument(
     },
     guide_text: state.guideText,
     settings: {
-      analysis_device: state.analysisDevice,
-      whisper: { ...state.whisper } as ProjectWhisperSettings,
-      export: { filename_template: state.filenameTemplate },
+      analysis_device: projectSettings.analysisDevice,
+      whisper: { ...projectSettings.whisper } as ProjectWhisperSettings,
+      export: { filename_template: projectSettings.filenameTemplate },
     },
     waveform_snapshot: waveform.length
       ? {
@@ -145,7 +166,7 @@ export function composeProjectDocument(
       ? {
           timestamp_source: analysis.timestamp_source,
           backend: analysis.backend,
-          device_requested: analysis.device_requested ?? state.analysisDevice,
+          device_requested: analysis.device_requested ?? projectSettings.analysisDevice,
           device_used: analysis.device_used,
           model_versions: analysis.model_versions ?? {},
           elapsed_seconds: analysis.elapsed_seconds ?? 0,
@@ -162,7 +183,7 @@ export function composeProjectDocument(
       zoom_index: Math.max(0, Math.round(state.zoomIndex)),
     },
     operation: state.operation,
-    subtitle: state.subtitle ?? base.subtitle,
+    subtitle: projectSettings.subtitle ?? base.subtitle,
   };
 }
 
@@ -206,6 +227,22 @@ export function filenameTemplateFromProject(document: ProjectDocumentV1) {
 
 export function projectMode(document: ProjectDocumentV1): AppMode {
   return document.mode === "sub" ? "sub" : "cut";
+}
+
+/**
+ * Narrow a validated document to the mode-discriminated internal view. The
+ * legacy v3 Cut shape (omitted `mode`) is normalized on a shallow copy by the
+ * schema boundary helper; all persisted fields remain untouched.
+ */
+export function normalizeProjectDocument(document: unknown): ModeProjectDocument {
+  return normalizeSchemaProjectDocument(document);
+}
+
+export function isProjectOperationCompatible(
+  mode: AppMode,
+  operation: ProjectOperation,
+): boolean {
+  return operation === null || isProjectOperationKindForMode(mode, operation.kind);
 }
 
 export function subtitleStateFromProject(document: ProjectDocumentV1): SubtitleProjectState {
@@ -267,4 +304,15 @@ function stripProjectCandidate(candidate: ProjectExportCandidate): ExportCandida
   return rest;
 }
 
-export type { ProjectDocumentV1, ProjectOpenResult, ProjectOperation, RecoverySnapshot, SourceIdentity };
+export type {
+  CutProjectDocumentV3,
+  CutProjectOperation,
+  ModeProjectDocument,
+  ProjectDocumentV1,
+  ProjectOpenResult,
+  ProjectOperation,
+  RecoverySnapshot,
+  SourceIdentity,
+  SubProjectDocumentV3,
+  SubProjectOperation,
+};

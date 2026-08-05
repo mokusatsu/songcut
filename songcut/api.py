@@ -149,6 +149,7 @@ class TranscriptionRequest(BaseModel):
 
 class ExportItem(BaseModel):
     id: str
+    title: str | None = None
     filename_stem: str
     start: float
     end: float
@@ -1030,6 +1031,7 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
         ffmpeg = find_ffmpeg()
         selected = [item for item in request.items if item.checked]
+        total = len(selected)
         exported = []
         used_filename_stems: set[str] = set()
         timestamp_comment_path: str | None = None
@@ -1039,11 +1041,14 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
             timestamp_path.write_text(target_text, encoding="utf-8")
             timestamp_comment_path = str(timestamp_path)
         for index, item in enumerate(selected, start=1):
+            display_title = (item.title or "").strip() or item.filename_stem.strip() or "Untitled"
             update_job(
                 job_id,
                 status="running",
-                progress=(index - 1) / max(1, len(selected)),
-                message=f"Exporting {item.id}.",
+                progress=(index - 1) / max(1, total),
+                message=f"Exporting {display_title} ({index}/{total})",
+                message_code="exportingItemProgress",
+                message_args={"title": display_title, "current": index, "total": total},
             )
             filename_stem = make_unique_stem(
                 safe_filename_stem(item.filename_stem, fallback=item.id),

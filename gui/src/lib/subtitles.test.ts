@@ -5,6 +5,7 @@ import {
   createLyricsLane,
   labelStackLevels,
   normalizeSubtitleStyle,
+  nudgeSegmentBoundary,
   subtitleRenderSignature,
   updateSegmentBoundary,
   validateSubtitleState,
@@ -47,6 +48,39 @@ describe("subtitle segment management", () => {
 
     const clamped = updateSegmentBoundary(changed, "target", "end", 5.2, grid);
     expect(clamped.segments.find((item) => item.id === "target")?.end).toBe(4.75);
+  });
+
+  it("nudges only to rhythm points that keep neighboring lanes separate", () => {
+    const lane = createLyricsLane();
+    lane.segments = [segment("previous", 0, 1), segment("target", 2, 4), segment("next", 5, 6)];
+
+    const nudgedStart = nudgeSegmentBoundary(lane, "target", "start", -1, grid);
+    expect(nudgedStart.segments.find((item) => item.id === "target")?.start).toBe(1.75);
+
+    const nudgedEnd = nudgeSegmentBoundary(nudgedStart, "target", "end", 1, grid);
+    expect(nudgedEnd.segments.find((item) => item.id === "target")?.end).toBe(4.25);
+
+    const blockedAtPrevious = nudgeSegmentBoundary(
+      { ...nudgedStart, segments: nudgedStart.segments.map((item) => item.id === "target" ? { ...item, start: 1.25 } : item) },
+      "target",
+      "start",
+      -1,
+      grid,
+    );
+    expect(blockedAtPrevious.segments.find((item) => item.id === "target")?.start).toBe(1.25);
+
+    const blockedAtNext = nudgeSegmentBoundary(
+      { ...nudgedEnd, segments: nudgedEnd.segments.map((item) => item.id === "target" ? { ...item, end: 4.75 } : item) },
+      "target",
+      "end",
+      1,
+      grid,
+    );
+    expect(blockedAtNext.segments.find((item) => item.id === "target")?.end).toBe(4.75);
+
+    const ordered = [...blockedAtNext.segments].sort((left, right) => left.start - right.start);
+    expect(ordered[1].start).toBeGreaterThanOrEqual(ordered[0].end);
+    expect(ordered[2].start).toBeGreaterThanOrEqual(ordered[1].end);
   });
 });
 

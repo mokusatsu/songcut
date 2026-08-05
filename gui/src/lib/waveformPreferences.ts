@@ -1,5 +1,5 @@
 import { normalizeWaveformDisplayMode, type CutWaveformAmplitudeProfile } from "@/lib/waveform";
-import type { AppMode } from "@/lib/subtitles";
+import type { AppMode } from "@/lib/modes";
 import type { WaveformDisplayMode } from "@/types";
 
 export type WaveformDisplayModes = Record<AppMode, WaveformDisplayMode>;

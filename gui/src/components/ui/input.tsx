@@ -1,8 +1,12 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useEditorTextEntryKeyDown } from "./editor-focus";
 
 const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-  ({ className, ...props }, ref) => <input ref={ref} className={cn("input", className)} {...props} />
+  ({ className, onKeyDown, ...props }, ref) => {
+    const handleKeyDown = useEditorTextEntryKeyDown<HTMLInputElement>(onKeyDown);
+    return <input ref={ref} className={cn("input", className)} onKeyDown={handleKeyDown} {...props} />;
+  }
 );
 Input.displayName = "Input";
 

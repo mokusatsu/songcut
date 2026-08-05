@@ -13,10 +13,31 @@ function flatten(value: unknown): string[] {
   return Object.values(value).flatMap(flatten);
 }
 
+function leafPaths(value: unknown, prefix = ""): string[] {
+  if (!value || typeof value !== "object") return prefix ? [prefix] : [];
+  return Object.entries(value).flatMap(([key, child]) =>
+    leafPaths(child, prefix ? `${prefix}.${key}` : key)
+  );
+}
+
 describe("renderer translations", () => {
   it("contains no empty English or Japanese translations", () => {
     expect(flatten(rendererTranslations.en).every(Boolean)).toBe(true);
     expect(flatten(rendererTranslations.ja).every(Boolean)).toBe(true);
+  });
+
+  it("keeps Sub English and Japanese resource keys complete", async () => {
+    expect(leafPaths(rendererTranslations.ja).sort()).toEqual(leafPaths(rendererTranslations.en).sort());
+
+    await initializeRendererI18n("en");
+    expect(tr("sub.lyricsAnalysisComplete", { lines: 3, bpm: "120.0" }))
+      .toBe("Lyrics analysis complete. 3 lines, BPM 120.0");
+    expect(tr("sub.effect.option.left_to_right")).toBe("Left to right");
+
+    await initializeRendererI18n("ja");
+    expect(tr("sub.lyricsAnalysisComplete", { lines: 3, bpm: "120.0" }))
+      .toBe("歌詞解析が完了しました。3行、BPM 120.0");
+    expect(tr("sub.effect.option.left_to_right")).toBe("左から右");
   });
 
   it("uses English plurals and fallback", async () => {
@@ -37,7 +58,19 @@ describe("renderer translations", () => {
   });
 
   it("localizes structured progress and filename errors", async () => {
+    await initializeRendererI18n("en");
+    expect(localizeJobMessage({
+      message: "Exporting First Song (2/3)",
+      message_code: "exportingItemProgress",
+      message_args: { title: "First Song", current: 2, total: 3 },
+    })).toBe("Exporting First Song (2/3)");
+
     await initializeRendererI18n("ja");
+    expect(localizeJobMessage({
+      message: "Exporting First Song (2/3)",
+      message_code: "exportingItemProgress",
+      message_args: { title: "First Song", current: 2, total: 3 },
+    })).toBe("First Song を書き出しています (2/3)");
     expect(localizeJobMessage({ message: "Transcribed 1/2 segments.", message_code: "transcriptionProgress", message_args: { current: 1, total: 2 } }))
       .toBe("2 件中 1 件を文字起こししました。");
     expect(localizeFilenameTemplateError("Filename template cannot be empty."))

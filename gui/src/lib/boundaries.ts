@@ -1,4 +1,9 @@
-import type { Segment } from "@/types";
+import {
+  TIME_RANGE_EPSILON,
+  boundaryTime,
+  type TimeRange,
+  type TimedEntity,
+} from "@/lib/timeRange";
 
 export type BoundaryEdge = "start" | "end";
 
@@ -12,8 +17,74 @@ export type BoundaryPlaybackRange = {
   stopAt: number;
 };
 
+export type BoundaryNeighbors = {
+  previousEnd?: number | null;
+  nextStart?: number | null;
+};
+
+export type BoundaryPolicyContext = BoundaryNeighbors & {
+  range: TimeRange;
+  edge: BoundaryEdge;
+  minimum: number;
+  maximum: number;
+};
+
+/**
+ * A mode supplies only the parts of boundary editing that differ from the
+ * shared range arithmetic. The callbacks are deliberately value-oriented so
+ * Segment and LyricsSegment payloads remain independent.
+ */
+export type BoundaryPolicy = {
+  minimumDuration: number;
+  strict?: boolean;
+  clamp?: boolean;
+  snap?: (value: number, context: BoundaryPolicyContext) => number | null;
+  nudge?: (
+    value: number,
+    direction: -1 | 1,
+    context: BoundaryPolicyContext,
+  ) => number | null;
+  nudgeStep?: number;
+};
+
+/** Cut boundaries move in decimal seconds and do not snap to a rhythm grid. */
+export const CUT_BOUNDARY_POLICY: BoundaryPolicy = {
+  minimumDuration: 0.1,
+  strict: false,
+  clamp: true,
+};
+
+export function resolveBoundaryTime(
+  range: TimeRange,
+  edge: BoundaryEdge,
+  proposedTime: number,
+  policy: BoundaryPolicy,
+  neighbors: BoundaryNeighbors = {},
+): number | null {
+  const context = boundaryPolicyContext(range, edge, policy, neighbors);
+  const snapped = policy.snap ? policy.snap(proposedTime, context) : proposedTime;
+  return acceptedBoundaryTime(snapped, context, policy.strict === true, policy.clamp === true);
+}
+
+export function nudgeBoundaryTime(
+  range: TimeRange,
+  edge: BoundaryEdge,
+  direction: -1 | 1,
+  policy: BoundaryPolicy,
+  neighbors: BoundaryNeighbors = {},
+): number | null {
+  const current = boundaryTime(range, edge);
+  const context = boundaryPolicyContext(range, edge, policy, neighbors);
+  const proposed = policy.nudge
+    ? policy.nudge(current, direction, context)
+    : typeof policy.nudgeStep === "number" && Number.isFinite(policy.nudgeStep)
+      ? current + direction * policy.nudgeStep
+      : null;
+  return acceptedBoundaryTime(proposed, context, policy.strict === true, policy.clamp === true);
+}
+
 export function boundaryNudgePlaybackRange(
-  segment: Pick<Segment, "start" | "end">,
+  segment: TimedEntity,
   edge: BoundaryEdge,
   nudgeSeconds: number,
 ): BoundaryPlaybackRange {
@@ -24,7 +95,7 @@ export function boundaryNudgePlaybackRange(
 }
 
 export function nearestBoundaryTarget(
-  segments: readonly Segment[],
+  segments: readonly (TimedEntity & { id: string })[],
   time: number,
   preferredSegmentId?: string | null,
 ): BoundaryTarget | null {
@@ -44,4 +115,54 @@ export function nearestBoundaryTarget(
   }
 
   return nearest ? { segmentId: nearest.segmentId, edge: nearest.edge } : null;
+}
+
+function boundaryPolicyContext(
+  range: TimeRange,
+  edge: BoundaryEdge,
+  policy: BoundaryPolicy,
+  neighbors: BoundaryNeighbors,
+): BoundaryPolicyContext {
+  const minimumDuration = Number.isFinite(policy.minimumDuration)
+    ? Math.max(0, policy.minimumDuration)
+    : 0;
+  const previousEnd = finiteOrNull(neighbors.previousEnd);
+  const nextStart = finiteOrNull(neighbors.nextStart);
+  return {
+    range,
+    edge,
+    previousEnd,
+    nextStart,
+    minimum: edge === "start"
+      ? previousEnd ?? -Infinity
+      : range.start + minimumDuration,
+    maximum: edge === "start"
+      ? range.end - minimumDuration
+      : nextStart ?? Infinity,
+  };
+}
+
+function acceptedBoundaryTime(
+  value: number | null,
+  context: BoundaryPolicyContext,
+  strict: boolean,
+  clamp: boolean,
+): number | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (clamp && !strict) {
+    if (context.maximum < context.minimum) return null;
+    return Math.max(context.minimum, Math.min(context.maximum, value));
+  }
+  if (strict) {
+    return value > context.minimum + TIME_RANGE_EPSILON && value < context.maximum - TIME_RANGE_EPSILON
+      ? value
+      : null;
+  }
+  return value >= context.minimum - TIME_RANGE_EPSILON && value <= context.maximum + TIME_RANGE_EPSILON
+    ? value
+    : null;
+}
+
+function finiteOrNull(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }

@@ -12,14 +12,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EditorTransportControls } from "@/components/EditorTransportControls";
-import { TimelinePlayhead, TimelineWaveform } from "@/components/TimelineWaveform";
+import { TimelineSurface } from "@/components/TimelineSurface";
 import { Dialog } from "@/components/ui/dialog";
+import { JobProgressDialog } from "@/components/JobProgressDialog";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
+import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
+import { tr } from "@/i18n";
 import {
   startLyricsAnalysis,
   startSubtitleExport,
@@ -40,6 +42,7 @@ import {
   failTask,
   type TaskSlot,
 } from "@/lib/useTaskRegistry";
+import type { OperationRunner } from "@/lib/useOperationRunner";
 import {
   readSubtitleStylePresets,
   upsertSubtitleStylePreset,
@@ -54,7 +57,6 @@ import {
   normalizeSubtitleStyle,
   SUBTITLE_STYLE_LIMITS,
   subtitleRenderSignature,
-  updateSegmentBoundary,
   type LyricsAnalysisResult,
   type LyricsLane,
   type LyricsSegment,
@@ -62,7 +64,8 @@ import {
   type SubtitleStyle,
 } from "@/lib/subtitles";
 import { clamp, formatTime } from "@/lib/time";
-import { useTimelineViewport } from "@/lib/useTimelineViewport";
+import { useBoundaryDrag } from "@/lib/useBoundaryDrag";
+import type { ModeController } from "@/lib/modeController";
 import type { WaveformPhase } from "@/lib/useProgressiveWaveform";
 import type { JobRecord, VideoInfo, WaveformDisplayMode, WaveformPoint } from "@/types";
 
@@ -83,6 +86,7 @@ type Props = {
   focusRequest: number;
   editing: boolean;
   state: SubtitleProjectState;
+  controller: ModeController<LyricsSegment, string>;
   whisperSettings: WhisperSettings;
   onPrepareWhisperModel: () => Promise<void> | undefined;
   onPrepareDemucsModel: () => Promise<void> | undefined;
@@ -91,6 +95,7 @@ type Props = {
   taskStatus: React.ReactNode;
   analysisJob: JobRecord | null;
   exportJob: JobRecord | null;
+  operationRunner: OperationRunner;
   onStateChange: (state: SubtitleProjectState) => void;
   onSeek: (time: number) => void;
   onPlay: () => void;
@@ -98,18 +103,10 @@ type Props = {
   onScrub: (time: number) => void;
   onSeekingChange: (seeking: boolean) => void;
   onHandleEditingChange: (editing: boolean) => void;
-  onSelectSegment: (laneId: string, segment: LyricsSegment) => void;
   onFocusSegment: (segment: LyricsSegment) => void;
-  onAddSegment: () => void;
-  onDeleteSelectedSegment: () => void;
   boundarySecondsInput: string;
   onBoundarySecondsInput: (value: string) => void;
   onBoundarySecondsBlur: () => void;
-  onPlayStartBoundary: () => void;
-  onPlayEndBoundary: () => void;
-  onNudge: (direction: -1 | 1) => void;
-  onPreviousBoundary: () => void;
-  onNextBoundary: () => void;
   onLoad: () => void;
   onSettings: () => void;
   onZoomIn: () => void;
@@ -118,6 +115,20 @@ type Props = {
   onMessage: (message: string) => void;
   onJob: (slot: TaskSlot, job: JobRecord | null) => void;
   onRenderCaches: (items: SubtitleRenderResultItem[]) => void;
+  /** Functional boundary preview keeps rapid moves based on the latest draft. */
+  onBoundaryPreview: (
+    laneId: string,
+    segmentId: string,
+    edge: "start" | "end",
+    time: number,
+  ) => void;
+  onBoundaryCancel: (
+    laneId: string,
+    segmentId: string,
+    segment: LyricsSegment,
+  ) => void;
+  /** Called once when a boundary drag is released. */
+  onBoundaryCommit: () => void;
 };
 
 export function SubModePanel(props: Props) {
@@ -147,9 +158,7 @@ export function SubModePanel(props: Props) {
   const timingSegmentIndex = timingSegment
     ? timingOrderedSegments.findIndex((segment) => segment.id === timingSegment.id)
     : -1;
-  const canAddSegment = Boolean(
-    activeLane && addFourBeatSegment(activeLane, props.state.selected_segment_id, props.state.rhythm_grid)
-  );
+  const canAddSegment = props.controller.capabilities.canAddSegment;
   const renderPlan = useMemo(() => {
     const width = props.videoInfo?.video.width || 1920;
     const height = props.videoInfo?.video.height || 1080;
@@ -176,7 +185,7 @@ export function SubModePanel(props: Props) {
     const timer = window.setTimeout(() => {
       const width = props.videoInfo?.video.width || 1920;
       const height = props.videoInfo?.video.height || 1080;
-      let trackedJob = createPendingTask("subtitle-render", "字幕プレビュー画像を準備しています…");
+      let trackedJob = createPendingTask("subtitle-render", tr("sub.subtitleRenderPreparing"));
       props.onJob("subtitle-render", trackedJob);
       void startSubtitleRender(
         props.apiBaseUrl,
@@ -213,9 +222,9 @@ export function SubModePanel(props: Props) {
           if (renderRequestVersionRef.current === version) {
             props.onJob(
               "subtitle-render",
-              failTask(trackedJob, error, "字幕プレビュー画像の生成に失敗しました")
+              failTask(trackedJob, error, tr("sub.subtitleRenderFailed"))
             );
-            props.onMessage(`字幕プレビュー画像の生成に失敗しました: ${String(error)}`);
+            props.onMessage(`${tr("sub.subtitleRenderFailed")}: ${String(error)}`);
           }
         });
     }, 300);
@@ -241,38 +250,39 @@ export function SubModePanel(props: Props) {
     if (!props.apiBaseUrl || !props.videoPath || !lyricsText.trim()) return;
     setLyricsOpen(false);
     setAnalysisProgressOpen(true);
-    let trackedJob = createPendingTask("lyrics-analysis", "歌詞解析を準備しています…");
-    props.onJob("lyrics-analysis", trackedJob);
     setBusy("analysis");
     try {
-      const started = await startLyricsAnalysis(
-        props.apiBaseUrl,
-        props.videoPath,
-        lyricsText,
-        props.whisperSettings
-      );
-      trackedJob = started;
-      props.onJob("lyrics-analysis", started);
-      const result = await waitForJob<LyricsAnalysisResult>(
-        props.apiBaseUrl,
-        started.id,
-        (job) => {
-          trackedJob = job;
-          props.onJob("lyrics-analysis", job);
-        }
-      );
-      const nextState = placeAnalysisResult(props.state, result);
-      props.onStateChange(nextState);
-      const nextSelected = selectedSegment(nextState)?.segment;
-      if (nextSelected) props.onFocusSegment(nextSelected);
-      props.onMessage(
-        result.beat_warning
-          ? `歌詞解析が完了しました。拍検出を利用できません: ${result.beat_warning}`
-          : `歌詞解析が完了しました。${result.lines.length}行、BPM ${result.tempo_bpm.toFixed(1)}`
-      );
+      await props.operationRunner.run({
+        slot: "lyrics-analysis",
+        operation: {
+          kind: "lyrics-analysis",
+          settings: { ...props.whisperSettings },
+        },
+        pendingMessage: tr("sub.lyricsAnalysisPreparing"),
+        failureMessage: tr("sub.lyricsAnalysisFailed"),
+        start: () =>
+          startLyricsAnalysis(
+            props.apiBaseUrl,
+            props.videoPath,
+            lyricsText,
+            props.whisperSettings
+          ),
+        poll: (jobId, onProgress) =>
+          waitForJob<LyricsAnalysisResult>(props.apiBaseUrl, jobId, onProgress),
+        onSuccess: (result) => {
+          const nextState = placeAnalysisResult(props.state, result);
+          props.onStateChange(nextState);
+          const nextSelected = selectedSegment(nextState)?.segment;
+          if (nextSelected) props.onFocusSegment(nextSelected);
+          props.onMessage(
+            result.beat_warning
+              ? tr("sub.lyricsAnalysisCompleteWithBeatWarning", { warning: result.beat_warning })
+              : tr("sub.lyricsAnalysisComplete", { lines: result.lines.length, bpm: result.tempo_bpm.toFixed(1) })
+          );
+        },
+      });
     } catch (error) {
-      props.onJob("lyrics-analysis", failTask(trackedJob, error, "歌詞解析に失敗しました"));
-      props.onMessage(`歌詞解析に失敗しました: ${String(error)}`);
+      props.onMessage(`${tr("sub.lyricsAnalysisFailed")}: ${String(error)}`);
     } finally {
       setBusy(null);
     }
@@ -288,7 +298,7 @@ export function SubModePanel(props: Props) {
       }
       setLyricsOpen(true);
     } catch (error) {
-      props.onMessage(`解析モデルのダウンロードに失敗しました: ${String(error)}`);
+      props.onMessage(tr("sub.modelDownloadFailed", { detail: String(error) }));
     } finally {
       setPreparingModel(false);
     }
@@ -296,35 +306,34 @@ export function SubModePanel(props: Props) {
 
   async function exportSubtitles() {
     if (!props.apiBaseUrl || !props.videoPath || !props.videoInfo) return;
+    const videoInfo = props.videoInfo;
     const outputDir = await window.songcut.selectOutputDirectory();
     if (!outputDir) return;
     setExportProgressOpen(true);
-    let trackedJob = createPendingTask("subtitle-export", "字幕書き出しを準備しています…");
-    props.onJob("subtitle-export", trackedJob);
     setBusy("export");
     try {
-      const started = await startSubtitleExport(
-        props.apiBaseUrl,
-        props.videoPath,
-        outputDir,
-        props.videoInfo.video.width || 1920,
-        props.videoInfo.video.height || 1080,
-        props.state.lanes
-      );
-      trackedJob = started;
-      props.onJob("subtitle-export", started);
-      const result = await waitForJob<{ video: string; output_dir: string }>(
-        props.apiBaseUrl,
-        started.id,
-        (job) => {
-          trackedJob = job;
-          props.onJob("subtitle-export", job);
-        }
-      );
-      props.onMessage(`字幕動画を書き出しました: ${result.video}`);
+      await props.operationRunner.run({
+        slot: "subtitle-export",
+        operation: { kind: "subtitle-export" },
+        pendingMessage: tr("sub.subtitleExportPreparing"),
+        failureMessage: tr("sub.subtitleExportFailed"),
+        start: () =>
+          startSubtitleExport(
+            props.apiBaseUrl,
+            props.videoPath,
+            outputDir,
+            videoInfo.video.width || 1920,
+            videoInfo.video.height || 1080,
+            props.state.lanes
+          ),
+        poll: (jobId, onProgress) =>
+          waitForJob<{ video: string; output_dir: string }>(props.apiBaseUrl, jobId, onProgress),
+        onSuccess: (result) => {
+          props.onMessage(tr("sub.subtitleExportComplete", { video: result.video }));
+        },
+      });
     } catch (error) {
-      props.onJob("subtitle-export", failTask(trackedJob, error, "字幕書き出しに失敗しました"));
-      props.onMessage(`字幕書き出しに失敗しました: ${String(error)}`);
+      props.onMessage(`${tr("sub.subtitleExportFailed")}: ${String(error)}`);
     } finally {
       setBusy(null);
     }
@@ -345,7 +354,7 @@ export function SubModePanel(props: Props) {
   function removeLane(laneId: string) {
     if (props.state.lanes.length <= 1) return;
     const lane = props.state.lanes.find((item) => item.id === laneId);
-    if (lane?.segments.length && !window.confirm("このタイムラインと字幕を削除しますか？")) return;
+    if (lane?.segments.length && !window.confirm(tr("sub.removeLaneConfirm"))) return;
     const lanes = props.state.lanes.filter((item) => item.id !== laneId);
     props.onStateChange({
       ...props.state,
@@ -372,14 +381,14 @@ export function SubModePanel(props: Props) {
       <header className="toolbar sub-toolbar">
         <Button onClick={props.onLoad}>
           <FolderOpen size={16} />
-          読み込む
+          {tr("common.load")}
         </Button>
         <Button
           onClick={() => void openLyricsDialog()}
           disabled={!props.sourceAvailable || !props.apiBaseUrl || Boolean(busy) || preparingModel}
         >
           <Wand2 size={16} />
-          解析
+          {tr("common.analyze")}
         </Button>
         <Button
           variant="secondary"
@@ -387,7 +396,7 @@ export function SubModePanel(props: Props) {
           disabled={!props.sourceAvailable || !hasSubtitleSegments(props.state) || Boolean(busy)}
         >
           <Save size={16} />
-          書き出し
+          {tr("common.export")}
         </Button>
         <Button
           variant="secondary"
@@ -395,42 +404,46 @@ export function SubModePanel(props: Props) {
           disabled={props.state.lanes.length >= 3 || Boolean(busy)}
         >
           <Plus size={16} />
-          タイムライン
+          {tr("sub.timeline")}
         </Button>
-        <Button variant="secondary" onClick={props.onAddSegment} disabled={!canAddSegment || Boolean(busy)}>
+        <Button variant="secondary" onClick={props.controller.actions.add} disabled={!canAddSegment || Boolean(busy)}>
           <Plus size={16} />
-          セグメント
+          {tr("sub.segment")}
         </Button>
-        <Button variant="secondary" onClick={props.onDeleteSelectedSegment} disabled={!selected || Boolean(busy)}>
+        <Button
+          variant="secondary"
+          onClick={props.controller.actions.remove}
+          disabled={!props.controller.capabilities.canDeleteSelectedSegment || Boolean(busy)}
+        >
           <Trash2 size={16} />
         </Button>
         <Button variant="secondary" onClick={props.onSettings}>
           <Settings2 size={16} />
-          設定
+          {tr("common.settings")}
         </Button>
         <div className="spacer" />
         <EditorTransportControls
           saveStatus={props.saveStatus}
           boundaryPreview={{
-            disabled: !selected,
+            disabled: !props.controller.capabilities.canPlayBoundary,
             value: props.boundarySecondsInput,
             onChange: props.onBoundarySecondsInput,
             onBlur: props.onBoundarySecondsBlur,
-            onStart: props.onPlayStartBoundary,
-            onEnd: props.onPlayEndBoundary,
+            onStart: () => props.controller.actions.playBoundary("start"),
+            onEnd: () => props.controller.actions.playBoundary("end"),
           }}
           boundaryNudge={{
             kind: "rhythm-grid",
-            disabled: !selected || !props.state.rhythm_grid.length,
-            onLeft: () => props.onNudge(-1),
-            onRight: () => props.onNudge(1),
+            disabled: !props.controller.capabilities.canNudgeBoundary,
+            onLeft: () => props.controller.actions.nudge(-1),
+            onRight: () => props.controller.actions.nudge(1),
           }}
           playback={{
             onStart: () => props.onSeek(0),
-            onPrevious: props.onPreviousBoundary,
+            onPrevious: () => props.controller.actions.jumpBoundary(-1),
             onPlay: props.onPlay,
             onPause: props.onPause,
-            onNext: props.onNextBoundary,
+            onNext: () => props.controller.actions.jumpBoundary(1),
           }}
           zoom={{
             value: props.zoom,
@@ -469,43 +482,54 @@ export function SubModePanel(props: Props) {
         editingSegmentId={editingSegmentId}
         onEditingSegmentId={setEditingSegmentId}
         onStateChange={props.onStateChange}
+        onBoundaryPreview={props.onBoundaryPreview}
+        onBoundaryCancel={props.onBoundaryCancel}
+        onBoundaryCommit={props.onBoundaryCommit}
         onStyle={(laneId) => setStyleLaneId(laneId)}
         onRemoveLane={removeLane}
         onSeek={props.onSeek}
         onScrub={props.onScrub}
         onSeekingChange={props.onSeekingChange}
         onHandleEditingChange={props.onHandleEditingChange}
-        onSelectSegment={props.onSelectSegment}
+        onSelectSegment={(laneId, segment) => props.controller.actions.select(segment, laneId)}
         onEditTiming={(laneId, segmentId) => setTimingTarget({ laneId, segmentId })}
       />
-      <Dialog open={lyricsOpen} title="歌詞を貼り付け" onClose={() => setLyricsOpen(false)}>
+      <Dialog open={lyricsOpen} title={tr("sub.lyricsPasteTitle")} onClose={() => setLyricsOpen(false)}>
         <Textarea
           value={lyricsText}
           onChange={(event) => setLyricsText(event.target.value)}
-          placeholder={"曲名（任意）\n\n歌詞1行目\n歌詞2行目"}
+          placeholder={tr("sub.lyricsPlaceholder")}
           className="lyrics-input"
         />
         <div className="dialog-actions">
-          <Button variant="secondary" onClick={() => setLyricsOpen(false)}>キャンセル</Button>
-          <Button onClick={() => void analyzeLyrics()} disabled={!lyricsText.trim() || Boolean(busy)}>解析</Button>
+          <Button variant="secondary" onClick={() => setLyricsOpen(false)}>{tr("sub.cancel")}</Button>
+          <Button onClick={() => void analyzeLyrics()} disabled={!lyricsText.trim() || Boolean(busy)}>{tr("sub.analyzeAction")}</Button>
         </div>
       </Dialog>
-      <AnalysisProgressDialog
+      <JobProgressDialog
         open={analysisProgressOpen}
+        title={tr("sub.lyricsAnalyzeTitle")}
         job={props.analysisJob}
+        pendingMessage={tr("sub.lyricsAnalysisPreparing")}
         onClose={() => setAnalysisProgressOpen(false)}
+        className="job-progress-dialog"
+        bodyClassName="analysis-progress"
+        closeAction={{ statuses: "always", activeLabel: tr("sub.closeHidden"), terminalLabel: tr("sub.closeTerminal") }}
       />
       <JobProgressDialog
         open={exportProgressOpen}
-        title="字幕を書き出し"
+        title={tr("sub.subtitleExportTitle")}
         job={props.exportJob}
-        pendingMessage="字幕書き出しを準備しています…"
+        pendingMessage={tr("sub.subtitleExportPreparing")}
         onClose={() => setExportProgressOpen(false)}
+        className="job-progress-dialog"
+        bodyClassName="analysis-progress"
+        closeAction={{ statuses: "always", activeLabel: tr("sub.closeHidden"), terminalLabel: tr("sub.closeTerminal") }}
       />
-      <Dialog open={laneDialogOpen} title="字幕位置を選択" onClose={() => setLaneDialogOpen(false)}>
+      <Dialog open={laneDialogOpen} title={tr("sub.subtitlePositionTitle")} onClose={() => setLaneDialogOpen(false)}>
         <AlignmentGrid value={2} onChange={addLane} />
       </Dialog>
-      <Dialog open={Boolean(styleLane)} title="字幕スタイル" className="subtitle-style-dialog" onClose={() => setStyleLaneId(null)}>
+      <Dialog open={Boolean(styleLane)} title={tr("sub.subtitleStyleTitle")} className="subtitle-style-dialog" onClose={() => setStyleLaneId(null)}>
         {styleLane ? (
           <SubtitleStyleEditor
             style={styleLane.style}
@@ -574,6 +598,18 @@ function LyricsTimelineEditor(props: {
   editingSegmentId: string | null;
   onEditingSegmentId: (id: string | null) => void;
   onStateChange: (state: SubtitleProjectState) => void;
+  onBoundaryPreview: (
+    laneId: string,
+    segmentId: string,
+    edge: "start" | "end",
+    time: number,
+  ) => void;
+  onBoundaryCancel: (
+    laneId: string,
+    segmentId: string,
+    segment: LyricsSegment,
+  ) => void;
+  onBoundaryCommit: () => void;
   onStyle: (laneId: string) => void;
   onRemoveLane: (laneId: string) => void;
   onSeek: (time: number) => void;
@@ -589,175 +625,166 @@ function LyricsTimelineEditor(props: {
     segmentId: string;
     edge: "start" | "end";
   } | null>(null);
-  const timelineViewport = useTimelineViewport({
-    duration: props.duration,
-    currentTime: props.currentTime,
-    playing: props.playing,
-    editing: props.editing,
-    zoom: props.zoom,
-    focusRequest: props.focusRequest,
-    focusRange: props.selectedSegment,
-    onScrub: props.onScrub,
-  });
-  const width = timelineViewport.contentWidth;
-  const draggingLaneIndex = draggingBoundary
-    ? props.state.lanes.findIndex((lane) => lane.id === draggingBoundary.laneId)
-    : -1;
-  const draggingSegment = draggingBoundary && draggingLaneIndex >= 0
-    ? props.state.lanes[draggingLaneIndex]?.segments.find(
-        (segment) => segment.id === draggingBoundary.segmentId
-      )
-    : null;
-  const draggingBoundaryX = draggingSegment && draggingBoundary
-    ? ((draggingBoundary.edge === "start" ? draggingSegment.start : draggingSegment.end) / safeDuration) * width
-    : null;
   return (
-    <ScrollArea
-      className="sub-timeline-scroll"
-      viewportRef={timelineViewport.viewportRef}
+    <TimelineSurface
+      surfaceClassName="sub-timeline-scroll"
+      contentClassName="sub-timeline-content"
+      duration={props.duration}
+      waveform={props.waveform}
+      progressiveWaveformChunks={props.progressiveWaveformChunks}
+      waveformPhase={props.waveformPhase}
+      waveformProgress={props.waveformProgress}
+      waveformDisplayMode={props.waveformDisplayMode}
+      waveformAmplitudeProfile="adaptive"
+      currentTime={props.currentTime}
+      playing={props.playing}
+      zoom={props.zoom}
+      focusRequest={props.focusRequest}
+      focusRange={props.selectedSegment}
+      editing={props.editing}
+      onSeek={props.onSeek}
+      onScrub={props.onScrub}
+      onSeekingChange={props.onSeekingChange}
+      playheadClassName="sub-playhead"
+      waveformClassName="sub-waveform-surface"
+      waveformSvgClassName="sub-waveform"
+      waveformBackgroundClassName="timeline-waveform-background sub"
       scrollbars={["horizontal", "vertical"]}
-      type="always"
+      scrollAreaType="always"
+      wheelScope="waveform"
+      rangeLayer={({ width }) => [
+        ...props.state.lanes.filter((lane) => lane.id !== props.state.active_lane_id),
+        ...props.state.lanes.filter((lane) => lane.id === props.state.active_lane_id),
+      ].flatMap((lane) =>
+        lane.segments.map((segment) => (
+          <rect
+            key={`${lane.id}-${segment.id}`}
+            className={`sub-waveform-segment ${
+              lane.id === props.state.active_lane_id ? "active-lane" : ""
+            } ${segment.id === props.state.selected_segment_id ? "selected" : ""}`}
+            x={(segment.start / safeDuration) * width}
+            y={10}
+            width={Math.max(2, ((segment.end - segment.start) / safeDuration) * width)}
+            height={66}
+          />
+        ))
+      )}
     >
-      <div className="sub-timeline-content" style={{ width }}>
-        <TimelinePlayhead currentTime={props.currentTime} duration={props.duration} className="sub-playhead" />
-        {draggingBoundaryX !== null ? (
-          <div
-            className={`sub-boundary-drag-guide ${
-              draggingBoundary?.segmentId === props.state.selected_segment_id ? "selected" : ""
-            }`}
-            style={{
-              left: draggingBoundaryX,
-              height: 86 + draggingLaneIndex * 240 + 46,
-            }}
-          />
-        ) : null}
-        <TimelineWaveform
-          className="sub-waveform-surface"
-          svgClassName="sub-waveform"
-          backgroundClassName="timeline-waveform-background sub"
-          duration={props.duration}
-          waveform={props.waveform}
-          progressiveChunks={props.progressiveWaveformChunks}
-          phase={props.waveformPhase}
-          progress={props.waveformProgress}
-          displayMode={props.waveformDisplayMode}
-          amplitudeProfile="adaptive"
-          width={width}
-          rangeLayer={[
-            ...props.state.lanes.filter((lane) => lane.id !== props.state.active_lane_id),
-            ...props.state.lanes.filter((lane) => lane.id === props.state.active_lane_id),
-          ].flatMap((lane) =>
-            lane.segments.map((segment) => (
-              <rect
-                key={`${lane.id}-${segment.id}`}
-                className={`sub-waveform-segment ${
-                  lane.id === props.state.active_lane_id ? "active-lane" : ""
-                } ${segment.id === props.state.selected_segment_id ? "selected" : ""}`}
-                x={(segment.start / safeDuration) * width}
-                y={10}
-                width={Math.max(2, ((segment.end - segment.start) / safeDuration) * width)}
-                height={66}
+      {({ width }) => {
+        const draggingLaneIndex = draggingBoundary
+          ? props.state.lanes.findIndex((lane) => lane.id === draggingBoundary.laneId)
+          : -1;
+        const draggingSegment = draggingBoundary && draggingLaneIndex >= 0
+          ? props.state.lanes[draggingLaneIndex]?.segments.find(
+              (segment) => segment.id === draggingBoundary.segmentId
+            )
+          : null;
+        const draggingBoundaryX = draggingSegment && draggingBoundary
+          ? ((draggingBoundary.edge === "start" ? draggingSegment.start : draggingSegment.end) / safeDuration) * width
+          : null;
+        return (
+          <>
+            {draggingBoundaryX !== null ? (
+              <div
+                className={`sub-boundary-drag-guide ${
+                  draggingBoundary?.segmentId === props.state.selected_segment_id ? "selected" : ""
+                }`}
+                style={{
+                  left: draggingBoundaryX,
+                  height: 86 + draggingLaneIndex * 240 + 46,
+                }}
               />
-            ))
-          )}
-          onSeek={props.onSeek}
-          timeFromClientX={timelineViewport.timeFromClientX}
-          scrubFromClientX={timelineViewport.scrubFromClientX}
-          stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
-          onSeekingChange={props.onSeekingChange}
-          onWheelScroll={timelineViewport.scrollByWheel}
-        />
-        {props.state.rhythm_grid.slice(0, 6000).map((point) => (
-          <span
-            key={`${point.time}-${point.grid}`}
-            className={`rhythm-grid-line grid-${point.grid}`}
-            style={{ left: `${(point.time / safeDuration) * width}px` }}
-          />
-        ))}
-        {props.state.lanes.map((lane) => {
-          const levels = labelStackLevels(lane.segments);
-          const labelWidths = new Map(
-            lane.segments.map((segment, index) => {
-              const level = levels.get(segment.id) ?? 0;
-              const nextAtSameLevel = lane.segments
-                .slice(index + 1)
-                .find((candidate) => (levels.get(candidate.id) ?? 0) === level);
-              const left = (segment.start / safeDuration) * width;
-              const nextLeft = nextAtSameLevel
-                ? (nextAtSameLevel.start / safeDuration) * width
-                : width;
-              return [segment.id, Math.max(20, Math.min(360, nextLeft - left - 8))];
-            })
-          );
-          return (
-            <div
-              key={lane.id}
-              className={`lyrics-lane ${lane.id === props.state.active_lane_id ? "active" : ""}`}
-              onPointerDown={() =>
-                props.onStateChange({ ...props.state, active_lane_id: lane.id })
-              }
-            >
-              <div className="lyrics-lane-header">
-                <span>{lane.name}</span>
-                <Button size="sm" variant="ghost" onClick={() => props.onStyle(lane.id)}>Style {lane.style.alignment}</Button>
-                <Button size="icon" variant="ghost" onClick={() => props.onRemoveLane(lane.id)} disabled={props.state.lanes.length <= 1}><Trash2 size={14} /></Button>
-              </div>
-              <div className="lyrics-segment-track">
-                {lane.segments.map((segment) => (
-                  <LyricsSegmentView
-                    key={segment.id}
-                    lane={lane}
-                    segment={segment}
-                    level={levels.get(segment.id) ?? 0}
-                    labelWidth={labelWidths.get(segment.id) ?? 20}
-                    width={width}
-                    duration={safeDuration}
-                    selected={segment.id === props.state.selected_segment_id}
-                    editing={segment.id === props.editingSegmentId}
-                    grid={props.state.rhythm_grid}
-                    onSelect={() => props.onSelectSegment(lane.id, segment)}
-                    onEditTiming={() => props.onEditTiming(lane.id, segment.id)}
-                    onEdit={() => props.onEditingSegmentId(segment.id)}
-                    onEditDone={(text) => {
-                      props.onEditingSegmentId(null);
-                      props.onStateChange({
-                        ...props.state,
-                        lanes: props.state.lanes.map((item) =>
-                          item.id === lane.id
-                            ? {
-                                ...item,
-                                segments: item.segments.map((candidate) =>
-                                  candidate.id === segment.id ? { ...candidate, text } : candidate
-                                ),
-                              }
-                            : item
-                        ),
-                      });
-                    }}
-                    onBoundary={(edge, time) =>
-                      props.onStateChange({
-                        ...props.state,
-                        lanes: props.state.lanes.map((item) =>
-                          item.id === lane.id
-                            ? updateSegmentBoundary(item, segment.id, edge, time, props.state.rhythm_grid)
-                            : item
-                        ),
-                      })
-                    }
-                    onEditingChange={props.onHandleEditingChange}
-                    onDraggingBoundary={(edge) =>
-                      setDraggingBoundary(
-                        edge ? { laneId: lane.id, segmentId: segment.id, edge } : null
-                      )
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </ScrollArea>
+            ) : null}
+            {props.state.rhythm_grid.slice(0, 6000).map((point) => (
+              <span
+                key={`${point.time}-${point.grid}`}
+                className={`rhythm-grid-line grid-${point.grid}`}
+                style={{ left: `${(point.time / safeDuration) * width}px` }}
+              />
+            ))}
+            {props.state.lanes.map((lane) => {
+              const levels = labelStackLevels(lane.segments);
+              const labelWidths = new Map(
+                lane.segments.map((segment, index) => {
+                  const level = levels.get(segment.id) ?? 0;
+                  const nextAtSameLevel = lane.segments
+                    .slice(index + 1)
+                    .find((candidate) => (levels.get(candidate.id) ?? 0) === level);
+                  const left = (segment.start / safeDuration) * width;
+                  const nextLeft = nextAtSameLevel
+                    ? (nextAtSameLevel.start / safeDuration) * width
+                    : width;
+                  return [segment.id, Math.max(20, Math.min(360, nextLeft - left - 8))];
+                })
+              );
+              return (
+                <div
+                  key={lane.id}
+                  className={`lyrics-lane ${lane.id === props.state.active_lane_id ? "active" : ""}`}
+                  onPointerDown={() =>
+                    props.onStateChange({ ...props.state, active_lane_id: lane.id })
+                  }
+                >
+                  <div className="lyrics-lane-header">
+                    <span>{lane.name}</span>
+                    <Button size="sm" variant="ghost" onClick={() => props.onStyle(lane.id)}>Style {lane.style.alignment}</Button>
+                    <Button size="icon" variant="ghost" onClick={() => props.onRemoveLane(lane.id)} disabled={props.state.lanes.length <= 1}><Trash2 size={14} /></Button>
+                  </div>
+                  <div className="lyrics-segment-track">
+                    {lane.segments.map((segment) => (
+                      <LyricsSegmentView
+                        key={segment.id}
+                        lane={lane}
+                        segment={segment}
+                        level={levels.get(segment.id) ?? 0}
+                        labelWidth={labelWidths.get(segment.id) ?? 20}
+                        width={width}
+                        duration={safeDuration}
+                        selected={segment.id === props.state.selected_segment_id}
+                        editing={segment.id === props.editingSegmentId}
+                        grid={props.state.rhythm_grid}
+                        onSelect={() => props.onSelectSegment(lane.id, segment)}
+                        onEditTiming={() => props.onEditTiming(lane.id, segment.id)}
+                        onEdit={() => props.onEditingSegmentId(segment.id)}
+                        onEditDone={(text) => {
+                          props.onEditingSegmentId(null);
+                          props.onStateChange({
+                            ...props.state,
+                            lanes: props.state.lanes.map((item) =>
+                              item.id === lane.id
+                                ? {
+                                    ...item,
+                                    segments: item.segments.map((candidate) =>
+                                      candidate.id === segment.id ? { ...candidate, text } : candidate
+                                    ),
+                                  }
+                                : item
+                            ),
+                          });
+                        }}
+                        onBoundaryPreview={(edge, time) =>
+                          props.onBoundaryPreview(lane.id, segment.id, edge, time)
+                        }
+                        onBoundaryCancel={(_edge, _time, startSegment) =>
+                          props.onBoundaryCancel(lane.id, segment.id, startSegment)
+                        }
+                        onBoundaryCommit={props.onBoundaryCommit}
+                        onEditingChange={props.onHandleEditingChange}
+                        onDraggingBoundary={(edge) =>
+                          setDraggingBoundary(
+                            edge ? { laneId: lane.id, segmentId: segment.id, edge } : null
+                          )
+                        }
+                      />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        );
+      }}
+    </TimelineSurface>
   );
 }
 
@@ -775,46 +802,95 @@ function LyricsSegmentView(props: {
   onEditTiming: () => void;
   onEdit: () => void;
   onEditDone: (text: string) => void;
-  onBoundary: (edge: "start" | "end", time: number) => void;
+  onBoundaryPreview: (edge: "start" | "end", time: number) => void;
+  onBoundaryCancel: (
+    edge: "start" | "end",
+    time: number,
+    segment: LyricsSegment,
+  ) => void;
+  onBoundaryCommit: () => void;
   onEditingChange: (editing: boolean) => void;
   onDraggingBoundary: (edge: "start" | "end" | null) => void;
 }) {
+  const selectActionFocusProps = useEditorActionFocusProps<HTMLButtonElement>((event) => {
+    event.stopPropagation();
+    props.onSelect();
+  });
   const left = (props.segment.start / props.duration) * props.width;
   const right = (props.segment.end / props.duration) * props.width;
   const [draft, setDraft] = useState(props.segment.text);
-  function beginDrag(event: React.PointerEvent, edge: "start" | "end") {
+  const boundaryEdgeRef = useRef<"start" | "end" | null>(null);
+  const boundaryStartTimeRef = useRef<number | null>(null);
+  const boundaryStartSegmentRef = useRef<LyricsSegment | null>(null);
+  const boundaryContentRef = useRef<HTMLElement | null>(null);
+  const drag = useBoundaryDrag({
+    onPreview: (clientX) => {
+      const content = boundaryContentRef.current;
+      const edge = boundaryEdgeRef.current;
+      if (!content || !edge) return;
+      const rect = content.getBoundingClientRect();
+      const time = clamp(((clientX - rect.left) / rect.width) * props.duration, 0, props.duration);
+      props.onBoundaryPreview(edge, time);
+    },
+    onCommit: props.onBoundaryCommit,
+    onCancel: () => {
+      const edge = boundaryEdgeRef.current;
+      const startTime = boundaryStartTimeRef.current;
+      const startSegment = boundaryStartSegmentRef.current;
+      if (edge && startTime !== null && startSegment) {
+        props.onBoundaryCancel(edge, startTime, startSegment);
+      }
+    },
+    onEditingChange: (editing) => {
+      props.onEditingChange(editing);
+      if (!editing) {
+        props.onDraggingBoundary(null);
+        boundaryEdgeRef.current = null;
+        boundaryStartTimeRef.current = null;
+        boundaryStartSegmentRef.current = null;
+        boundaryContentRef.current = null;
+      }
+    },
+  });
+
+  function prepareDrag(edge: "start" | "end", target: EventTarget | null) {
+    // Pointer-capable browsers dispatch a compatibility mousedown after
+    // pointerdown. Do not let that second event clear the active drag guide.
+    if (drag.isActive()) return false;
+    const content = target instanceof Element
+      ? target.closest(".sub-timeline-content") as HTMLElement | null
+      : null;
+    if (!content) return false;
+    boundaryEdgeRef.current = edge;
+    boundaryStartTimeRef.current = props.segment[edge];
+    boundaryStartSegmentRef.current = { ...props.segment };
+    boundaryContentRef.current = content;
+    props.onDraggingBoundary(edge);
+    return true;
+  }
+
+  function beginPointerDrag(event: React.PointerEvent, edge: "start" | "end") {
     event.preventDefault();
     event.stopPropagation();
-    const content = event.currentTarget.closest(".sub-timeline-content") as HTMLElement | null;
-    if (!content) return;
-    props.onEditingChange(true);
-    props.onDraggingBoundary(edge);
-    const move = (moveEvent: PointerEvent) => {
-      const rect = content.getBoundingClientRect();
-      const time = clamp(((moveEvent.clientX - rect.left) / rect.width) * props.duration, 0, props.duration);
-      props.onBoundary(edge, time);
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-      props.onEditingChange(false);
+    if (prepareDrag(edge, event.currentTarget) && !drag.startPointer(event)) {
       props.onDraggingBoundary(null);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
+    }
+  }
+
+  function beginMouseDrag(event: React.MouseEvent, edge: "start" | "end") {
+    event.preventDefault();
+    event.stopPropagation();
+    if (prepareDrag(edge, event.currentTarget) && !drag.startMouse(event)) {
+      props.onDraggingBoundary(null);
+    }
   }
   return (
     <>
       <button
+        {...selectActionFocusProps}
         type="button"
         className={`lyrics-segment ${props.selected ? "selected" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}
         style={{ left, width: Math.max(4, right - left) }}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onSelect();
-        }}
         onDoubleClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -825,12 +901,14 @@ function LyricsSegmentView(props: {
       >
         <span
           className="lyrics-handle start"
-          onPointerDown={(event) => beginDrag(event, "start")}
+          onPointerDown={(event) => beginPointerDrag(event, "start")}
+          onMouseDown={(event) => beginMouseDrag(event, "start")}
           onDoubleClick={(event) => event.stopPropagation()}
         />
         <span
           className="lyrics-handle end"
-          onPointerDown={(event) => beginDrag(event, "end")}
+          onPointerDown={(event) => beginPointerDrag(event, "end")}
+          onMouseDown={(event) => beginMouseDrag(event, "end")}
           onDoubleClick={(event) => event.stopPropagation()}
         />
       </button>
@@ -921,54 +999,9 @@ export function SubtitleOverlay(props: {
   );
 }
 
-function AnalysisProgressDialog(props: {
-  open: boolean;
-  job: JobRecord | null;
-  onClose: () => void;
-}) {
-  return (
-    <JobProgressDialog
-      open={props.open}
-      title="歌詞を解析"
-      job={props.job}
-      pendingMessage="歌詞解析を準備しています…"
-      onClose={props.onClose}
-    />
-  );
-}
-
-function JobProgressDialog(props: {
-  open: boolean;
-  title: string;
-  job: JobRecord | null;
-  pendingMessage: string;
-  onClose: () => void;
-}) {
-  const progress = clamp(props.job?.progress ?? 0, 0, 1);
-  const status = props.job?.status ?? "queued";
-  const running = status === "queued" || status === "running";
-  return (
-    <Dialog open={props.open} title={props.title} className="job-progress-dialog" onClose={props.onClose}>
-      <div className="analysis-progress">
-        <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>{props.job?.message || props.pendingMessage}</span>
-          <strong>{Math.round(progress * 100)}%</strong>
-        </div>
-        <progress value={progress} max={1} />
-        {props.job?.error ? <div className="warning-text">{props.job.error}</div> : null}
-      </div>
-      <div className="dialog-actions">
-        <Button variant="secondary" onClick={props.onClose}>
-          {running ? "隠す" : "閉じる"}
-        </Button>
-      </div>
-    </Dialog>
-  );
-}
-
 export function AlignmentGrid(props: { value: number; onChange: (alignment: number) => void }) {
   return (
-    <div className="alignment-grid" role="radiogroup" aria-label="字幕位置">
+    <div className="alignment-grid" role="radiogroup" aria-label={tr("sub.subtitlePositionTitle")}>
       {[7, 8, 9, 4, 5, 6, 1, 2, 3].map((alignment) => (
         <Button
           key={alignment}
@@ -1024,9 +1057,9 @@ function SubtitleStyleEditor(props: {
       setStylePresets(next);
       setSelectedStylePresetId(saved?.id ?? "");
       setStylePresetName(saved?.name ?? name);
-      setStylePresetMessage(`「${saved?.name ?? name}」を保存しました。`);
+      setStylePresetMessage(tr("sub.presetSaved", { name: saved?.name ?? name }));
     } catch (error) {
-      setStylePresetMessage(`スタイルを保存できませんでした: ${String(error)}`);
+      setStylePresetMessage(tr("sub.presetSaveFailed", { detail: String(error) }));
     }
   }
   function applyStylePreset() {
@@ -1034,22 +1067,22 @@ function SubtitleStyleEditor(props: {
     if (!preset) return;
     props.onChange(normalizeSubtitleStyle(preset.style));
     setStylePresetName(preset.name);
-    setStylePresetMessage(`「${preset.name}」を反映しました。`);
+    setStylePresetMessage(tr("sub.presetApplied", { name: preset.name }));
   }
   return (
     <div className="subtitle-style-editor">
       <section className="subtitle-style-section subtitle-style-presets">
-        <h3>保存スタイル</h3>
+        <h3>{tr("sub.savedStyles")}</h3>
         <div className="subtitle-style-preset-row">
           <Select
-            aria-label="保存スタイル"
+            aria-label={tr("sub.savedStyleLabel")}
             value={selectedStylePresetId}
             onChange={(event) => {
               setSelectedStylePresetId(event.target.value);
               setStylePresetMessage("");
             }}
           >
-            <option value="">スタイルを選択</option>
+            <option value="">{tr("sub.styleSelectPlaceholder")}</option>
             {stylePresets.map((preset) => (
               <option key={preset.id} value={preset.id}>{preset.name}</option>
             ))}
@@ -1060,13 +1093,13 @@ function SubtitleStyleEditor(props: {
             onClick={applyStylePreset}
             disabled={!selectedStylePresetId}
           >
-            反映
+            {tr("sub.applyStyle")}
           </Button>
         </div>
         <div className="subtitle-style-preset-row">
           <Input
-            aria-label="スタイル名"
-            placeholder="スタイル名"
+            aria-label={tr("sub.styleNameLabel")}
+            placeholder={tr("sub.styleNamePlaceholder")}
             value={stylePresetName}
             onChange={(event) => {
               setStylePresetName(event.target.value);
@@ -1081,7 +1114,7 @@ function SubtitleStyleEditor(props: {
             onClick={saveStylePreset}
             disabled={!stylePresetName.trim()}
           >
-            保存
+            {tr("sub.save")}
           </Button>
         </div>
         {stylePresetMessage ? (
@@ -1089,43 +1122,43 @@ function SubtitleStyleEditor(props: {
         ) : null}
       </section>
       <section className="subtitle-style-section">
-        <h3>書体と色</h3>
+        <h3>{tr("sub.fontAndColor")}</h3>
         <div className="subtitle-style-toolbar">
-          <Select aria-label="フォント" value={style.font_name} disabled={!props.fonts} onChange={(event) => patch({ font_name: event.target.value })}>
+          <Select aria-label={tr("sub.font")} value={style.font_name} disabled={!props.fonts} onChange={(event) => patch({ font_name: event.target.value })}>
             {fontOptions.map((font) => <option key={font} value={font}>{font}</option>)}
           </Select>
-          <ColorControl label="文字" value={style.primary_color} onChange={(value) => patch({ primary_color: value })} />
-          <ColorControl label="背景" value={style.background_color} onChange={(value) => patch({ background_color: `${value}80` })} />
-          <ColorControl label="縁" value={style.outline_color} onChange={(value) => patch({ outline_color: value })} />
-          <Toggle pressed={style.bold} onPressedChange={(bold) => patch({ bold })} title="太字" aria-label="太字"><Bold size={17} /></Toggle>
-          <Toggle pressed={style.italic} onPressedChange={(italic) => patch({ italic })} title="斜体" aria-label="斜体"><Italic size={17} /></Toggle>
+          <ColorControl label={tr("sub.textColor")} value={style.primary_color} onChange={(value) => patch({ primary_color: value })} />
+          <ColorControl label={tr("sub.backgroundColor")} value={style.background_color} onChange={(value) => patch({ background_color: `${value}80` })} />
+          <ColorControl label={tr("sub.outlineColor")} value={style.outline_color} onChange={(value) => patch({ outline_color: value })} />
+          <Toggle pressed={style.bold} onPressedChange={(bold) => patch({ bold })} title={tr("sub.bold")} aria-label={tr("sub.bold")}><Bold size={17} /></Toggle>
+          <Toggle pressed={style.italic} onPressedChange={(italic) => patch({ italic })} title={tr("sub.italic")} aria-label={tr("sub.italic")}><Italic size={17} /></Toggle>
         </div>
-        {!props.fonts && !props.fontListError ? <small className="font-list-status">OSのフォント一覧を読み込んでいます…</small> : null}
-        {props.fontListError ? <small className="font-list-status warning-text">フォント一覧を取得できませんでした。</small> : null}
+        {!props.fonts && !props.fontListError ? <small className="font-list-status">{tr("sub.fontsLoading")}</small> : null}
+        {props.fontListError ? <small className="font-list-status warning-text">{tr("sub.fontsFailed")}</small> : null}
       </section>
       <section className="subtitle-style-section subtitle-style-layout">
         <div>
-          <h3>表示位置</h3>
+          <h3>{tr("sub.displayPosition")}</h3>
           <AlignmentGrid value={style.alignment} onChange={(alignment) => patch({ alignment })} />
         </div>
         <div className="subtitle-style-fields">
-          <label>サイズ<Input type="number" min={SUBTITLE_STYLE_LIMITS.font_size.min} max={SUBTITLE_STYLE_LIMITS.font_size.max} value={style.font_size} onChange={(event) => patch({ font_size: Number(event.target.value) })} /></label>
-          <label>縁幅<Input type="number" min={SUBTITLE_STYLE_LIMITS.outline.min} max={SUBTITLE_STYLE_LIMITS.outline.max} value={style.outline} onChange={(event) => patch({ outline: Number(event.target.value) })} /></label>
-          <label>影<Input type="number" min={SUBTITLE_STYLE_LIMITS.shadow.min} max={SUBTITLE_STYLE_LIMITS.shadow.max} value={style.shadow} onChange={(event) => patch({ shadow: Number(event.target.value) })} /></label>
-          <label>左右余白<Input type="number" min={SUBTITLE_STYLE_LIMITS.margin.min} max={SUBTITLE_STYLE_LIMITS.margin.max} value={style.margin_l} onChange={(event) => patch({ margin_l: Number(event.target.value), margin_r: Number(event.target.value) })} /></label>
-          <label>上下余白<Input type="number" min={SUBTITLE_STYLE_LIMITS.margin.min} max={SUBTITLE_STYLE_LIMITS.margin.max} value={style.margin_v} onChange={(event) => patch({ margin_v: Number(event.target.value) })} /></label>
+          <label>{tr("sub.size")}<Input type="number" min={SUBTITLE_STYLE_LIMITS.font_size.min} max={SUBTITLE_STYLE_LIMITS.font_size.max} value={style.font_size} onChange={(event) => patch({ font_size: Number(event.target.value) })} /></label>
+          <label>{tr("sub.outlineWidth")}<Input type="number" min={SUBTITLE_STYLE_LIMITS.outline.min} max={SUBTITLE_STYLE_LIMITS.outline.max} value={style.outline} onChange={(event) => patch({ outline: Number(event.target.value) })} /></label>
+          <label>{tr("sub.shadow")}<Input type="number" min={SUBTITLE_STYLE_LIMITS.shadow.min} max={SUBTITLE_STYLE_LIMITS.shadow.max} value={style.shadow} onChange={(event) => patch({ shadow: Number(event.target.value) })} /></label>
+          <label>{tr("sub.horizontalMargin")}<Input type="number" min={SUBTITLE_STYLE_LIMITS.margin.min} max={SUBTITLE_STYLE_LIMITS.margin.max} value={style.margin_l} onChange={(event) => patch({ margin_l: Number(event.target.value), margin_r: Number(event.target.value) })} /></label>
+          <label>{tr("sub.verticalMargin")}<Input type="number" min={SUBTITLE_STYLE_LIMITS.margin.min} max={SUBTITLE_STYLE_LIMITS.margin.max} value={style.margin_v} onChange={(event) => patch({ margin_v: Number(event.target.value) })} /></label>
         </div>
       </section>
       <section className="subtitle-style-section subtitle-effect-section">
         <div className="subtitle-effect-heading">
-          <h3>出力エフェクト</h3>
-          <small>書き出し時だけ適用され、編集中のプレビューには表示されません。</small>
+          <h3>{tr("sub.outputEffects")}</h3>
+          <small>{tr("sub.outputEffectsHelp")}</small>
         </div>
         <div className="subtitle-effect-fields">
           <label>
-            種類
+            {tr("sub.effectType")}
             <Select
-              aria-label="エフェクト種類"
+              aria-label={tr("sub.effectType")}
               value={effect.name}
               onChange={(event) => {
                 const name = event.target.value;
@@ -1136,14 +1169,14 @@ function SubtitleStyleEditor(props: {
               }}
             >
               {SUBTITLE_EFFECTS.map((item) => (
-                <option key={item.name} value={item.name}>{item.label}</option>
+                <option key={item.name} value={item.name}>{subtitleEffectLabel(item.name, item.label)}</option>
               ))}
             </Select>
           </label>
           {effect.name !== "cut" ? (
             <>
               <label>
-                開始長さ（ms）
+                {tr("sub.effectStartDuration")}
                 <Input
                   type="number"
                   min={0}
@@ -1153,7 +1186,7 @@ function SubtitleStyleEditor(props: {
                 />
               </label>
               <label>
-                終了長さ（ms）
+                {tr("sub.effectEndDuration")}
                 <Input
                   type="number"
                   min={0}
@@ -1167,13 +1200,13 @@ function SubtitleStyleEditor(props: {
                 if (parameter.kind === "select") {
                   return (
                     <label key={parameter.name}>
-                      {parameter.label}
+                      {subtitleEffectParameterLabel(parameter.name, parameter.label)}
                       <Select
                         value={String(value)}
                         onChange={(event) => patchEffectParam(parameter.name, event.target.value)}
                       >
                         {parameter.options.map(([optionValue, label]) => (
-                          <option key={optionValue} value={optionValue}>{label}</option>
+                          <option key={optionValue} value={optionValue}>{subtitleEffectOptionLabel(optionValue, label)}</option>
                         ))}
                       </Select>
                     </label>
@@ -1183,7 +1216,7 @@ function SubtitleStyleEditor(props: {
                   return (
                     <ColorControl
                       key={parameter.name}
-                      label={parameter.label}
+                      label={subtitleEffectParameterLabel(parameter.name, parameter.label)}
                       value={String(value)}
                       onChange={(next) => patchEffectParam(parameter.name, next)}
                     />
@@ -1191,7 +1224,7 @@ function SubtitleStyleEditor(props: {
                 }
                 return (
                   <label key={parameter.name}>
-                    {parameter.label}
+                    {subtitleEffectParameterLabel(parameter.name, parameter.label)}
                     <Input
                       type="number"
                       min={parameter.min}
@@ -1211,7 +1244,7 @@ function SubtitleStyleEditor(props: {
         </div>
         {effect.name !== "cut" ? (
           <small className="font-list-status">
-            短い字幕では、開始長さと終了長さの比率を保ったまま区間内へ自動短縮します。
+            {tr("sub.shortSubtitleHelp")}
           </small>
         ) : null}
       </section>
@@ -1233,6 +1266,24 @@ function ColorControl(props: { label: string; value: string; onChange: (value: s
   );
 }
 
+function subtitleEffectLabel(name: string, fallback: string) {
+  const key = `sub.effect.${name}`;
+  const translated = tr(key);
+  return translated === key ? fallback : translated;
+}
+
+function subtitleEffectParameterLabel(name: string, fallback: string) {
+  const key = `sub.effect.param.${name}`;
+  const translated = tr(key);
+  return translated === key ? fallback : translated;
+}
+
+function subtitleEffectOptionLabel(value: string, fallback: string) {
+  const key = `sub.effect.option.${value}`;
+  const translated = tr(key);
+  return translated === key ? fallback : translated;
+}
+
 function placeAnalysisResult(state: SubtitleProjectState, result: LyricsAnalysisResult): SubtitleProjectState {
   let lanes = state.lanes.map((lane) => ({ ...lane, segments: [...lane.segments] }));
   const titleLaneIndex = lanes.findIndex((lane) => lane.segments.some((segment) => segment.source === "title"));
@@ -1245,7 +1296,7 @@ function placeAnalysisResult(state: SubtitleProjectState, result: LyricsAnalysis
   }
   if (lyricsLaneIndex < 0) {
     lyricsLaneIndex = Math.max(0, lanes.findIndex((lane, index) => index !== titleLaneIndex && lane.id === state.active_lane_id));
-    if (!window.confirm(`${lanes[lyricsLaneIndex].name} の字幕を解析結果で置換しますか？`)) return state;
+    if (!window.confirm(tr("sub.laneReplaceConfirm", { lane: lanes[lyricsLaneIndex].name }))) return state;
   }
   lanes[lyricsLaneIndex] = {
     ...lanes[lyricsLaneIndex],
@@ -1259,7 +1310,7 @@ function placeAnalysisResult(state: SubtitleProjectState, result: LyricsAnalysis
     }
     if (targetIndex < 0) {
       targetIndex = lanes.findIndex((_, index) => index !== lyricsLaneIndex);
-      if (targetIndex < 0 || !window.confirm(`${lanes[targetIndex].name} をタイトル用に置換しますか？`)) return state;
+      if (targetIndex < 0 || !window.confirm(tr("sub.titleReplaceConfirm", { lane: lanes[targetIndex].name }))) return state;
     }
     lanes[targetIndex] = {
       ...lanes[targetIndex],

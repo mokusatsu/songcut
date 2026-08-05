@@ -1,6 +1,19 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useEditorActionFocusProps } from "./editor-focus";
 
-export function Checkbox(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} type="checkbox" className={cn("checkbox", props.className)} />;
-}
+export const Checkbox = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, tabIndex, onClick, ...props }, ref) => {
+    const actionFocus = useEditorActionFocusProps<HTMLInputElement>(onClick, tabIndex);
+    return (
+      <input
+        {...props}
+        ref={ref}
+        type="checkbox"
+        className={cn("checkbox", className)}
+        {...actionFocus}
+      />
+    );
+  }
+);
+Checkbox.displayName = "Checkbox";

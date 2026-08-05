@@ -9,14 +9,41 @@ import { HelpTooltip } from "@/components/HelpTooltip";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
-import type { AppMode } from "@/lib/subtitles";
+import type { AppMode } from "@/lib/modes";
 import type { WaveformDisplayModes } from "@/lib/waveformPreferences";
 import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
 import type { WaveformDisplayMode } from "@/types";
 import { currentUiLanguage, tr, type UiLanguagePreference } from "@/i18n";
+import type { SettingsScope } from "@/lib/settingsScopes";
 
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
 export type SettingsTab = "common" | "cut" | "sub" | "ai-models";
+
+/** Ownership labels for every persisted control rendered by this dialog. */
+export const SETTINGS_CONTROL_SCOPES = {
+  scratchPreviewMilliseconds: "app",
+  scratchAudioProxyEnabled: "app",
+  localePreference: "app",
+  waveformDisplayModeCut: "mode",
+  waveformDisplayModeSub: "mode",
+  cutWaveformAmplitudeProfile: "mode",
+  boundaryRefinementSettings: "mode",
+  analysisDevice: "project",
+  whisperSettings: "project",
+  lyricsAlignmentAlgorithm: "project",
+  filenameTemplate: "project",
+} as const satisfies Record<string, SettingsScope>;
+
+export const SETTINGS_DIALOG_SCOPE_BY_TAB: Record<SettingsTab, readonly SettingsScope[]> = {
+  common: ["app"],
+  cut: ["mode", "project"],
+  sub: ["mode", "project"],
+  "ai-models": ["project"],
+};
+
+export function settingsScopesForTab(tab: SettingsTab): readonly SettingsScope[] {
+  return SETTINGS_DIALOG_SCOPE_BY_TAB[tab];
+}
 
 export function SettingsDialog(props: {
   open: boolean;

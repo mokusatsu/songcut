@@ -1,15 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
   CircleAlert,
   CheckCircle2,
-  Copy,
   FileVideo2,
   FolderOpen,
-  Plus,
-  Scissors,
-  Settings2,
-  Wand2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,26 +34,25 @@ import {
 } from "@/lib/api";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
-import { EditorTransportControls } from "@/components/EditorTransportControls";
-import { TimelinePlayhead, TimelineWaveform } from "@/components/TimelineWaveform";
+import { CutModePanel } from "@/components/CutModePanel";
+import { JobProgressDialog } from "@/components/JobProgressDialog";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { formatTimeInput } from "@/lib/segmentTiming";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EditorFocusProvider, useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import {
   DEFAULT_WHISPER_SETTINGS,
   analysisFromProject,
   composeProjectDocument,
   createProjectDocument,
   exportCandidatesFromProject,
-  filenameTemplateFromProject,
   normalizeInterruptedOperation,
   parseProjectOpenResult,
   parseRecoverySnapshot,
   parseSourceIdentity,
   projectMode,
-  subtitleStateFromProject,
   transcriptSettingsAreStale,
   waveformFromProject
 } from "@/lib/project";
@@ -74,13 +68,17 @@ import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLA
 import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
-import { useTimelineViewport } from "@/lib/useTimelineViewport";
+import { useOperationRunner } from "@/lib/useOperationRunner";
 import {
-  normalizeScratchAudioProxyEnabled,
   selectScratchPreviewSource,
   shouldCreateScratchProxy
 } from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
+import {
+  editorActionFromMenuCommand,
+  executeEditorAction,
+  type EditorAction,
+} from "@/lib/editorCommands";
 import {
   createManualSegment,
   insertSegmentPair,
@@ -98,6 +96,31 @@ import {
   type BoundaryRefinementSettings,
 } from "@/lib/boundaryRefinement";
 import {
+  DEFAULT_SCRATCH_PREVIEW_MILLISECONDS,
+  MAX_VIDEO_SPLIT_PERCENT,
+  MIN_VIDEO_SPLIT_PERCENT,
+  formatBoundaryNudgeSeconds,
+  formatBoundarySeconds,
+  normalizeBoundarySecondsInput,
+  normalizeScratchPreviewMilliseconds,
+  parseBoundaryNudgeSeconds,
+  parseBoundarySeconds,
+  readBoundaryNudgeSecondsInput as readStoredBoundaryNudgeSecondsInput,
+  readBoundarySecondsInput as readStoredBoundarySecondsInput,
+  readCreateSourceFolder as readStoredCreateSourceFolder,
+  readModePreferences,
+  readScratchAudioProxyEnabled as readStoredScratchAudioProxyEnabled,
+  readScratchPreviewMilliseconds as readStoredScratchPreviewMilliseconds,
+  readVideoSplitPercent as readStoredVideoSplitPercent,
+  writeBoundaryNudgeSecondsInput,
+  writeBoundarySecondsInput,
+  writeCreateSourceFolder,
+  writeScratchAudioProxyEnabled,
+  writeScratchPreviewMilliseconds,
+  writeVideoSplitPercent,
+  projectOwnedSettingsFromDocument,
+} from "@/lib/settingsScopes";
+import {
   applyTimestampCommentToGuide,
   backToTimestampCommentSelection,
   beginTimestampCommentFlow,
@@ -113,19 +136,21 @@ import {
   DEFAULT_WAVEFORM_DISPLAY_MODES,
   DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE,
   readCutWaveformAmplitudeProfile,
-  readWaveformDisplayModes,
   writeCutWaveformAmplitudeProfile,
   writeWaveformDisplayMode,
   type WaveformDisplayModes,
 } from "@/lib/waveformPreferences";
 import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
+import { createWaveformSessionCache, selectWaveformHydration } from "@/lib/waveformSessionCache";
 import type { ScratchProxyState } from "@/lib/scratchProxy";
+import type { AppMode } from "@/lib/modes";
+import { createModeController, type ModeController } from "@/lib/modeController";
 import {
   addFourBeatSegment,
   createDefaultSubtitleState,
   nudgeSegmentBoundary,
   subtitleRenderSignature,
-  type AppMode,
+  updateSegmentBoundary,
   type LyricsSegment,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
@@ -143,26 +168,11 @@ import type {
   TimestampCommentCandidate,
   VideoInfo,
   WaveformDisplayMode,
-  WaveformPoint
 } from "@/types";
 import { currentUiLanguage, localizeFilenameTemplateError, localizeJobMessage, localizeUiMessage, tr, type UiLanguage, type UiLanguagePreference } from "@/i18n";
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
 const MIN_SEGMENT_SECONDS = 0.1;
-const DEFAULT_BOUNDARY_SECONDS = 5;
-const DEFAULT_BOUNDARY_NUDGE_SECONDS = 0.5;
-const DEFAULT_VIDEO_SPLIT_PERCENT = 35;
-const MIN_VIDEO_SPLIT_PERCENT = 32;
-const MAX_VIDEO_SPLIT_PERCENT = 72;
-const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
-const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
-const MAX_SCRATCH_PREVIEW_MILLISECONDS = 5000;
-const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
-const SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY = "songcut:scratch-audio-proxy-enabled";
-const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
-const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
-const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
-const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder";
 const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 
@@ -217,6 +227,7 @@ type SwitchSaveFailure = {
 export default function App(props: {
   initialLocaleSettings: { language: UiLanguage; preference: UiLanguagePreference };
 }) {
+  const editorRootRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [mode, setMode] = useState<AppMode>("cut");
   const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
@@ -245,6 +256,7 @@ export default function App(props: {
   const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const mmsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
+  const [waveformSessionCache] = useState(() => createWaveformSessionCache());
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -322,13 +334,15 @@ export default function App(props: {
   const progressiveWaveform = useProgressiveWaveform(
     apiBaseUrl,
     (nextJob) => taskRegistry.updateTask("waveform", nextJob),
-    (sourcePath) => {
-      if (
-        projectBaseRef.current &&
-        !projectReadOnlyRef.current &&
-        sameWindowsPath(sourcePath, videoPathRef.current)
-      ) {
-        setProjectRevision((revision) => revision + 1);
+    (sourcePath, points, metadata) => {
+      const currentProject = projectBaseRef.current;
+      if (currentProject && sameWindowsPath(sourcePath, videoPathRef.current)) {
+        waveformSessionCache.put({
+          fingerprint: currentProject.source.fingerprint.value,
+          points,
+          metadata,
+        });
+        if (!projectReadOnlyRef.current) setProjectRevision((revision) => revision + 1);
       }
     }
   );
@@ -355,6 +369,15 @@ export default function App(props: {
   const waveformDisplayMode = waveformDisplayModes[mode];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
   const uncheckedCount = segments.length - checkedCount;
+  const activeSubtitleLane =
+    subtitleState.lanes.find((lane) => lane.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
+  const activeSubtitleSegments = [...(activeSubtitleLane?.segments ?? [])].sort(
+    (left, right) => left.start - right.start
+  );
+  const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
+    (segment) => segment.id === subtitleState.selected_segment_id
+  );
+  const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
   const visibleTranscriptSegment = useMemo(
     () => (transcriptSegment ? segments.find((segment) => segment.id === transcriptSegment.id) ?? transcriptSegment : null),
     [segments, transcriptSegment]
@@ -424,7 +447,13 @@ export default function App(props: {
             operation: projectOperation
             ,
             mode,
-            subtitle: mode === "sub" ? subtitleState : undefined
+            subtitle: mode === "sub" ? subtitleState : undefined,
+            projectSettings: {
+              analysisDevice,
+              whisper: whisperSettings,
+              filenameTemplate,
+              subtitle: mode === "sub" ? subtitleState : undefined,
+            },
           })
         : null,
     [
@@ -487,6 +516,12 @@ export default function App(props: {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
   }
 
+  const operationRunner = useOperationRunner({
+    updateTask: taskRegistry.updateTask,
+    setProjectOperation,
+    markProjectChanged,
+  });
+
   function updateFilenameTemplate(value: string) {
     setFilenameTemplate(value);
     markProjectChanged();
@@ -497,52 +532,26 @@ export default function App(props: {
   }, [selectedSegment]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(SCRATCH_PREVIEW_STORAGE_KEY, String(scratchPreviewMilliseconds));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeScratchPreviewMilliseconds(window.localStorage, scratchPreviewMilliseconds);
   }, [scratchPreviewMilliseconds]);
 
   useEffect(() => {
     scratchAudioProxyEnabledRef.current = scratchAudioProxyEnabled;
-    try {
-      window.localStorage.setItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY, String(scratchAudioProxyEnabled));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeScratchAudioProxyEnabled(window.localStorage, scratchAudioProxyEnabled);
   }, [scratchAudioProxyEnabled]);
 
   useEffect(() => {
     if (!boundarySecondsInput.trim()) return;
-    try {
-      window.localStorage.setItem(
-        BOUNDARY_SECONDS_STORAGE_KEY,
-        formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))
-      );
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeBoundarySecondsInput(window.localStorage, boundarySecondsInput);
   }, [boundarySecondsInput]);
 
   useEffect(() => {
     if (!boundaryNudgeSecondsInput.trim()) return;
-    try {
-      window.localStorage.setItem(
-        BOUNDARY_NUDGE_SECONDS_STORAGE_KEY,
-        formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))
-      );
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeBoundaryNudgeSecondsInput(window.localStorage, boundaryNudgeSecondsInput);
   }, [boundaryNudgeSecondsInput]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(VIDEO_SPLIT_STORAGE_KEY, String(split));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeVideoSplitPercent(window.localStorage, split);
   }, [split]);
 
   useEffect(() => {
@@ -563,11 +572,7 @@ export default function App(props: {
   }, [cutWaveformAmplitudeProfile]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(CREATE_SOURCE_FOLDER_STORAGE_KEY, String(createSourceFolder));
-    } catch {
-      // Keep the export-folder preference for this session when persistent storage is unavailable.
-    }
+    writeCreateSourceFolder(window.localStorage, createSourceFolder);
   }, [createSourceFolder]);
 
   useEffect(() => {
@@ -789,6 +794,33 @@ export default function App(props: {
     }
   }
 
+  function showWaveformForDocument(document: ProjectDocumentV1, sourcePath: string | null) {
+    const displayPath = sourcePath ?? document.source.absolute_path;
+    const snapshot = document.waveform_snapshot;
+    const documentWaveform = waveformFromProject(document);
+    const decision = selectWaveformHydration(waveformSessionCache, {
+      fingerprint: document.source.fingerprint.value,
+      duration: document.source.duration_seconds,
+      document:
+        snapshot && documentWaveform.length === snapshot.point_count && documentWaveform.length > 0
+          ? {
+              points: documentWaveform,
+              metadata: {
+                source_path: displayPath,
+                duration: snapshot.duration_seconds,
+                sample_rate: snapshot.sample_rate,
+                channels: snapshot.channels,
+                generator: snapshot.generator,
+                point_count: snapshot.point_count,
+              },
+              encoding: snapshot.encoding,
+            }
+          : null,
+    });
+    progressiveWaveform.showCached(displayPath, decision.points, decision.metadata);
+    if (decision.source === "generate" && sourcePath) void progressiveWaveform.start(sourcePath);
+  }
+
   async function hydrateProject(nextProjectPath: string, document: ProjectDocumentV1, preferredSource?: string) {
     if (!apiBaseUrl) return;
     const wasRunning = document.operation?.status === "running";
@@ -827,24 +859,22 @@ export default function App(props: {
     setVideoInfo(info ?? offlineVideoInfo(document));
     setGuideText(document.guide_text);
     setMode(projectMode(document));
-    setSubtitleState(subtitleStateFromProject(document));
+    const projectSettings = projectOwnedSettingsFromDocument(document);
+    setSubtitleState(projectSettings.subtitle ?? createDefaultSubtitleState());
     setAnalysis(analysisFromProject(document));
-    const cachedWaveform = waveformFromProject(document);
-    progressiveWaveform.showCached(sourcePath ?? document.source.absolute_path, cachedWaveform);
-    if (sourcePath && cachedWaveform.length === 0) void progressiveWaveform.start(sourcePath);
+    showWaveformForDocument(document, sourcePath);
     setSegments(document.segments.map((segment) => ({ ...segment })));
     setExportCandidates(exportCandidatesFromProject(document));
     setSelectedSegmentId(document.view_state.selected_segment_id ?? document.segments[0]?.id ?? null);
     setCurrentTime(document.view_state.current_time);
     setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
-    setAnalysisDevice(document.settings.analysis_device);
+    setAnalysisDevice(projectSettings.analysisDevice);
     setWhisperSettings({
       ...DEFAULT_WHISPER_SETTINGS,
-      ...document.settings.whisper,
-      lyricsAlignmentAlgorithm:
-        document.settings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
+      ...projectSettings.whisper,
+      lyricsAlignmentAlgorithm: projectSettings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
     });
-    setFilenameTemplate(filenameTemplateFromProject(document));
+    setFilenameTemplate(projectSettings.filenameTemplate);
     taskRegistry.clearTasks([
       "analysis",
       "lyrics-analysis",
@@ -950,8 +980,7 @@ export default function App(props: {
     setMode("cut");
     setSubtitleState(createDefaultSubtitleState());
     setAnalysis(null);
-    progressiveWaveform.showCached(filePath, []);
-    void progressiveWaveform.start(filePath);
+    showWaveformForDocument(document, filePath);
     setSegments([]);
     setExportCandidates([]);
     setSelectedSegmentId(null);
@@ -1085,7 +1114,7 @@ export default function App(props: {
       setMessage("The selected file has a different duration. It was not linked to this project.");
       return;
     }
-    const nextProjectPath = await window.songcut.projectPathForVideo(selected);
+    const nextProjectPath = await window.songcut.projectPathForVideo(selected, mode);
     const conflict: RelinkConflict = {
       selectedPath: selected,
       identity,
@@ -1472,44 +1501,45 @@ export default function App(props: {
 
   async function runAnalysis(transcribeAfter: boolean) {
     if (!apiBaseUrl || !videoPath) return;
+    if (operationRunner.isRunning()) return;
     taskRegistry.updateTask("transcription", null);
-    setProjectOperation({ kind: "analysis", status: "running" });
-    markProjectChanged();
-    let trackedJob = createPendingTask("analysis", tr("messages.analysisRunning"));
-    taskRegistry.updateTask("analysis", trackedJob);
     try {
-      const started = await startAnalysis(
-        apiBaseUrl,
-        videoPath,
-        guideText,
-        analysisDevice,
-        boundaryRefinementSettings
-      );
-      trackedJob = started;
-      taskRegistry.updateTask("analysis", started);
-      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("analysis", nextJob);
+      const result = await operationRunner.run({
+        slot: "analysis",
+        operation: { kind: "analysis" },
+        pendingMessage: tr("messages.analysisRunning"),
+        failureMessage: tr("messages.analysisFailed"),
+        start: () =>
+          startAnalysis(
+            apiBaseUrl,
+            videoPath,
+            guideText,
+            analysisDevice,
+            boundaryRefinementSettings
+          ),
+        poll: (jobId, onProgress) => waitForJob<AnalysisResult>(apiBaseUrl, jobId, onProgress),
+        onSuccess: (analysisResult) => {
+          const nextSegments = analysisResult.segments.map((segment) => ({ ...segment, checked: true }));
+          setAnalysis(analysisResult);
+          setSegments(nextSegments);
+          setExportCandidates(analysisResult.export_candidates);
+          setSelectedSegmentId(nextSegments[0]?.id ?? null);
+          setMessage(`Detected ${nextSegments.length} segments.`);
+        },
       });
-      const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
-      setAnalysis(result);
-      setSegments(nextSegments);
-      setExportCandidates(result.export_candidates);
-      setSelectedSegmentId(nextSegments[0]?.id ?? null);
-      setProjectOperation(null);
-      markProjectChanged();
-      setMessage(`Detected ${nextSegments.length} segments.`);
-      if (transcribeAfter && nextSegments.length) await runTranscription(nextSegments, false);
+      if (!result) return;
+      if (transcribeAfter && result.segments.length) {
+        const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
+        await runTranscription(nextSegments, false);
+      }
     } catch (error) {
-      taskRegistry.updateTask("analysis", failTask(trackedJob, error, tr("messages.analysisFailed")));
-      setProjectOperation({ kind: "analysis", status: "interrupted" });
-      markProjectChanged();
       throw error;
     }
   }
 
   async function runTranscription(candidateSegments = segments, resumeInterrupted = true) {
     if (!apiBaseUrl || !videoPath || !candidateSegments.length) return;
+    if (operationRunner.isRunning()) return;
     const sameInterruptedSettings =
       resumeInterrupted &&
       projectOperation?.kind === "transcription" &&
@@ -1521,23 +1551,21 @@ export default function App(props: {
       : candidateSegments;
     const targets = pending.length ? pending : candidateSegments;
     const pendingIds = targets.map((segment) => segment.id);
-    setProjectOperation({
-      kind: "transcription",
-      status: "running",
-      settings: { ...whisperSettings },
-      pending_segment_ids: pendingIds
-    });
-    markProjectChanged();
-    let trackedJob = createPendingTask("transcription", tr("messages.transcriptionPreparing"));
-    taskRegistry.updateTask("transcription", trackedJob);
     try {
-      const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
-      trackedJob = started;
-      taskRegistry.updateTask("transcription", started);
       const appliedTranscripts = new Map<string, string>();
-      const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("transcription", nextJob);
+      await operationRunner.run({
+        slot: "transcription",
+        operation: {
+          kind: "transcription",
+          settings: { ...whisperSettings },
+          pending_segment_ids: pendingIds,
+        },
+        pendingMessage: tr("messages.transcriptionPreparing"),
+        failureMessage: tr("messages.transcriptionFailed"),
+        start: () => startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText),
+        poll: (jobId, onProgress) =>
+          waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, jobId, onProgress),
+        onProgress: (nextJob) => {
         const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
         const changed = partial.filter((transcript) => {
           const serialized = JSON.stringify(transcript);
@@ -1554,34 +1582,26 @@ export default function App(props: {
               : operation
           );
         }
+        },
+        onSuccess: (result) => {
+          const finalTranscripts = result.transcripts ?? [];
+          const unapplied = finalTranscripts.filter(
+            (transcript) => appliedTranscripts.get(transcript.segment_id) !== JSON.stringify(transcript)
+          );
+          applyTranscripts(unapplied);
+          const failedIds = finalTranscripts.filter((transcript) => transcript.error).map((transcript) => transcript.segment_id);
+          setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
+          return failedIds.length
+            ? {
+                kind: "transcription",
+                status: "interrupted",
+                settings: { ...whisperSettings },
+                pending_segment_ids: failedIds,
+              }
+            : null;
+        },
       });
-      const finalTranscripts = result.transcripts ?? [];
-      const unapplied = finalTranscripts.filter(
-        (transcript) => appliedTranscripts.get(transcript.segment_id) !== JSON.stringify(transcript)
-      );
-      applyTranscripts(unapplied);
-      const failedIds = finalTranscripts.filter((transcript) => transcript.error).map((transcript) => transcript.segment_id);
-      setProjectOperation(
-        failedIds.length
-          ? {
-              kind: "transcription",
-              status: "interrupted",
-              settings: { ...whisperSettings },
-              pending_segment_ids: failedIds
-            }
-          : null
-      );
-      markProjectChanged();
-      setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
     } catch (error) {
-      taskRegistry.updateTask(
-        "transcription",
-        failTask(trackedJob, error, tr("messages.transcriptionFailed"))
-      );
-      setProjectOperation((operation) =>
-        operation?.kind === "transcription" ? { ...operation, status: "interrupted" } : operation
-      );
-      markProjectChanged();
       if (error instanceof ApiError && error.status === 409) await refreshWhisperStatus().catch(() => undefined);
       setMessage(`Transcription failed: ${String(error)}`);
     }
@@ -1589,40 +1609,36 @@ export default function App(props: {
 
   async function exportClips(outputDir: string, createVideoFolder: boolean) {
     if (!apiBaseUrl || !videoPath) return;
+    if (operationRunner.isRunning()) return;
     if (outputPlan.error) {
       setMessage(localizeFilenameTemplateError(outputPlan.error) ?? outputPlan.error);
       return;
     }
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
-    let trackedJob = createPendingTask("export", tr("output.preparing"));
-    taskRegistry.updateTask("export", trackedJob);
     setOutputOpen(false);
     setExportProgressOpen(true);
-    setProjectOperation({ kind: "export", status: "running" });
-    markProjectChanged();
     try {
-      const started = await startExport(
-        apiBaseUrl,
-        videoPath,
-        outputDir,
-        items,
-        buildTimestampExportText(items, "timestamp-comment"),
-        createVideoFolder
-      );
-      trackedJob = started;
-      taskRegistry.updateTask("export", started);
-      await waitForJob(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("export", nextJob);
+      await operationRunner.run({
+        slot: "export",
+        operation: { kind: "export" },
+        pendingMessage: tr("output.preparing"),
+        failureMessage: tr("output.failed"),
+        start: () =>
+          startExport(
+            apiBaseUrl,
+            videoPath,
+            outputDir,
+            items,
+            buildTimestampExportText(items, "timestamp-comment"),
+            createVideoFolder
+          ),
+        poll: (jobId, onProgress) => waitForJob(apiBaseUrl, jobId, onProgress),
+        onSuccess: () => {
+          setMessage("Export complete.");
+        },
       });
-      setProjectOperation(null);
-      markProjectChanged();
-      setMessage("Export complete.");
     } catch (error) {
-      taskRegistry.updateTask("export", failTask(trackedJob, error, tr("output.failed")));
-      setProjectOperation({ kind: "export", status: "interrupted" });
-      markProjectChanged();
       setMessage(`Export failed: ${String(error)}`);
     }
   }
@@ -1637,7 +1653,7 @@ export default function App(props: {
     const current = projectDocumentRef.current;
     if (current) {
       const kind = runningJobRef.current?.kind;
-      const operationKind = kind === "analysis" || kind === "transcription" || kind === "export" ? kind : current.operation?.kind;
+      const operationKind = isProjectOperationKind(kind) ? kind : current.operation?.kind;
       const interrupted: ProjectDocumentV1 = {
         ...current,
         revision: current.revision + 1,
@@ -2148,6 +2164,154 @@ export default function App(props: {
     playFrom(playbackRange.start, playbackRange.stopAt);
   }
 
+  const cutModeController = createModeController<Segment>({
+    mode: "cut",
+    capabilities: {
+      hasSegments: segments.length > 0,
+      hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      hasMultipleSegments: segments.length > 1,
+      canAddSegment: Boolean(projectBase),
+      canDeleteSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      canSelectPreviousSegment,
+      canSelectNextSegment,
+      canJumpBoundary: segments.length > 0,
+      canPlayBoundary: Boolean(selectedSegment && videoUrl),
+      canNudgeBoundary: Boolean(segments.length && videoUrl),
+    },
+    actions: {
+      select: selectSegment,
+      add: addNewSegment,
+      remove: requestRemoveSelectedSegment,
+      selectAdjacent: selectAdjacentSegment,
+      jumpBoundary,
+      playBoundary: (edge) => (edge === "start" ? playStartBoundary() : playEndBoundary()),
+      nudge: nudgeNearestBoundary,
+    },
+  });
+  const subModeController = createModeController<LyricsSegment, string>({
+    mode: "sub",
+    capabilities: {
+      hasSegments: subtitleSegmentCount > 0,
+      hasSelectedSegment: selectedSubtitleIndex >= 0,
+      hasMultipleSegments: subtitleSegmentCount > 1,
+      canAddSegment: Boolean(
+        activeSubtitleLane && addFourBeatSegment(activeSubtitleLane, subtitleState.selected_segment_id, subtitleState.rhythm_grid)
+      ),
+      canDeleteSelectedSegment: Boolean(selectedSubtitleSegment()),
+      canSelectPreviousSegment: selectedSubtitleIndex > 0,
+      canSelectNextSegment:
+        selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1,
+      canJumpBoundary: subtitleSegmentCount > 0,
+      canPlayBoundary: Boolean(selectedSubtitleSegment() && videoUrl),
+      canNudgeBoundary: Boolean(selectedSubtitleSegment() && subtitleState.rhythm_grid.length),
+    },
+    actions: {
+      select: (segment, laneId) => {
+        const targetLaneId = laneId ?? activeSubtitleLane?.id;
+        if (targetLaneId) selectSubtitleSegment(targetLaneId, segment);
+      },
+      add: addNewSubtitleSegment,
+      remove: removeSelectedSubtitleSegment,
+      selectAdjacent: selectAdjacentSubtitleSegment,
+      jumpBoundary: jumpSubtitleBoundary,
+      playBoundary: playSubtitleBoundary,
+      nudge: nudgeSelectedSubtitleBoundary,
+    },
+  });
+  const activeModeController: ModeController<Segment> | ModeController<LyricsSegment, string> =
+    mode === "cut" ? cutModeController : subModeController;
+
+  function runEditorCommand(action: EditorAction) {
+    executeEditorAction(action, {
+      execute(resolved) {
+        switch (resolved.type) {
+          case "nudge-boundary-left":
+            activeModeController.actions.nudge(-1);
+            break;
+          case "nudge-boundary-right":
+            activeModeController.actions.nudge(1);
+            break;
+          case "previous-segment":
+            activeModeController.actions.selectAdjacent(-1);
+            break;
+          case "next-segment":
+            activeModeController.actions.selectAdjacent(1);
+            break;
+          case "new-segment":
+            activeModeController.actions.add();
+            break;
+          case "remove-segment":
+            activeModeController.actions.remove();
+            break;
+          case "remove-unchecked-segments":
+            requestRemoveUncheckedSegments();
+            break;
+          case "sort-segments":
+            requestSortSegments();
+            break;
+          case "check-all-segments":
+            checkAllSegments();
+            break;
+          case "uncheck-all-segments":
+            uncheckAllSegments();
+            break;
+          case "invert-segment-selection":
+            invertExportSelection();
+            break;
+          case "zoom-in":
+            setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
+            break;
+          case "zoom-out":
+            setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
+            break;
+          case "reset-zoom":
+            setZoomIndex(0);
+            break;
+          case "set-zoom":
+            setZoomIndex(clamp(resolved.zoomIndex, 0, zoomLevels.length - 1));
+            break;
+          case "start":
+            seek(0);
+            break;
+          case "previous-boundary":
+            activeModeController.actions.jumpBoundary(-1);
+            break;
+          case "play":
+            playVideo();
+            break;
+          case "pause":
+            pauseVideo();
+            break;
+          case "next-boundary":
+            activeModeController.actions.jumpBoundary(1);
+            break;
+          case "play-start-boundary":
+            activeModeController.actions.playBoundary("start");
+            break;
+          case "play-end-boundary":
+            activeModeController.actions.playBoundary("end");
+            break;
+          case "toggle-playback": {
+            const video = videoRef.current;
+            if (!video) break;
+            if (video.paused) playVideo();
+            else pauseVideo();
+            break;
+          }
+          case "export-movie":
+            if (checkedCount > 0) openOutputReview();
+            break;
+          case "export-timestamp":
+            void exportTimestampText(resolved.format);
+            break;
+          case "show-boundary-refinement-details":
+            if (selectedBoundaryDiagnostic) setBoundaryDiagnosticOpen(true);
+            break;
+        }
+      },
+    });
+  }
+
   function onDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setDropActive(false);
@@ -2177,35 +2341,19 @@ export default function App(props: {
     loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  const activeSubtitleLane =
-    subtitleState.lanes.find((lane) => lane.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
-  const activeSubtitleSegments = [...(activeSubtitleLane?.segments ?? [])].sort(
-    (left, right) => left.start - right.start
-  );
-  const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
-    (segment) => segment.id === subtitleState.selected_segment_id
-  );
-  const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
-
   useEffect(() => {
     window.songcut.updateMenuState({
       apiReady: Boolean(apiBaseUrl),
       hasProject: Boolean(projectBase),
       hasVideo: Boolean(videoUrl),
-      hasSegments: mode === "sub" ? subtitleSegmentCount > 0 : segments.length > 0,
-      hasSelectedSegment:
-        mode === "sub"
-          ? selectedSubtitleIndex >= 0
-          : Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      hasSegments: activeModeController.capabilities.hasSegments,
+      hasSelectedSegment: activeModeController.capabilities.hasSelectedSegment,
       hasBoundaryDiagnostic: mode === "cut" && Boolean(selectedBoundaryDiagnostic),
       hasCheckedSegments: mode === "cut" && checkedCount > 0,
       hasUncheckedSegments: mode === "cut" && uncheckedCount > 0,
-      hasMultipleSegments: mode === "sub" ? subtitleSegmentCount > 1 : segments.length > 1,
-      canSelectPreviousSegment: mode === "sub" ? selectedSubtitleIndex > 0 : canSelectPreviousSegment,
-      canSelectNextSegment:
-        mode === "sub"
-          ? selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1
-          : canSelectNextSegment,
+      hasMultipleSegments: activeModeController.capabilities.hasMultipleSegments,
+      canSelectPreviousSegment: activeModeController.capabilities.canSelectPreviousSegment,
+      canSelectNextSegment: activeModeController.capabilities.canSelectNextSegment,
       playing,
       zoomIndex,
       waveformDisplayMode,
@@ -2242,6 +2390,11 @@ export default function App(props: {
 
   useEffect(() => {
     return window.songcut.onMenuCommand((command) => {
+      const editorAction = editorActionFromMenuCommand(command, mode);
+      if (editorAction) {
+        runEditorCommand(editorAction);
+        return;
+      }
       switch (command.type) {
         case "load-movie":
           void selectVideo();
@@ -2255,90 +2408,8 @@ export default function App(props: {
         case "relink-source":
           void relinkSource().catch((error) => setMessage(String(error)));
           break;
-        case "nudge-boundary-left":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
-          else nudgeNearestBoundary(-1);
-          break;
-        case "nudge-boundary-right":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
-          else nudgeNearestBoundary(1);
-          break;
-        case "previous-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
-          else selectAdjacentSegment(-1);
-          break;
-        case "next-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(1);
-          else selectAdjacentSegment(1);
-          break;
-        case "new-segment":
-          if (mode === "sub") addNewSubtitleSegment();
-          else addNewSegment();
-          break;
-        case "remove-segment":
-          if (mode === "sub") removeSelectedSubtitleSegment();
-          else requestRemoveSelectedSegment();
-          break;
-        case "remove-unchecked-segments":
-          requestRemoveUncheckedSegments();
-          break;
-        case "sort-segments":
-          requestSortSegments();
-          break;
-        case "check-all-segments":
-          checkAllSegments();
-          break;
-        case "uncheck-all-segments":
-          uncheckAllSegments();
-          break;
-        case "invert-segment-selection":
-          invertExportSelection();
-          break;
-        case "zoom-in":
-          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
-          break;
-        case "zoom-out":
-          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
-          break;
-        case "set-zoom":
-          setZoomIndex(clamp(command.zoomIndex, 0, zoomLevels.length - 1));
-          break;
-        case "start":
-          seek(0);
-          break;
-        case "previous-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(-1);
-          else jumpBoundary(-1);
-          break;
-        case "play":
-          playVideo();
-          break;
-        case "pause":
-          pauseVideo();
-          break;
-        case "next-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(1);
-          else jumpBoundary(1);
-          break;
-        case "play-start-boundary":
-          if (mode === "sub") playSubtitleBoundary("start");
-          else playStartBoundary();
-          break;
-        case "play-end-boundary":
-          if (mode === "sub") playSubtitleBoundary("end");
-          else playEndBoundary();
-          break;
-        case "export-movie":
-          if (checkedCount > 0) openOutputReview();
-          break;
-        case "export-timestamp":
-          void exportTimestampText(command.format);
-          break;
         case "open-settings":
           openSettings();
-          break;
-        case "show-boundary-refinement-details":
-          if (selectedBoundaryDiagnostic) setBoundaryDiagnosticOpen(true);
           break;
       }
     });
@@ -2373,57 +2444,8 @@ export default function App(props: {
       const action = resolveEditorShortcut(event);
       if (!action || isEditorShortcutSuppressed(event)) return;
       event.preventDefault();
-
-      switch (action) {
-        case "play-start-boundary":
-          if (mode === "sub") playSubtitleBoundary("start");
-          else playStartBoundary();
-          break;
-        case "play-end-boundary":
-          if (mode === "sub") playSubtitleBoundary("end");
-          else playEndBoundary();
-          break;
-        case "previous-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
-          else selectAdjacentSegment(-1);
-          break;
-        case "next-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(1);
-          else selectAdjacentSegment(1);
-          break;
-        case "nudge-boundary-left":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
-          else nudgeNearestBoundary(-1);
-          break;
-        case "nudge-boundary-right":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
-          else nudgeNearestBoundary(1);
-          break;
-        case "toggle-playback": {
-          const video = videoRef.current;
-          if (!video) break;
-          if (video.paused) playVideo();
-          else pauseVideo();
-          break;
-        }
-        case "previous-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(-1);
-          else jumpBoundary(-1);
-          break;
-        case "next-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(1);
-          else jumpBoundary(1);
-          break;
-        case "zoom-out":
-          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
-          break;
-        case "reset-zoom":
-          setZoomIndex(0);
-          break;
-        case "zoom-in":
-          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
-          break;
-      }
+      const editorAction = editorActionFromMenuCommand(action, mode);
+      if (editorAction) runEditorCommand(editorAction);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -2440,21 +2462,25 @@ export default function App(props: {
   ]);
 
   return (
-    <main
-      className={dropActive ? "app drop-active" : "app"}
-      style={{ "--video-split": `${split}%` } as React.CSSProperties}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDropActive(true);
-      }}
-      onDragLeave={() => setDropActive(false)}
-      onDrop={onDrop}
-    >
+    <EditorFocusProvider rootRef={editorRootRef}>
+      <main
+        ref={editorRootRef}
+        tabIndex={-1}
+        data-editor-focus-root
+        className={dropActive ? "app drop-active" : "app"}
+        style={{ "--video-split": `${split}%` } as React.CSSProperties}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDropActive(true);
+        }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={onDrop}
+      >
       <audio ref={scratchProxyAudioRef} preload="auto" hidden data-scratch-proxy-state={scratchProxyState} />
       <section className="video-pane">
         <Tabs
           value={mode}
-          onValueChange={(value) => void switchMode(value as AppMode)}
+          onValueChange={(value) => switchMode(value as AppMode)}
           className="mode-tabs"
         >
           <TabsList>
@@ -2509,108 +2535,89 @@ export default function App(props: {
           </div>
         ) : null}
         {mode === "cut" ? (
-          <>
-        <header className="toolbar">
-          <Button onClick={selectVideo}>
-            <FolderOpen size={16} />
-            {tr("common.load")}
-          </Button>
-          <Button onClick={() => void analyze().catch((error) => setMessage(String(error)))} disabled={!sourceAvailable || !apiBaseUrl}>
-            <Wand2 size={16} />
-            {tr("common.analyze")}
-          </Button>
-          <Button variant="secondary" onClick={openOutputReview} disabled={checkedCount === 0 || !sourceAvailable}>
-            <Scissors size={16} />
-            {tr("common.export")}
-          </Button>
-          <Button variant="secondary" onClick={() => setTimestampExportOpen(true)} disabled={checkedCount === 0}>
-            <Copy size={16} />
-            {tr("common.exportTs")}
-          </Button>
-          <Button variant="secondary" onClick={() => openSettings("cut")}>
-            <Settings2 size={16} />
-            {tr("common.settings")}
-          </Button>
-          <div className="spacer" />
-          <EditorTransportControls
-            saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
-            saveStatusClassName={`status-${persistence.status}`}
-            boundaryPreview={{
-              disabled: !selectedSegment || !videoUrl,
-              value: boundarySecondsInput,
-              onChange: (value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value)),
-              onBlur: () => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))),
-              onStart: playStartBoundary,
-              onEnd: playEndBoundary,
-            }}
-            boundaryNudge={{
-              kind: "seconds",
-              disabled: !segments.length || !videoUrl,
-              value: boundaryNudgeSecondsInput,
-              onChange: setBoundaryNudgeSecondsInput,
-              onBlur: () =>
-                setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))),
-              onLeft: () => nudgeNearestBoundary(-1),
-              onRight: () => nudgeNearestBoundary(1),
-            }}
-            playback={{
-              onStart: () => seek(0),
-              onPrevious: () => jumpBoundary(-1),
-              onPlay: playVideo,
-              onPause: pauseVideo,
-              onNext: () => jumpBoundary(1),
-            }}
-            zoom={{
-              value: zoom,
-              onIn: () => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1)),
-              onOut: () => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1)),
-              onReset: () => setZoomIndex(0),
-            }}
-          />
-        </header>
-        <div className="guide-row">
-          <Textarea
-            value={guideText}
-            onChange={(event) => {
-              setGuideText(event.target.value);
+          <CutModePanel
+            sourceAvailable={sourceAvailable}
+            apiReady={Boolean(apiBaseUrl)}
+            checkedCount={checkedCount}
+            onLoad={selectVideo}
+            onAnalyze={() => void analyze().catch((error) => setMessage(String(error)))}
+            onExport={openOutputReview}
+            onExportTimestamp={() => setTimestampExportOpen(true)}
+            onSettings={() => openSettings("cut")}
+            guideText={guideText}
+            onGuideTextChange={(value) => {
+              setGuideText(value);
               markProjectChanged();
             }}
-            placeholder={tr("app.guidePlaceholder")}
+            taskStatus={taskStatus}
+            transport={{
+              saveStatus: projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status),
+              saveStatusClassName: `status-${persistence.status}`,
+              boundaryPreview: {
+                disabled: !cutModeController.capabilities.canPlayBoundary,
+                value: boundarySecondsInput,
+                onChange: (value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value)),
+                onBlur: () => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))),
+                onStart: () => cutModeController.actions.playBoundary("start"),
+                onEnd: () => cutModeController.actions.playBoundary("end"),
+              },
+              boundaryNudge: {
+                kind: "seconds",
+                disabled: !cutModeController.capabilities.canNudgeBoundary,
+                value: boundaryNudgeSecondsInput,
+                onChange: setBoundaryNudgeSecondsInput,
+                onBlur: () =>
+                  setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))),
+                onLeft: () => cutModeController.actions.nudge(-1),
+                onRight: () => cutModeController.actions.nudge(1),
+              },
+              playback: {
+                onStart: () => seek(0),
+                onPrevious: () => cutModeController.actions.jumpBoundary(-1),
+                onPlay: playVideo,
+                onPause: pauseVideo,
+                onNext: () => cutModeController.actions.jumpBoundary(1),
+              },
+              zoom: {
+                value: zoom,
+                onIn: () => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1)),
+                onOut: () => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1)),
+                onReset: () => setZoomIndex(0),
+              },
+            }}
+            timeline={{
+              duration,
+              waveform: progressiveWaveform.waveform,
+              progressiveWaveformChunks: progressiveWaveform.chunks,
+              waveformPhase: progressiveWaveform.phase,
+              waveformProgress: progressiveWaveform.progress,
+              segments,
+              selectedSegment,
+              currentTime,
+              playing,
+              zoom,
+              waveformDisplayMode,
+              waveformAmplitudeProfile: cutWaveformAmplitudeProfile,
+              focusRequest: segmentFocusRequest,
+              editing: waveformSeeking || handleEditing,
+              onSeek: seek,
+              onScrub: scratchPreview,
+              onSeekingChange: setWaveformSeeking,
+              onHandleEditingChange: setHandleEditing,
+              onChange: (patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch),
+              onChangeCommitted: markProjectChanged,
+              onEditTiming: () => selectedSegment && setCutTimingSegmentId(selectedSegment.id),
+            }}
+            segments={{
+              segments,
+              selectedId: selectedSegment?.id ?? null,
+              onSelect: cutModeController.actions.select,
+              onToggle: (segment, checked) => updateSegment(segment.id, { checked }),
+              onTitleChange: (segment, title) => updateSegment(segment.id, { title }),
+              onTranscript: setTranscriptSegment,
+              titleForSegment: segmentTitle,
+            }}
           />
-          {taskStatus}
-        </div>
-        <TimelineStack
-          duration={duration}
-          waveform={progressiveWaveform.waveform}
-          progressiveWaveformChunks={progressiveWaveform.chunks}
-          waveformPhase={progressiveWaveform.phase}
-          waveformProgress={progressiveWaveform.progress}
-          segments={segments}
-          selectedSegment={selectedSegment}
-          currentTime={currentTime}
-          playing={playing}
-          zoom={zoom}
-          waveformDisplayMode={waveformDisplayMode}
-          waveformAmplitudeProfile={cutWaveformAmplitudeProfile}
-          focusRequest={segmentFocusRequest}
-          editing={waveformSeeking || handleEditing}
-          onSeek={seek}
-          onScrub={scratchPreview}
-          onSeekingChange={setWaveformSeeking}
-          onHandleEditingChange={setHandleEditing}
-          onChange={(patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch)}
-          onChangeCommitted={markProjectChanged}
-          onEditTiming={() => selectedSegment && setCutTimingSegmentId(selectedSegment.id)}
-        />
-        <SegmentList
-          segments={segments}
-          selectedId={selectedSegment?.id ?? null}
-          onSelect={selectSegment}
-          onToggle={(segment, checked) => updateSegment(segment.id, { checked })}
-          onTitleChange={(segment, title) => updateSegment(segment.id, { title })}
-          onTranscript={setTranscriptSegment}
-        />
-          </>
         ) : (
           <SubModePanel
             apiBaseUrl={apiBaseUrl}
@@ -2629,6 +2636,7 @@ export default function App(props: {
             focusRequest={subtitleFocusRequest}
             editing={waveformSeeking || handleEditing}
             state={subtitleState}
+            controller={subModeController}
             whisperSettings={whisperSettings}
             onPrepareWhisperModel={async () => {
               await ensureWhisper();
@@ -2646,30 +2654,49 @@ export default function App(props: {
             taskStatus={taskStatus}
             analysisJob={lyricsAnalysisJob}
             exportJob={subtitleExportJob}
+            operationRunner={operationRunner}
             onStateChange={(state) => {
               setSubtitleState(state);
               markProjectChanged();
             }}
+            onBoundaryPreview={(laneId, segmentId, edge, time) => {
+              setSubtitleState((current) => ({
+                ...current,
+                lanes: current.lanes.map((lane) =>
+                  lane.id === laneId
+                    ? updateSegmentBoundary(lane, segmentId, edge, time, current.rhythm_grid)
+                    : lane
+                ),
+              }));
+            }}
+            onBoundaryCancel={(laneId, segmentId, startSegment) => {
+              setSubtitleState((current) => ({
+                ...current,
+                lanes: current.lanes.map((lane) =>
+                  lane.id === laneId
+                    ? {
+                        ...lane,
+                        segments: lane.segments.map((segment) =>
+                          segment.id === segmentId ? startSegment : segment
+                        ),
+                      }
+                    : lane
+                ),
+              }));
+            }}
+            onBoundaryCommit={markProjectChanged}
             onSeek={seek}
             onPlay={playVideo}
             onPause={pauseVideo}
             onScrub={scratchPreview}
             onSeekingChange={setWaveformSeeking}
             onHandleEditingChange={setHandleEditing}
-            onSelectSegment={selectSubtitleSegment}
             onFocusSegment={focusSubtitleSegment}
-            onAddSegment={addNewSubtitleSegment}
-            onDeleteSelectedSegment={removeSelectedSubtitleSegment}
             boundarySecondsInput={boundarySecondsInput}
             onBoundarySecondsInput={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
             onBoundarySecondsBlur={() =>
               setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))
             }
-            onPlayStartBoundary={() => playSubtitleBoundary("start")}
-            onPlayEndBoundary={() => playSubtitleBoundary("end")}
-            onNudge={nudgeSelectedSubtitleBoundary}
-            onPreviousBoundary={() => jumpSubtitleBoundary(-1)}
-            onNextBoundary={() => jumpSubtitleBoundary(1)}
             onLoad={selectVideo}
             onSettings={() => openSettings("sub")}
             onZoomIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
@@ -3092,8 +3119,22 @@ export default function App(props: {
           <Button onClick={() => void confirmQuit()}>{tr("dialogs.quitAnyway")}</Button>
         </div>
       </Dialog>
-    </main>
+      </main>
+    </EditorFocusProvider>
   );
+}
+
+function isProjectOperationKind(kind: string | undefined): kind is NonNullable<ProjectOperation>["kind"] {
+  switch (kind) {
+    case "analysis":
+    case "transcription":
+    case "export":
+    case "lyrics-analysis":
+    case "subtitle-export":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
@@ -3209,6 +3250,7 @@ function TaskStatusPanel({
   onDismiss: (slot: TaskSlot) => void;
   onWaveformRetry: (() => void) | null;
 }) {
+  const waveformRetryFocusProps = useEditorActionFocusProps<HTMLButtonElement>(onWaveformRetry ?? undefined);
   const idleJob = runningTasks.length === 0 && failedTasks.length === 0 ? latestTerminalTask : null;
   const idleJobMessage = localizeJobMessage(idleJob);
   const uiMessage = localizeUiMessage(message);
@@ -3251,7 +3293,7 @@ function TaskStatusPanel({
           <div className="meta-line waveform-status-line" data-waveform-status={waveformPhase}>
             <span>{waveformStatusLabel(waveformPhase, waveformProgress)}</span>
             {onWaveformRetry ? (
-              <button type="button" className="waveform-retry" onClick={onWaveformRetry}>{tr("controls.retryWaveform")}</button>
+              <button {...waveformRetryFocusProps} type="button" className="waveform-retry">{tr("controls.retryWaveform")}</button>
             ) : null}
           </div>
         </div>
@@ -3267,6 +3309,7 @@ function TaskStatusRow({
   entry: TaskRegistryEntry;
   onDismiss?: () => void;
 }) {
+  const dismissFocusProps = useEditorActionFocusProps<HTMLButtonElement>(onDismiss);
   const { job } = entry;
   const failed = job.status === "failed" || job.status === "cancelled";
   return (
@@ -3278,7 +3321,7 @@ function TaskStatusRow({
       </div>
       <span className="task-status-percent">{Math.round(clamp(job.progress, 0, 1) * 100)}%</span>
       {onDismiss ? (
-        <button type="button" className="task-status-dismiss" onClick={onDismiss}>
+        <button {...dismissFocusProps} type="button" className="task-status-dismiss">
           {tr("common.close")}
         </button>
       ) : null}
@@ -3287,401 +3330,6 @@ function TaskStatusRow({
     </div>
   );
 }
-
-function TimelineStack(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  segments: Segment[];
-  selectedSegment: Segment | null;
-  currentTime: number;
-  playing: boolean;
-  zoom: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  waveformAmplitudeProfile: CutWaveformAmplitudeProfile;
-  focusRequest: number;
-  editing: boolean;
-  onSeek: (time: number) => void;
-  onScrub: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-  onHandleEditingChange: (editing: boolean) => void;
-  onChange: (patch: Partial<Segment>) => void;
-  onChangeCommitted: () => void;
-  onEditTiming: () => void;
-}) {
-  const timelineViewport = useTimelineViewport({
-    duration: props.duration,
-    currentTime: props.currentTime,
-    playing: props.playing,
-    editing: props.editing,
-    zoom: props.zoom,
-    focusRequest: props.focusRequest,
-    focusRange: props.selectedSegment,
-    onScrub: props.onScrub,
-    minimumWidth: 400,
-  });
-  const width = timelineViewport.contentWidth;
-
-  return (
-    <ScrollArea
-      className="timeline-scroll-area"
-      viewportRef={timelineViewport.viewportRef}
-      scrollbars={["horizontal"]}
-      onWheel={timelineViewport.scrollByWheel}
-    >
-      <div className="timeline-content" style={{ width }}>
-        <TimelinePlayhead currentTime={props.currentTime} duration={props.duration} />
-        <TimelineWaveform
-          duration={props.duration}
-          waveform={props.waveform}
-          progressiveChunks={props.progressiveWaveformChunks}
-          phase={props.waveformPhase}
-          progress={props.waveformProgress}
-          displayMode={props.waveformDisplayMode}
-          amplitudeProfile={props.waveformAmplitudeProfile === "singing-mc-contrast" ? "cut-legacy" : "adaptive"}
-          width={width}
-          className="waveform-timeline timeline-row"
-          rangeLayer={[
-            ...props.segments.filter((segment) => segment.id !== props.selectedSegment?.id),
-            ...props.segments.filter((segment) => segment.id === props.selectedSegment?.id),
-          ].map((segment) => (
-            <rect
-              key={segment.id}
-              x={(segment.start / Math.max(0.001, props.duration)) * width}
-              y="10"
-              width={Math.max(1, ((segment.end - segment.start) / Math.max(0.001, props.duration)) * width)}
-              height="66"
-              fill={segment.id === props.selectedSegment?.id ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
-            />
-          ))}
-          timeFromClientX={timelineViewport.timeFromClientX}
-          scrubFromClientX={timelineViewport.scrubFromClientX}
-          stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
-          onSeek={props.onSeek}
-          onSeekingChange={props.onSeekingChange}
-        />
-        <SegmentTimeline
-          duration={props.duration}
-          segment={props.selectedSegment}
-          currentTime={props.currentTime}
-          width={width}
-          viewportRef={timelineViewport.viewportRef}
-          onChange={props.onChange}
-          onChangeCommitted={props.onChangeCommitted}
-          onEditingChange={props.onHandleEditingChange}
-          onEditTiming={props.onEditTiming}
-        />
-      </div>
-    </ScrollArea>
-  );
-}
-
-function SegmentTimeline(props: {
-  duration: number;
-  segment: Segment | null;
-  currentTime: number;
-  width: number;
-  viewportRef: React.RefObject<HTMLDivElement>;
-  onChange: (patch: Partial<Segment>) => void;
-  onChangeCommitted: () => void;
-  onEditingChange: (editing: boolean) => void;
-  onEditTiming: () => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const segment = props.segment;
-  const [draggingEdge, setDraggingEdge] = useState<"start" | "end" | null>(null);
-  const startX = segment ? (segment.start / safeDuration) * props.width : 0;
-  const endX = segment ? (segment.end / safeDuration) * props.width : 0;
-  const draggingX = draggingEdge === "start" ? startX : draggingEdge === "end" ? endX : null;
-  const setHandleEditing = (edge: "start" | "end", editing: boolean) => {
-    setDraggingEdge(editing ? edge : null);
-    props.onEditingChange(editing);
-  };
-  return (
-    <div className="segment-timeline timeline-row" style={{ width: props.width }}>
-      <div className="segment-track" style={{ width: props.width }}>
-        {segment ? (
-          <>
-            {draggingX !== null ? (
-              <div className="cut-boundary-drag-guide" style={{ left: draggingX }} />
-            ) : null}
-            <button
-              type="button"
-              className="segment-range"
-              style={{ left: startX, width: Math.max(2, endX - startX) }}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                props.onEditTiming();
-              }}
-              aria-label={tr("segmentTiming.title")}
-            />
-            <DragHandle
-              left={startX}
-              label="start"
-              width={props.width}
-              duration={safeDuration}
-              viewportRef={props.viewportRef}
-              onEditingChange={(editing) => setHandleEditing("start", editing)}
-              onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
-              onChangeCommitted={props.onChangeCommitted}
-            />
-            <DragHandle
-              left={endX}
-              label="end"
-              width={props.width}
-              duration={safeDuration}
-              viewportRef={props.viewportRef}
-              onEditingChange={(editing) => setHandleEditing("end", editing)}
-              onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
-              onChangeCommitted={props.onChangeCommitted}
-            />
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function DragHandle(props: {
-  left: number;
-  label: string;
-  width: number;
-  duration: number;
-  viewportRef: React.RefObject<HTMLDivElement>;
-  onEditingChange: (editing: boolean) => void;
-  onChange: (time: number) => void;
-  onChangeCommitted: () => void;
-}) {
-  const pointerIdRef = useRef<number | null>(null);
-  const mouseDraggingRef = useRef(false);
-  const updateFromClientX = (clientX: number) => {
-    const viewport = props.viewportRef.current;
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
-    const x = clientX - rect.left + viewport.scrollLeft;
-    props.onChange((x / props.width) * props.duration);
-  };
-  const finishDrag = (target: HTMLButtonElement, pointerId: number) => {
-    if (target.hasPointerCapture(pointerId)) {
-      target.releasePointerCapture(pointerId);
-    }
-    pointerIdRef.current = null;
-    props.onEditingChange(false);
-    props.onChangeCommitted();
-  };
-
-  return (
-    <button
-      className="drag-handle"
-      style={{ left: props.left }}
-      aria-label={props.label}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        pointerIdRef.current = event.pointerId;
-        props.onEditingChange(true);
-        event.currentTarget.setPointerCapture(event.pointerId);
-        updateFromClientX(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        event.preventDefault();
-        updateFromClientX(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        finishDrag(event.currentTarget, event.pointerId);
-      }}
-      onPointerCancel={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        finishDrag(event.currentTarget, event.pointerId);
-      }}
-      onMouseDown={(event) => {
-        if (pointerIdRef.current !== null) return;
-        event.preventDefault();
-        event.stopPropagation();
-        mouseDraggingRef.current = true;
-        props.onEditingChange(true);
-        updateFromClientX(event.clientX);
-        const move = (moveEvent: MouseEvent) => {
-          if (!mouseDraggingRef.current) return;
-          updateFromClientX(moveEvent.clientX);
-        };
-        const up = () => {
-          mouseDraggingRef.current = false;
-          props.onEditingChange(false);
-          props.onChangeCommitted();
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      }}
-    />
-  );
-}
-
-function SegmentList(props: {
-  segments: Segment[];
-  selectedId: string | null;
-  onSelect: (segment: Segment) => void;
-  onToggle: (segment: Segment, checked: boolean) => void;
-  onTitleChange: (segment: Segment, title: string) => void;
-  onTranscript: (segment: Segment) => void;
-}) {
-  const selectedRowRef = useRef<HTMLTableRowElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const selectedRow = selectedRowRef.current;
-    if (!viewport || !selectedRow) return;
-
-    const viewportRect = viewport.getBoundingClientRect();
-    const rowRect = selectedRow.getBoundingClientRect();
-    if (rowRect.top < viewportRect.top) {
-      viewport.scrollTop -= viewportRect.top - rowRect.top;
-    } else if (rowRect.bottom > viewportRect.bottom) {
-      viewport.scrollTop += rowRect.bottom - viewportRect.bottom;
-    }
-  }, [props.selectedId]);
-
-  return (
-    <div className="segment-list">
-      <table className="segment-list-table segment-list-header-table">
-        <SegmentColumnGroup />
-        <thead>
-          <tr>
-            <th>{tr("segments.export")}</th>
-            <th>{tr("segments.title")}</th>
-            <th>ID</th>
-            <th>{tr("segments.start")}</th>
-            <th>{tr("segments.end")}</th>
-            <th>{tr("segments.duration")}</th>
-            <th>{tr("segments.confidence")}</th>
-            <th>{tr("segments.text")}</th>
-          </tr>
-        </thead>
-      </table>
-      <ScrollArea className="segment-list-body" viewportRef={viewportRef} scrollbars={["vertical"]}>
-        <table className="segment-list-table segment-list-body-table">
-          <SegmentColumnGroup />
-          <tbody>
-            {props.segments.map((segment) => (
-              <tr
-                key={segment.id}
-                ref={segment.id === props.selectedId ? selectedRowRef : undefined}
-                className={segment.id === props.selectedId ? "selected" : ""}
-                onClick={() => props.onSelect(segment)}
-              >
-                <td>
-                  <Checkbox
-                    checked={segment.checked !== false}
-                    onChange={(event) => props.onToggle(segment, event.currentTarget.checked)}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                </td>
-                <td>
-                  <EditableTitleCell segment={segment} onChange={(title) => props.onTitleChange(segment, title)} />
-                </td>
-                <td>{segment.id}</td>
-                <td>{formatTime(segment.start)}</td>
-                <td>{formatTime(segment.end)}</td>
-                <td>{formatTime(segment.end - segment.start)}</td>
-                <td>{Math.round(segment.confidence * 100)}%</td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onTranscript(segment);
-                    }}
-                  >
-                    {tr("common.view")}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function SegmentColumnGroup() {
-  return (
-    <colgroup>
-      <col className="segment-col-export" />
-      <col className="segment-col-title" />
-      <col className="segment-col-id" />
-      <col className="segment-col-time" />
-      <col className="segment-col-time" />
-      <col className="segment-col-duration" />
-      <col className="segment-col-confidence" />
-      <col className="segment-col-text" />
-    </colgroup>
-  );
-}
-
-function EditableTitleCell(props: { segment: Segment; onChange: (title: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(props.segment.title?.trim() ?? "");
-  const displayTitle = segmentTitle(props.segment);
-
-  useEffect(() => {
-    if (!editing) setDraft(props.segment.title?.trim() ?? "");
-  }, [editing, props.segment.title]);
-
-  const commit = (value = draft) => {
-    props.onChange(value.trim());
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        className="title-edit-input"
-        value={draft}
-        autoFocus
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        onClick={(event) => event.stopPropagation()}
-        onFocus={(event) => event.currentTarget.select()}
-        onBlur={(event) => commit(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit(event.currentTarget.value);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            setDraft(props.segment.title?.trim() ?? "");
-            setEditing(false);
-          }
-        }}
-      />
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      className="title-edit-button"
-      title={tr("segments.editTitle")}
-      onClick={(event) => {
-        event.stopPropagation();
-        setDraft(props.segment.title?.trim() ?? "");
-        setEditing(true);
-      }}
-    >
-      {displayTitle}
-    </button>
-  );
-}
-
 function TimestampCommentDialogs(props: {
   flow: TimestampCommentFlow;
   onClose: () => void;
@@ -4089,31 +3737,25 @@ function ModelDownloadProgressDialog(props: {
       ? `${formatDownloadBytes(downloadedBytes)} / ${formatDownloadBytes(totalBytes)}`
       : null;
   return (
-    <Dialog open={props.open} title={props.title} onClose={props.onClose}>
-      <div className="export-progress">
-        <p className="dialog-message">{props.description}</p>
-        <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>
-            {status === "completed"
-              ? props.complete
-              : status === "failed"
-                ? props.failed
-                : props.preparing}
-          </span>
-          <strong>{Math.round(progress * 100)}%</strong>
-        </div>
-        <progress value={progress} max={1} />
-        {transferLabel ? <div className="export-progress-note">{transferLabel}</div> : null}
-        {props.job?.error ? <div className="warning-text">{props.job.error}</div> : null}
-      </div>
-      {status === "completed" || status === "failed" ? (
-        <div className="dialog-actions">
-          <Button variant="secondary" onClick={props.onClose}>
-            {tr("common.close")}
-          </Button>
-        </div>
-      ) : null}
-    </Dialog>
+    <JobProgressDialog
+      open={props.open}
+      title={props.title}
+      job={props.job}
+      pendingMessage={props.preparing}
+      description={<p className="dialog-message">{props.description}</p>}
+      statusMessage={(state) =>
+        state.status === "completed"
+          ? props.complete
+          : state.status === "failed"
+            ? props.failed
+            : props.preparing
+      }
+      progressOverride={progress}
+      note={transferLabel ? <div className="export-progress-note">{transferLabel}</div> : null}
+      onClose={props.onClose}
+      bodyClassName="export-progress"
+      closeAction={{ statuses: ["completed", "failed"], activeLabel: tr("common.hide"), terminalLabel: tr("common.close") }}
+    />
   );
 }
 
@@ -4139,16 +3781,19 @@ function ExportProgressDialog(props: {
   const checkedRenderPlanState = props.renderPlanState.status === "ready" ? props.renderPlanState : null;
   const progressRenderPlanState = actualRenderPlanState ?? checkedRenderPlanState;
   return (
-    <Dialog open={props.open} title={tr("output.progress")} onClose={props.onClose}>
-      <div className="export-progress">
-        {progressRenderPlanState
+    <JobProgressDialog
+      open={props.open}
+      title={tr("output.progress")}
+      job={props.job}
+      pendingMessage={tr("output.preparing")}
+      progressOverride={progress}
+      beforeStatus={
+        progressRenderPlanState
           ? <ExportRenderSummary state={progressRenderPlanState} />
-          : <ExportCompatibilitySummary estimate={props.estimate} />}
-        <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>{localizeJobMessage(props.job) || tr("output.preparing")}</span>
-          <strong>{Math.round(progress * 100)}%</strong>
-        </div>
-        <progress value={progress} max={1} />
+          : <ExportCompatibilitySummary estimate={props.estimate} />
+      }
+      statusMessage={localizeJobMessage(props.job) || tr("output.preparing")}
+      note={
         <div className="export-progress-note">
           {failed
             ? props.job?.error || tr("output.failed")
@@ -4156,13 +3801,17 @@ function ExportProgressDialog(props: {
               ? tr("output.complete")
               : tr("output.progressNote")}
         </div>
-      </div>
-      <div className="dialog-actions">
-        <Button variant="secondary" onClick={props.onClose}>
-          {tr(complete || failed ? "common.close" : "common.hide")}
-        </Button>
-      </div>
-    </Dialog>
+      }
+      error={false}
+      onClose={props.onClose}
+      bodyClassName="export-progress"
+      closeAction={{
+        statuses: "always",
+        activeLabel: tr("common.hide"),
+        terminalLabel: tr("common.close"),
+        label: (state) => state.status === "completed" || state.status === "failed" ? tr("common.close") : tr("common.hide"),
+      }}
+    />
   );
 }
 
@@ -4262,28 +3911,12 @@ function segmentStopAtForTime(segment: Segment | null, time: number) {
   return time >= segment.start - 0.03 && time < segment.end - 0.03 ? segment.end : null;
 }
 
-function normalizeScratchPreviewMilliseconds(value: unknown, fallback = DEFAULT_SCRATCH_PREVIEW_MILLISECONDS) {
-  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(Math.round(parsed), MIN_SCRATCH_PREVIEW_MILLISECONDS, MAX_SCRATCH_PREVIEW_MILLISECONDS)
-    : fallback;
-}
-
 function readScratchPreviewMilliseconds() {
-  try {
-    return normalizeScratchPreviewMilliseconds(window.localStorage.getItem(SCRATCH_PREVIEW_STORAGE_KEY));
-  } catch {
-    return DEFAULT_SCRATCH_PREVIEW_MILLISECONDS;
-  }
+  return readStoredScratchPreviewMilliseconds(window.localStorage);
 }
 
 function readScratchAudioProxyEnabled() {
-  try {
-    return normalizeScratchAudioProxyEnabled(window.localStorage.getItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY));
-  } catch {
-    return true;
-  }
+  return readStoredScratchAudioProxyEnabled(window.localStorage);
 }
 
 function clampMediaTime(media: HTMLMediaElement, time: number) {
@@ -4340,39 +3973,24 @@ function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" 
 }
 
 function readBoundarySecondsInput() {
-  try {
-    const stored = window.localStorage.getItem(BOUNDARY_SECONDS_STORAGE_KEY);
-    return stored?.trim()
-      ? formatBoundarySeconds(parseBoundarySeconds(stored))
-      : formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
-  } catch {
-    return formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
-  }
+  return readStoredBoundarySecondsInput(window.localStorage);
 }
 
 function readBoundaryNudgeSecondsInput() {
-  try {
-    const stored = window.localStorage.getItem(BOUNDARY_NUDGE_SECONDS_STORAGE_KEY);
-    return stored?.trim()
-      ? formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(stored))
-      : formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
-  } catch {
-    return formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
-  }
+  return readStoredBoundaryNudgeSecondsInput(window.localStorage);
 }
 
 function readVideoSplitPercent() {
-  try {
-    const stored = window.localStorage.getItem(VIDEO_SPLIT_STORAGE_KEY);
-    return normalizeVideoSplitPercent(stored);
-  } catch {
-    return DEFAULT_VIDEO_SPLIT_PERCENT;
-  }
+  return readStoredVideoSplitPercent(window.localStorage);
 }
 
 function readStoredWaveformDisplayModes(): WaveformDisplayModes {
   try {
-    return readWaveformDisplayModes(window.localStorage);
+    const preferences = readModePreferences(window.localStorage);
+    return {
+      cut: preferences.cut.waveformDisplayMode,
+      sub: preferences.sub.waveformDisplayMode,
+    };
   } catch {
     return { ...DEFAULT_WAVEFORM_DISPLAY_MODES };
   }
@@ -4387,11 +4005,7 @@ function readStoredCutWaveformAmplitudeProfile(): CutWaveformAmplitudeProfile {
 }
 
 function readCreateSourceFolder() {
-  try {
-    return window.localStorage.getItem(CREATE_SOURCE_FOLDER_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
+  return readStoredCreateSourceFolder(window.localStorage);
 }
 
 function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
@@ -4405,44 +4019,6 @@ function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
     case "symmetric-peak":
       return tr("settings.symmetricPeak");
   }
-}
-
-function normalizeVideoSplitPercent(value: unknown) {
-  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
-    return DEFAULT_VIDEO_SPLIT_PERCENT;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(parsed, MIN_VIDEO_SPLIT_PERCENT, MAX_VIDEO_SPLIT_PERCENT)
-    : DEFAULT_VIDEO_SPLIT_PERCENT;
-}
-
-function parseBoundarySeconds(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? clamp(Math.round(parsed), 1, 60) : DEFAULT_BOUNDARY_SECONDS;
-}
-
-function formatBoundarySeconds(value: number) {
-  return String(Math.round(value));
-}
-
-function normalizeBoundarySecondsInput(value: string) {
-  if (value.trim() === "") return "";
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) return formatBoundarySeconds(parseBoundarySeconds(value));
-  const digits = value.replace(/\D/g, "");
-  return digits ? formatBoundarySeconds(parseBoundarySeconds(digits)) : "";
-}
-
-function parseBoundaryNudgeSeconds(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(Math.round(parsed * 10) / 10, MIN_SEGMENT_SECONDS, 60)
-    : DEFAULT_BOUNDARY_NUDGE_SECONDS;
-}
-
-function formatBoundaryNudgeSeconds(value: number) {
-  return parseBoundaryNudgeSeconds(String(value)).toFixed(1);
 }
 
 function segmentTitle(segment: Segment) {

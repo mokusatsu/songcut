@@ -59,6 +59,22 @@ export function nearestRhythmTime(grid: readonly RhythmGridPoint[], value: numbe
   );
 }
 
+/** Finds the nearest rhythm point strictly inside a candidate boundary range. */
+export function nearestRhythmTimeInRange(
+  grid: readonly RhythmGridPoint[],
+  value: number,
+  minimum: number,
+  maximum: number,
+): number | null {
+  const times = rhythmGridTimes(grid).filter(
+    (time) => time > minimum + EPSILON && time < maximum - EPSILON,
+  );
+  if (!times.length || !Number.isFinite(value)) return null;
+  return times.reduce((best, candidate) =>
+    Math.abs(candidate - value) < Math.abs(best - value) ? candidate : best
+  );
+}
+
 export function adjacentRhythmTime(
   grid: readonly RhythmGridPoint[],
   value: number,
@@ -69,6 +85,21 @@ export function adjacentRhythmTime(
   const valid = rhythmGridTimes(grid).filter((time) => time >= minimum - EPSILON && time <= maximum + EPSILON);
   if (direction > 0) return valid.find((time) => time > value + EPSILON) ?? null;
   return [...valid].reverse().find((time) => time < value - EPSILON) ?? null;
+}
+
+/** Moves one index from the nearest grid point, matching the subtitle nudge contract. */
+export function nudgedRhythmTime(
+  grid: readonly RhythmGridPoint[],
+  value: number,
+  direction: -1 | 1,
+): number | null {
+  const times = rhythmGridTimes(grid);
+  if (!times.length || !Number.isFinite(value)) return null;
+  let nearestIndex = 0;
+  for (let index = 1; index < times.length; index += 1) {
+    if (Math.abs(times[index] - value) < Math.abs(times[nearestIndex] - value)) nearestIndex = index;
+  }
+  return times[Math.max(0, Math.min(times.length - 1, nearestIndex + direction))] ?? null;
 }
 
 export function isOnRhythmGrid(grid: readonly RhythmGridPoint[], value: number): boolean {

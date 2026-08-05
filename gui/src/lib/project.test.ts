@@ -6,7 +6,10 @@ import {
   composeProjectDocument,
   createProjectDocument,
   filenameTemplateFromProject,
+  isProjectOperationCompatible,
+  normalizeProjectDocument,
   normalizeInterruptedOperation,
+  projectOwnedSettingsFromDocument,
   projectMode,
   subtitleStateFromProject,
   transcriptSettingsAreStale,
@@ -83,6 +86,58 @@ describe("sub-mode project", () => {
     expect(subtitleStateFromProject(document).lanes).toHaveLength(1);
     expect(subtitleStateFromProject(document).lanes[0].style.alignment).toBe(2);
     expect(() => assertProjectDocument(document)).not.toThrow();
+  });
+
+  it("composes a strict Sub document without Cut payloads", () => {
+    const base = createProjectDocument("C:\\media\\archive.mp4.sub.songcut", source, videoInfo, "sub");
+    const document = composeProjectDocument(base, {
+      revision: 1,
+      videoPath: source.path,
+      duration: videoInfo.duration,
+      guideText: "",
+      waveform: [],
+      analysis: null,
+      segments: [],
+      exportCandidates: [],
+      analysisDevice: "auto",
+      whisper: DEFAULT_WHISPER_SETTINGS,
+      filenameTemplate: DEFAULT_FILENAME_TEMPLATE,
+      selectedSegmentId: null,
+      currentTime: 0,
+      zoomIndex: 0,
+      operation: null,
+      mode: "sub",
+      subtitle: subtitleStateFromProject(base),
+    });
+
+    expect(document.mode).toBe("sub");
+    expect(document.subtitle).toBeDefined();
+    expect(document.analysis_snapshot).toBeNull();
+    expect(document.segments).toEqual([]);
+    expect(document.export_candidates).toEqual([]);
+    expect(() => assertProjectDocument(document)).not.toThrow();
+  });
+});
+
+describe("project mode schema boundary", () => {
+  it("keeps legacy mode-omitted v3 projects as Cut and offers a strict normalized view", () => {
+    const legacy = createProjectDocument("C:\\media\\archive.mp4.songcut", source, videoInfo);
+    delete legacy.mode;
+
+    expect(projectMode(legacy)).toBe("cut");
+    expect(() => assertProjectDocument(legacy)).not.toThrow();
+    const normalized = normalizeProjectDocument(legacy);
+    expect(normalized.mode).toBe("cut");
+    expect(legacy).not.toHaveProperty("mode");
+    expect(normalized).not.toBe(legacy);
+  });
+
+  it("accepts only operation kinds owned by the active mode", () => {
+    expect(isProjectOperationCompatible("cut", { kind: "analysis", status: "running" })).toBe(true);
+    expect(isProjectOperationCompatible("cut", { kind: "lyrics-analysis", status: "running" })).toBe(false);
+    expect(isProjectOperationCompatible("sub", { kind: "subtitle-export", status: "running" })).toBe(true);
+    expect(isProjectOperationCompatible("sub", { kind: "export", status: "running" })).toBe(false);
+    expect(isProjectOperationCompatible("sub", null)).toBe(true);
   });
 });
 
@@ -167,6 +222,11 @@ describe("project document composition", () => {
     expect(document.settings.whisper.language).toBe("ja");
     expect(document.settings.export?.filename_template).toBe("{title}_{start}");
     expect(filenameTemplateFromProject(document)).toBe("{title}_{start}");
+    expect(projectOwnedSettingsFromDocument(document)).toMatchObject({
+      analysisDevice: "gpu",
+      filenameTemplate: "{title}_{start}",
+      whisper: { enabled: true, model: "small" },
+    });
     expect(analysisFromProject(document)?.segments[0].title).toBe("Song");
     expect(analysisFromProject(document)?.boundary_refinement?.version).toBe("rms-otsu-boundary-v1");
   });
@@ -276,10 +336,13 @@ describe("project document composition", () => {
     expect(transcriptSettingsAreStale(segment, { ...matchingSettings, language: "auto" })).toBe(true);
   });
 
-  it("turns a persisted running operation into an interrupted operation", () => {
-    expect(normalizeInterruptedOperation({ kind: "analysis", status: "running" })).toEqual({
-      kind: "analysis",
-      status: "interrupted",
-    });
-  });
+  it.each(["analysis", "transcription", "export", "lyrics-analysis", "subtitle-export"] as const)(
+    "turns a persisted running %s operation into an interrupted operation",
+    (kind) => {
+      expect(normalizeInterruptedOperation({ kind, status: "running" })).toEqual({
+        kind,
+        status: "interrupted",
+      });
+    }
+  );
 });
