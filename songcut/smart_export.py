@@ -8,12 +8,12 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from .ffmpeg_tools import ffprobe_json
+from .ffmpeg_process import CREATE_NO_WINDOW, run_ffmpeg_sync
 
 
 MIN_SPAN_SECONDS = 0.001
 DEFAULT_SOURCE_VIDEO_BITRATE = 2_000_000
 MIN_REENCODE_BITRATE = 300_000
-CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 LOGGER = logging.getLogger(__name__)
 
 
@@ -590,21 +590,16 @@ def _mux_video_audio(ffmpeg: Path, video: Path, audio: Path, target: Path, plan:
 
 def _run_ffmpeg(command: list[str]) -> None:
     try:
-        subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-        )
+        run_ffmpeg_sync(command, process_module=subprocess)
     except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        if not stderr:
+            stderr = "\n".join(getattr(exc, "ffmpeg_output_tail", ()))
         LOGGER.error(
             "FFmpeg command failed with exit code %s: %s\nstderr:\n%s",
             exc.returncode,
             command,
-            (exc.stderr or "").strip(),
+            stderr,
         )
         raise
 
@@ -853,6 +848,8 @@ def _parse_ratio(value: object) -> float:
 
 def _exception_detail(exc: BaseException) -> str:
     stderr = str(getattr(exc, "stderr", "") or "").strip()
+    if not stderr:
+        stderr = "\n".join(str(line) for line in getattr(exc, "ffmpeg_output_tail", ()) if str(line).strip())
     if stderr:
         return f"{exc}; stderr: {stderr}"
     return str(exc)

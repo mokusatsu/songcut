@@ -22,14 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import { tr } from "@/i18n";
-import {
-  startLyricsAnalysis,
-  startSubtitleExport,
-  startSubtitleRender,
-  waitForJob,
-  type SubtitleRenderResultItem,
-  type WhisperSettings,
-} from "@/lib/api";
+import type { WhisperSettings } from "@/lib/api";
 import {
   SUBTITLE_EFFECTS,
   defaultSubtitleEffectParams,
@@ -38,11 +31,9 @@ import {
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
 import {
-  createPendingTask,
-  failTask,
-  type TaskSlot,
-} from "@/lib/useTaskRegistry";
-import type { OperationRunner } from "@/lib/useOperationRunner";
+  selectedSubtitleSegment,
+  type SubOperationCoordinator,
+} from "@/lib/useSubOperations";
 import {
   readSubtitleStylePresets,
   upsertSubtitleStylePreset,
@@ -51,13 +42,11 @@ import {
 import {
   activeSegmentsAt,
   addFourBeatSegment,
-  analysisLinesToSegments,
   createLyricsLane,
   labelStackLevels,
   normalizeSubtitleStyle,
   SUBTITLE_STYLE_LIMITS,
   subtitleRenderSignature,
-  type LyricsAnalysisResult,
   type LyricsLane,
   type LyricsSegment,
   type SubtitleProjectState,
@@ -66,55 +55,25 @@ import {
 import { clamp, formatTime } from "@/lib/time";
 import { useBoundaryDrag } from "@/lib/useBoundaryDrag";
 import type { ModeController } from "@/lib/modeController";
+import type { ModePanelViewModel } from "@/lib/modeViewModel";
 import type { WaveformPhase } from "@/lib/useProgressiveWaveform";
-import type { JobRecord, VideoInfo, WaveformDisplayMode, WaveformPoint } from "@/types";
+import type { WaveformDisplayMode, WaveformPoint } from "@/types";
 
 type Props = {
-  apiBaseUrl: string;
-  videoPath: string;
-  sourceAvailable: boolean;
-  videoInfo: VideoInfo | null;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: WaveformPhase;
-  waveformProgress: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  duration: number;
-  currentTime: number;
-  playing: boolean;
-  zoom: number;
-  focusRequest: number;
-  editing: boolean;
+  view: ModePanelViewModel;
   state: SubtitleProjectState;
   controller: ModeController<LyricsSegment, string>;
   whisperSettings: WhisperSettings;
   onPrepareWhisperModel: () => Promise<void> | undefined;
   onPrepareDemucsModel: () => Promise<void> | undefined;
   onPrepareMmsModel: () => Promise<void> | undefined;
-  saveStatus: string;
   taskStatus: React.ReactNode;
-  analysisJob: JobRecord | null;
-  exportJob: JobRecord | null;
-  operationRunner: OperationRunner;
+  operations: SubOperationCoordinator;
   onStateChange: (state: SubtitleProjectState) => void;
-  onSeek: (time: number) => void;
-  onPlay: () => void;
-  onPause: () => void;
-  onScrub: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-  onHandleEditingChange: (editing: boolean) => void;
   onFocusSegment: (segment: LyricsSegment) => void;
-  boundarySecondsInput: string;
-  onBoundarySecondsInput: (value: string) => void;
-  onBoundarySecondsBlur: () => void;
   onLoad: () => void;
   onSettings: () => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
   onMessage: (message: string) => void;
-  onJob: (slot: TaskSlot, job: JobRecord | null) => void;
-  onRenderCaches: (items: SubtitleRenderResultItem[]) => void;
   /** Functional boundary preview keeps rapid moves based on the latest draft. */
   onBoundaryPreview: (
     laneId: string,
@@ -138,14 +97,14 @@ export function SubModePanel(props: Props) {
   const [styleLaneId, setStyleLaneId] = useState<string | null>(null);
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [timingTarget, setTimingTarget] = useState<{ laneId: string; segmentId: string } | null>(null);
-  const [busy, setBusy] = useState<"analysis" | "export" | null>(null);
   const [preparingModel, setPreparingModel] = useState(false);
   const [analysisProgressOpen, setAnalysisProgressOpen] = useState(false);
   const [exportProgressOpen, setExportProgressOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
   const [fontListError, setFontListError] = useState<string | null>(null);
-  const renderRequestVersionRef = useRef(0);
-  const selected = selectedSegment(props.state);
+  const busy = props.operations.busy;
+  const media = props.view.media;
+  const selected = selectedSubtitleSegment(props.state);
   const activeLane = props.state.lanes.find((lane) => lane.id === props.state.active_lane_id) ?? props.state.lanes[0];
   const styleLane = props.state.lanes.find((lane) => lane.id === styleLaneId) ?? null;
   const timingLane = timingTarget
@@ -160,8 +119,8 @@ export function SubModePanel(props: Props) {
     : -1;
   const canAddSegment = props.controller.capabilities.canAddSegment;
   const renderPlan = useMemo(() => {
-    const width = props.videoInfo?.video.width || 1920;
-    const height = props.videoInfo?.video.height || 1080;
+    const width = media.videoInfo?.video.width || 1920;
+    const height = media.videoInfo?.video.height || 1080;
     return props.state.lanes.flatMap((lane) =>
       lane.segments.map((segment) => ({
         segment,
@@ -169,67 +128,36 @@ export function SubModePanel(props: Props) {
         signature: subtitleRenderSignature(segment.text, lane.style, width, height),
       }))
     );
-  }, [props.state.lanes, props.videoInfo?.video.width, props.videoInfo?.video.height]);
+  }, [props.state.lanes, media.videoInfo?.video.width, media.videoInfo?.video.height]);
   const renderPlanKey = renderPlan
     .map(({ segment, signature }) => `${segment.id}\u0000${signature}\u0000${segment.render_cache?.signature ?? ""}`)
     .join("\u0001");
 
   useEffect(() => {
-    if (!props.apiBaseUrl || !props.videoInfo) return;
+    if (!media.videoInfo) return;
     const missing = renderPlan.filter(
       ({ segment, signature }) => segment.render_cache?.signature !== signature
     );
     if (!missing.length) return;
-    const version = renderRequestVersionRef.current + 1;
-    renderRequestVersionRef.current = version;
     const timer = window.setTimeout(() => {
-      const width = props.videoInfo?.video.width || 1920;
-      const height = props.videoInfo?.video.height || 1080;
-      let trackedJob = createPendingTask("subtitle-render", tr("sub.subtitleRenderPreparing"));
-      props.onJob("subtitle-render", trackedJob);
-      void startSubtitleRender(
-        props.apiBaseUrl,
+      const width = media.videoInfo?.video.width || 1920;
+      const height = media.videoInfo?.video.height || 1080;
+      void props.operations.renderSubtitles({
         width,
         height,
-        missing.map(({ segment, style, signature }) => ({
+        items: missing.map(({ segment, style, signature }) => ({
           segment_id: segment.id,
           signature,
           text: segment.text,
           style,
-        }))
-      )
-        .then((started) => {
-          if (renderRequestVersionRef.current === version) {
-            trackedJob = started;
-            props.onJob("subtitle-render", started);
-          }
-          return waitForJob<{ items: SubtitleRenderResultItem[] }>(
-            props.apiBaseUrl,
-            started.id,
-            (job) => {
-              if (renderRequestVersionRef.current === version) {
-                trackedJob = job;
-                props.onJob("subtitle-render", job);
-              }
-            },
-            250
-          );
-        })
-        .then((result) => {
-          if (renderRequestVersionRef.current === version) props.onRenderCaches(result.items);
-        })
-        .catch((error) => {
-          if (renderRequestVersionRef.current === version) {
-            props.onJob(
-              "subtitle-render",
-              failTask(trackedJob, error, tr("sub.subtitleRenderFailed"))
-            );
-            props.onMessage(`${tr("sub.subtitleRenderFailed")}: ${String(error)}`);
-          }
-        });
+        })),
+      });
     }, 300);
-    return () => window.clearTimeout(timer);
-  }, [props.apiBaseUrl, props.videoInfo, renderPlanKey]);
+    return () => {
+      window.clearTimeout(timer);
+      props.operations.invalidateSubtitleRender();
+    };
+  }, [media.videoInfo, props.operations, renderPlanKey]);
 
   useEffect(() => {
     if (!styleLane || systemFonts || fontListError) return;
@@ -247,45 +175,10 @@ export function SubModePanel(props: Props) {
   }, [styleLane, systemFonts, fontListError]);
 
   async function analyzeLyrics() {
-    if (!props.apiBaseUrl || !props.videoPath || !lyricsText.trim()) return;
+    if (!lyricsText.trim()) return;
     setLyricsOpen(false);
     setAnalysisProgressOpen(true);
-    setBusy("analysis");
-    try {
-      await props.operationRunner.run({
-        slot: "lyrics-analysis",
-        operation: {
-          kind: "lyrics-analysis",
-          settings: { ...props.whisperSettings },
-        },
-        pendingMessage: tr("sub.lyricsAnalysisPreparing"),
-        failureMessage: tr("sub.lyricsAnalysisFailed"),
-        start: () =>
-          startLyricsAnalysis(
-            props.apiBaseUrl,
-            props.videoPath,
-            lyricsText,
-            props.whisperSettings
-          ),
-        poll: (jobId, onProgress) =>
-          waitForJob<LyricsAnalysisResult>(props.apiBaseUrl, jobId, onProgress),
-        onSuccess: (result) => {
-          const nextState = placeAnalysisResult(props.state, result);
-          props.onStateChange(nextState);
-          const nextSelected = selectedSegment(nextState)?.segment;
-          if (nextSelected) props.onFocusSegment(nextSelected);
-          props.onMessage(
-            result.beat_warning
-              ? tr("sub.lyricsAnalysisCompleteWithBeatWarning", { warning: result.beat_warning })
-              : tr("sub.lyricsAnalysisComplete", { lines: result.lines.length, bpm: result.tempo_bpm.toFixed(1) })
-          );
-        },
-      });
-    } catch (error) {
-      props.onMessage(`${tr("sub.lyricsAnalysisFailed")}: ${String(error)}`);
-    } finally {
-      setBusy(null);
-    }
+    await props.operations.analyzeLyrics(lyricsText);
   }
 
   async function openLyricsDialog() {
@@ -305,38 +198,16 @@ export function SubModePanel(props: Props) {
   }
 
   async function exportSubtitles() {
-    if (!props.apiBaseUrl || !props.videoPath || !props.videoInfo) return;
-    const videoInfo = props.videoInfo;
+    if (!media.videoInfo) return;
+    const videoInfo = media.videoInfo;
     const outputDir = await window.songcut.selectOutputDirectory();
     if (!outputDir) return;
     setExportProgressOpen(true);
-    setBusy("export");
-    try {
-      await props.operationRunner.run({
-        slot: "subtitle-export",
-        operation: { kind: "subtitle-export" },
-        pendingMessage: tr("sub.subtitleExportPreparing"),
-        failureMessage: tr("sub.subtitleExportFailed"),
-        start: () =>
-          startSubtitleExport(
-            props.apiBaseUrl,
-            props.videoPath,
-            outputDir,
-            videoInfo.video.width || 1920,
-            videoInfo.video.height || 1080,
-            props.state.lanes
-          ),
-        poll: (jobId, onProgress) =>
-          waitForJob<{ video: string; output_dir: string }>(props.apiBaseUrl, jobId, onProgress),
-        onSuccess: (result) => {
-          props.onMessage(tr("sub.subtitleExportComplete", { video: result.video }));
-        },
-      });
-    } catch (error) {
-      props.onMessage(`${tr("sub.subtitleExportFailed")}: ${String(error)}`);
-    } finally {
-      setBusy(null);
-    }
+    await props.operations.exportSubtitles(
+      outputDir,
+      videoInfo.video.width || 1920,
+      videoInfo.video.height || 1080,
+    );
   }
 
   function addLane(alignment: number) {
@@ -385,7 +256,7 @@ export function SubModePanel(props: Props) {
         </Button>
         <Button
           onClick={() => void openLyricsDialog()}
-          disabled={!props.sourceAvailable || !props.apiBaseUrl || Boolean(busy) || preparingModel}
+          disabled={!media.sourceAvailable || Boolean(busy) || preparingModel}
         >
           <Wand2 size={16} />
           {tr("common.analyze")}
@@ -393,7 +264,7 @@ export function SubModePanel(props: Props) {
         <Button
           variant="secondary"
           onClick={() => void exportSubtitles()}
-          disabled={!props.sourceAvailable || !hasSubtitleSegments(props.state) || Boolean(busy)}
+          disabled={!media.sourceAvailable || !hasSubtitleSegments(props.state) || Boolean(busy)}
         >
           <Save size={16} />
           {tr("common.export")}
@@ -422,36 +293,7 @@ export function SubModePanel(props: Props) {
           {tr("common.settings")}
         </Button>
         <div className="spacer" />
-        <EditorTransportControls
-          saveStatus={props.saveStatus}
-          boundaryPreview={{
-            disabled: !props.controller.capabilities.canPlayBoundary,
-            value: props.boundarySecondsInput,
-            onChange: props.onBoundarySecondsInput,
-            onBlur: props.onBoundarySecondsBlur,
-            onStart: () => props.controller.actions.playBoundary("start"),
-            onEnd: () => props.controller.actions.playBoundary("end"),
-          }}
-          boundaryNudge={{
-            kind: "rhythm-grid",
-            disabled: !props.controller.capabilities.canNudgeBoundary,
-            onLeft: () => props.controller.actions.nudge(-1),
-            onRight: () => props.controller.actions.nudge(1),
-          }}
-          playback={{
-            onStart: () => props.onSeek(0),
-            onPrevious: () => props.controller.actions.jumpBoundary(-1),
-            onPlay: props.onPlay,
-            onPause: props.onPause,
-            onNext: () => props.controller.actions.jumpBoundary(1),
-          }}
-          zoom={{
-            value: props.zoom,
-            onIn: props.onZoomIn,
-            onOut: props.onZoomOut,
-            onReset: props.onZoomReset,
-          }}
-        />
+        <EditorTransportControls {...props.view.transport} />
       </header>
       {props.taskStatus}
       <div className="sub-status-row">
@@ -467,18 +309,18 @@ export function SubModePanel(props: Props) {
       </div>
       <LyricsTimelineEditor
         state={props.state}
-        waveform={props.waveform}
-        progressiveWaveformChunks={props.progressiveWaveformChunks}
-        waveformPhase={props.waveformPhase}
-        waveformProgress={props.waveformProgress}
-        waveformDisplayMode={props.waveformDisplayMode}
-        duration={props.duration}
-        currentTime={props.currentTime}
-        playing={props.playing}
-        zoom={props.zoom}
-        focusRequest={props.focusRequest}
+        waveform={media.waveform}
+        progressiveWaveformChunks={media.progressiveWaveformChunks}
+        waveformPhase={media.waveformPhase}
+        waveformProgress={media.waveformProgress}
+        waveformDisplayMode={media.waveformDisplayMode}
+        duration={media.duration}
+        currentTime={media.currentTime}
+        playing={media.playing}
+        zoom={media.zoom}
+        focusRequest={media.focusRequest}
         selectedSegment={selected?.segment ?? null}
-        editing={props.editing}
+        editing={media.editing}
         editingSegmentId={editingSegmentId}
         onEditingSegmentId={setEditingSegmentId}
         onStateChange={props.onStateChange}
@@ -487,10 +329,10 @@ export function SubModePanel(props: Props) {
         onBoundaryCommit={props.onBoundaryCommit}
         onStyle={(laneId) => setStyleLaneId(laneId)}
         onRemoveLane={removeLane}
-        onSeek={props.onSeek}
-        onScrub={props.onScrub}
-        onSeekingChange={props.onSeekingChange}
-        onHandleEditingChange={props.onHandleEditingChange}
+        onSeek={media.onSeek}
+        onScrub={media.onScrub}
+        onSeekingChange={media.onSeekingChange}
+        onHandleEditingChange={media.onHandleEditingChange}
         onSelectSegment={(laneId, segment) => props.controller.actions.select(segment, laneId)}
         onEditTiming={(laneId, segmentId) => setTimingTarget({ laneId, segmentId })}
       />
@@ -509,7 +351,7 @@ export function SubModePanel(props: Props) {
       <JobProgressDialog
         open={analysisProgressOpen}
         title={tr("sub.lyricsAnalyzeTitle")}
-        job={props.analysisJob}
+        job={props.operations.analysisJob}
         pendingMessage={tr("sub.lyricsAnalysisPreparing")}
         onClose={() => setAnalysisProgressOpen(false)}
         className="job-progress-dialog"
@@ -519,7 +361,7 @@ export function SubModePanel(props: Props) {
       <JobProgressDialog
         open={exportProgressOpen}
         title={tr("sub.subtitleExportTitle")}
-        job={props.exportJob}
+        job={props.operations.exportJob}
         pendingMessage={tr("sub.subtitleExportPreparing")}
         onClose={() => setExportProgressOpen(false)}
         className="job-progress-dialog"
@@ -545,11 +387,11 @@ export function SubModePanel(props: Props) {
         open={Boolean(timingLane && timingSegment)}
         mode="sub"
         segment={timingSegment}
-        mediaDuration={props.duration}
-        previousEnd={timingSegmentIndex > 0 ? timingOrderedSegments[timingSegmentIndex - 1].end : 0}
+        mediaDuration={media.duration}
+        previousEnd={timingSegmentIndex > 0 ? timingOrderedSegments[timingSegmentIndex - 1].end : undefined}
         nextStart={timingSegmentIndex >= 0 && timingSegmentIndex < timingOrderedSegments.length - 1
           ? timingOrderedSegments[timingSegmentIndex + 1].start
-          : props.duration}
+          : undefined}
         rhythmGrid={props.state.rhythm_grid}
         onClose={() => setTimingTarget(null)}
         onApply={(start, end) => {
@@ -574,7 +416,7 @@ export function SubModePanel(props: Props) {
             ),
           });
           setTimingTarget(null);
-          props.onSeek(start);
+          media.onSeek(start);
         }}
       />
     </>
@@ -1282,73 +1124,6 @@ function subtitleEffectOptionLabel(value: string, fallback: string) {
   const key = `sub.effect.option.${value}`;
   const translated = tr(key);
   return translated === key ? fallback : translated;
-}
-
-function placeAnalysisResult(state: SubtitleProjectState, result: LyricsAnalysisResult): SubtitleProjectState {
-  let lanes = state.lanes.map((lane) => ({ ...lane, segments: [...lane.segments] }));
-  const titleLaneIndex = lanes.findIndex((lane) => lane.segments.some((segment) => segment.source === "title"));
-  let lyricsLaneIndex = lanes.findIndex(
-    (lane, index) => index !== titleLaneIndex && lane.segments.length === 0
-  );
-  if (lyricsLaneIndex < 0 && lanes.length < 3) {
-    lanes.push(createLyricsLane(2, `Lyrics ${lanes.length + 1}`));
-    lyricsLaneIndex = lanes.length - 1;
-  }
-  if (lyricsLaneIndex < 0) {
-    lyricsLaneIndex = Math.max(0, lanes.findIndex((lane, index) => index !== titleLaneIndex && lane.id === state.active_lane_id));
-    if (!window.confirm(tr("sub.laneReplaceConfirm", { lane: lanes[lyricsLaneIndex].name }))) return state;
-  }
-  lanes[lyricsLaneIndex] = {
-    ...lanes[lyricsLaneIndex],
-    segments: analysisLinesToSegments(result),
-  };
-  if (result.title) {
-    let targetIndex = titleLaneIndex;
-    if (targetIndex < 0 && lanes.length < 3) {
-      lanes.push(createLyricsLane(7, "Title"));
-      targetIndex = lanes.length - 1;
-    }
-    if (targetIndex < 0) {
-      targetIndex = lanes.findIndex((_, index) => index !== lyricsLaneIndex);
-      if (targetIndex < 0 || !window.confirm(tr("sub.titleReplaceConfirm", { lane: lanes[targetIndex].name }))) return state;
-    }
-    lanes[targetIndex] = {
-      ...lanes[targetIndex],
-      name: "Title",
-      style: { ...lanes[targetIndex].style, alignment: 7 },
-      segments: [
-        {
-          id: `title-${crypto.randomUUID()}`,
-          text: result.title,
-          start: 0,
-          end: Math.min(5, result.duration),
-          confidence: 1,
-          source: "title",
-          low_confidence_outlier: false,
-          user_edited: false,
-        },
-      ],
-    };
-  }
-  return {
-    ...state,
-    lanes,
-    active_lane_id: lanes[lyricsLaneIndex].id,
-    selected_segment_id: lanes[lyricsLaneIndex].segments[0]?.id ?? null,
-    tempo_bpm: result.tempo_bpm,
-    beat_times: result.beat_times,
-    rhythm_grid: result.rhythm_grid,
-    beat_warning: result.beat_warning,
-    confidence_statistics: result.confidence_statistics,
-  };
-}
-
-function selectedSegment(state: SubtitleProjectState) {
-  for (const lane of state.lanes) {
-    const segment = lane.segments.find((item) => item.id === state.selected_segment_id);
-    if (segment) return { laneId: lane.id, segment };
-  }
-  return null;
 }
 
 function hasSubtitleSegments(state: SubtitleProjectState) {

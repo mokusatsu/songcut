@@ -26,6 +26,7 @@ from .transcription import (
     read_wav_mono_16k,
     select_whisper_runtime,
 )
+from .whisper_execution import WhisperExecutionSession
 
 
 def _ensure_uta_align_path() -> None:
@@ -84,21 +85,15 @@ class OpenVinoWhisperBackend:
         ).Observation
         runtime = select_whisper_runtime(device)
         target_model = ensure_whisper_model(model_key=model_key)
-        self._requested_device = device
-        self._target_model = target_model
-        self._ov_genai = ov_genai
         self._language_code, self._language_token = normalize_whisper_language(language)
-        try:
-            self._pipeline = self._create_pipeline(runtime.device_used)
-            self.device_used = runtime.device_used
-        except Exception:
-            if device.lower() != "auto" or runtime.device_used == "CPU":
-                raise
-            self._pipeline = self._create_pipeline("CPU")
-            self.device_used = "CPU"
-        self._cpu_pipeline: Any | None = (
-            self._pipeline if self.device_used == "CPU" else None
+        self._session = WhisperExecutionSession.from_openvino(
+            model_path=target_model,
+            runtime=runtime,
+            requested_device=device,
+            language_token=self._language_token,
+            pipeline_options={"word_timestamps": True},
         )
+        self.device_used = self._session.device_used
         self._audio_cache: dict[Path, np.ndarray] = {}
         self._recognized_texts: list[str] = []
         self._progress_callback = progress_callback
@@ -160,8 +155,6 @@ class OpenVinoWhisperBackend:
                 "return_timestamps": True,
                 "word_timestamps": True,
             }
-            if self._language_token:
-                options["language"] = self._language_token
             initial_prompt = request.initial_prompt or request.prompt
             if initial_prompt and request.hotwords:
                 raise ValueError("initial_prompt and hotwords cannot be used together")
@@ -171,6 +164,7 @@ class OpenVinoWhisperBackend:
                 options["hotwords"] = request.hotwords
 
             decoded = self._generate(interval_audio, options)
+            self.device_used = self._session.device_used
             decoded_text = str(
                 getattr(decoded, "texts", [""])[0]
                 if hasattr(decoded, "texts")
@@ -179,17 +173,13 @@ class OpenVinoWhisperBackend:
             if decoded_text:
                 self._recognized_texts.append(decoded_text)
 
-            chunks = getattr(decoded, "chunks", None) or []
+            chunks = self._session.normalize_decoded_chunks(decoded, interval_duration)
             for chunk in chunks:
-                text = str(getattr(chunk, "text", "")).strip()
+                text = chunk.text
                 if not text:
                     continue
-                start = interval_offset + _safe_timestamp(
-                    getattr(chunk, "start_ts", None), 0.0, interval_duration
-                )
-                end = interval_offset + _safe_timestamp(
-                    getattr(chunk, "end_ts", None), interval_duration, interval_duration
-                )
+                start = interval_offset + chunk.start
+                end = interval_offset + chunk.end
                 observations.append(
                     self._observation(
                         request,
@@ -201,19 +191,17 @@ class OpenVinoWhisperBackend:
                     )
                 )
 
-            words = getattr(decoded, "words", None) or []
+            words = self._session.normalize_chunks(
+                getattr(decoded, "words", None),
+                interval_duration,
+                text_attribute="word",
+            )
             for word in words:
-                text = str(
-                    getattr(word, "word", getattr(word, "text", ""))
-                ).strip()
+                text = word.text
                 if not text:
                     continue
-                start = interval_offset + _safe_timestamp(
-                    getattr(word, "start_ts", None), 0.0, interval_duration
-                )
-                end = interval_offset + _safe_timestamp(
-                    getattr(word, "end_ts", None), interval_duration, interval_duration
-                )
+                start = interval_offset + word.start
+                end = interval_offset + word.end
                 observations.append(
                     self._observation(
                         request,
@@ -230,25 +218,10 @@ class OpenVinoWhisperBackend:
             self._progress_callback(self._request_count)
         return observations
 
-    def _create_pipeline(self, device: str) -> Any:
-        return self._ov_genai.WhisperPipeline(
-            str(self._target_model),
-            device,
-            word_timestamps=True,
-        )
-
     def _generate(self, audio: np.ndarray, options: dict[str, object]) -> Any:
-        try:
-            return self._pipeline.generate(audio, **options)
-        except Exception:
-            if self._requested_device.lower() != "auto" or self.device_used == "CPU":
-                raise
-            if self._cpu_pipeline is None:
-                self._cpu_pipeline = self._create_pipeline("CPU")
-            result = self._cpu_pipeline.generate(audio, **options)
-            self._pipeline = self._cpu_pipeline
-            self.device_used = "CPU"
-            return result
+        result = self._session.generate(audio, options)
+        self.device_used = self._session.device_used
+        return result
 
     def _observation(
         self,
@@ -342,16 +315,6 @@ def align_lyrics_with_uta(
         device_used=backend.device_used,
         diagnostics=result.diagnostics,
     )
-
-
-def _safe_timestamp(value: object, default: float, duration: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(number) or number < 0:
-        return default
-    return min(number, duration)
 
 
 def _decoded_confidence(value: object, default: float) -> float:

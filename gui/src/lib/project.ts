@@ -3,7 +3,7 @@ import {
   isProjectOperationKindForMode,
   normalizeProjectDocument as normalizeSchemaProjectDocument,
 } from "../../electron/project-schema";
-import { WAVEFORM_BINARY_ENCODING, decodeWaveformPoints, encodeWaveformPoints } from "../../electron/waveform-codec";
+import { decodeWaveformPoints } from "../../electron/waveform-codec";
 import type {
   CutProjectDocumentV3,
   CutProjectOperation,
@@ -16,7 +16,6 @@ import type {
   SourceIdentity,
   SubProjectDocumentV3,
   SubProjectOperation,
-  WhisperSettings as ProjectWhisperSettings,
 } from "../../electron/project-schema";
 import type { WhisperSettings } from "@/lib/api";
 import { DEFAULT_FILENAME_TEMPLATE } from "@/lib/exportNaming";
@@ -29,20 +28,19 @@ import {
   validateSubtitleState,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
+import {
+  composeCutProjectDocument,
+  composeSubProjectDocument,
+  type CutProjectComposeState,
+  type SubProjectComposeState,
+} from "@/lib/projectAdapters";
+import { createBaseProjectDocument, DEFAULT_WHISPER_SETTINGS as BASE_DEFAULT_WHISPER_SETTINGS } from "@/lib/projectBase";
 
 export type ProjectSaveStatus = "idle" | "saving" | "saved" | "recovery-only" | "save-failed" | "read-only";
 
 export { projectOwnedSettingsFromDocument };
 
-export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = {
-  enabled: false,
-  model: "whisper-large-v3-turbo-int8-ov",
-  language: "ja",
-  device: "auto",
-  demucsDevice: "auto",
-  mmsDevice: "auto",
-  lyricsAlignmentAlgorithm: "songcut-standard",
-};
+export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = BASE_DEFAULT_WHISPER_SETTINGS;
 
 export function createProjectDocument(
   projectPath: string,
@@ -50,38 +48,7 @@ export function createProjectDocument(
   videoInfo: VideoInfo,
   mode: AppMode = "cut",
 ): ProjectDocumentV1 {
-  const now = new Date().toISOString();
-  return {
-    format: "songcut-project",
-    schema_version: 3,
-    project_id: crypto.randomUUID(),
-    revision: 0,
-    created_at: now,
-    updated_at: now,
-    mode,
-    source: {
-      absolute_path: source.path,
-      relative_path: source.filename,
-      filename: source.filename,
-      size_bytes: source.size_bytes,
-      mtime_ms: source.mtime_ms,
-      duration_seconds: videoInfo.duration,
-      fingerprint: source.fingerprint,
-    },
-    guide_text: "",
-    settings: {
-      analysis_device: "auto",
-      whisper: { ...DEFAULT_WHISPER_SETTINGS },
-      export: { filename_template: DEFAULT_FILENAME_TEMPLATE },
-    },
-    waveform_snapshot: null,
-    analysis_snapshot: null,
-    segments: [],
-    export_candidates: [],
-    view_state: { selected_segment_id: null, current_time: 0, zoom_index: 0 },
-    operation: null,
-    subtitle: mode === "sub" ? createDefaultSubtitleState() : undefined,
-  };
+  return createBaseProjectDocument(projectPath, source, videoInfo, mode);
 }
 
 export function composeProjectDocument(
@@ -114,77 +81,34 @@ export function composeProjectDocument(
     filenameTemplate: state.filenameTemplate,
     subtitle: state.subtitle,
   };
-  const segmentIds = new Set(state.segments.map((segment) => segment.id));
-  const exportCandidates: ProjectExportCandidate[] = state.exportCandidates
-    .map((candidate, index) => {
-      const segment = state.segments[index];
-      return {
-        ...candidate,
-        segment_id: segment?.id ?? candidate.id,
-        title: segment?.title?.trim() || candidate.title,
-        start: segment?.start ?? candidate.start,
-        end: segment?.end ?? candidate.end,
-        duration: segment ? segment.end - segment.start : candidate.duration,
-        checked: segment?.checked ?? candidate.checked,
-      };
-    })
-    .filter((candidate) => segmentIds.has(candidate.segment_id));
-  const analysis = state.analysis;
-  const priorWaveform = base.waveform_snapshot;
-  const waveform = state.waveform;
-  return {
-    ...base,
+  const baseState = {
     revision: state.revision,
-    updated_at: new Date().toISOString(),
-    mode: state.mode ?? base.mode ?? "cut",
-    source: {
-      ...base.source,
-      absolute_path: state.videoPath || base.source.absolute_path,
-      duration_seconds: state.duration || base.source.duration_seconds,
-    },
-    guide_text: state.guideText,
-    settings: {
-      analysis_device: projectSettings.analysisDevice,
-      whisper: { ...projectSettings.whisper } as ProjectWhisperSettings,
-      export: { filename_template: projectSettings.filenameTemplate },
-    },
-    waveform_snapshot: waveform.length
-      ? {
-          schema_version: 2,
-          generator: priorWaveform?.generator ?? "pcm-4k-mono-stream-v1",
-          source_fingerprint: base.source.fingerprint.value,
-          duration_seconds: state.duration || base.source.duration_seconds,
-          sample_rate: priorWaveform?.sample_rate || 4000,
-          channels: priorWaveform?.channels || 1,
-          completed_at: priorWaveform?.completed_at ?? base.updated_at,
-          encoding: WAVEFORM_BINARY_ENCODING,
-          point_count: waveform.length,
-          data_base64: encodeWaveformPoints(waveform)
-        }
-      : null,
-    analysis_snapshot: analysis
-      ? {
-          timestamp_source: analysis.timestamp_source,
-          backend: analysis.backend,
-          device_requested: analysis.device_requested ?? projectSettings.analysisDevice,
-          device_used: analysis.device_used,
-          model_versions: analysis.model_versions ?? {},
-          elapsed_seconds: analysis.elapsed_seconds ?? 0,
-          frame_scores: analysis.frame_scores ?? [],
-          raw_segments: analysis.raw_segments ?? [],
-          boundary_refinement: analysis.boundary_refinement,
-        }
-      : null,
-    segments: state.segments,
-    export_candidates: exportCandidates,
-    view_state: {
-      selected_segment_id: state.selectedSegmentId,
-      current_time: Math.max(0, state.currentTime),
-      zoom_index: Math.max(0, Math.round(state.zoomIndex)),
-    },
-    operation: state.operation,
-    subtitle: projectSettings.subtitle ?? base.subtitle,
+    videoPath: state.videoPath,
+    duration: state.duration,
+    waveform: state.waveform,
+    analysisDevice: projectSettings.analysisDevice,
+    whisper: projectSettings.whisper,
+    filenameTemplate: projectSettings.filenameTemplate,
+    selectedSegmentId: state.selectedSegmentId,
+    currentTime: state.currentTime,
+    zoomIndex: state.zoomIndex,
   };
+  const mode = state.mode ?? base.mode ?? "cut";
+  if (mode === "sub") {
+    return composeSubProjectDocument(base, {
+      ...baseState,
+      subtitle: projectSettings.subtitle ?? subtitleStateFromProject(base),
+      operation: state.operation as SubProjectComposeState["operation"],
+    } satisfies SubProjectComposeState);
+  }
+  return composeCutProjectDocument(base, {
+    ...baseState,
+    guideText: state.guideText,
+    analysis: state.analysis,
+    segments: state.segments,
+    exportCandidates: state.exportCandidates,
+    operation: state.operation as CutProjectComposeState["operation"],
+  } satisfies CutProjectComposeState);
 }
 
 export function analysisFromProject(document: ProjectDocumentV1): AnalysisResult | null {

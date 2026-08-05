@@ -58,6 +58,35 @@ Cut/Sub は、動画、波形、再生、保存、ジョブ管理を共有し、
 | SCUT-015 | P3 | 共通部品contract testと配布版回帰確認 | 完了 | 最高 | SCUT-012, SCUT-013, SCUT-014 | typecheck/build/unitが成功し、Cut/Sub E2E結果が証拠化される | 2026-08-05: typecheck、35 files / 229 tests、build、pytest 366 passed、配布build、Cut `E2E_OK`、Sub `SUB_E2E_OK`、`git diff --check`成功 |
 | SCUT-016 | P3 | Editor focus policy とショートカット継続 | 完了 | 最高 | SCUT-004, SCUT-007 | Cut/Subのeditor actionがfocusを保持せず、入力・dialog例外とWASD契約が共通化される | 2026-08-05: typecheck、37 files / 238 tests、build、dist 1.1.57、Cut `E2E_OK`、Sub `SUB_E2E_OK`、focus実入力contract成功 |
 | SCUT-017 | P3 | Cut export進捗の利用者向け表示 | 完了 | 高 | SCUT-013, SCUT-014 | 内部export IDを表示せず、タイトルと現在件数／総件数を表示する | 2026-08-05: pytest 367件、GUI 238件、typecheck/build、dist 1.1.57、`EXPORT_PROGRESS_TITLE_COUNT_OK`、`E2E_OK`成功 |
+| SCUT-018 | P4 | Cut/Sub operation coordinator の責務対称化 | 完了 | 最高 | SCUT-007, SCUT-009 | Cut/Sub固有operationが同じ階層のcontrollerへ分離され、Appと両panelが同じ責務境界を持つ | 2026-08-05: mode別coordinator、39 files／244 tests、typecheck、build、Cut/Sub配布版E2E成功 |
+| SCUT-019 | P4 | BoundaryPolicyの実配線と時間編集policy整理 | 完了 | 高 | SCUT-003, SCUT-005, SCUT-008 | 全境界編集入口が共通resolverを通り、意図的な0.1秒／0.001秒差とSub制約を維持する | 2026-08-05: Cut/Subのdrag、nudge、時間dialogを共通resolverへ配線し、全Vitest 40 files／251 tests、typecheck、build成功 |
+| SCUT-020 | P4 | mode別project adapterによるcompose／hydrate分離 | 完了 | 高 | SCUT-010, SCUT-018 | 共通sessionとCut/Sub文書変換が分離され、mode固有field混在を呼出側の型で防ぐ | 2026-08-05: 共通base serializerとCut/Sub adapterを本番配線し、全Vitest 41 files／256 tests、typecheck、build、実sidecar parse成功 |
+| SCUT-021 | P4 | App composition root の縮小 | 完了 | 高 | SCUT-018, SCUT-020 | Appが共通media/session/persistenceと画面配線へ集中し、mode固有operation実装を含まない | 2026-08-05: 対称mode sessionと共通panel view modelを本番配線し、Appを3,225行へ縮小。44 files／262 tests、build、Cut/Sub E2E成功 |
+| SCUT-022 | P5 | Whisper execution session の共通化 | 完了 | 中 | SCUT-018 | Cut転写、Sub標準align、Uta-Alignが同じmodel/runtime/fallback基盤を使う | 2026-08-05: 共通sessionを3経路へ配線し、全pytest 374件成功／2件skip |
+| SCUT-023 | P5 | FFmpeg process runner の共通化 | 完了 | 中 | SCUT-018 | Cut/Sub出力が共通process/error/progress primitiveを使い、command生成は固有に保つ | 2026-08-05: 同期／streaming runnerを配線し、全pytest 382件成功／2件skip |
+| SCUT-024 | P5 | P4/P5 contract testと配布版回帰確認 | 完了 | 最高 | SCUT-019, SCUT-021, SCUT-022, SCUT-023 | 新しい責務境界がunitとCut/Sub実E2Eで固定される | 2026-08-05: contract、全test、build、portable 1.1.58、Cut/Sub実E2E成功 |
+
+## 再評価後の追加方針（P4〜P5）
+
+2026-08-05の再評価では、共通UI shellとoperation lifecycleは共有できている一方、operation orchestrationの所有場所がCut/Subで非対称であることを確認した。Cutの解析・転写・exportは`App.tsx`、Subの歌詞解析・字幕exportは`SubModePanel.tsx`が所有している。この非対称を、どちらか一方のcomponentへ寄せるのではなく、同じ階層のmode別coordinatorへ分離する。
+
+目標構造は次とする。
+
+```text
+App.tsx
+├─ common media / playback / waveform / persistence / task registry
+├─ useCutOperations(common context, Cut state adapter)
+├─ useSubOperations(common context, Sub state adapter)
+├─ CutModePanel  ← action・job viewを受け取るpresentation
+└─ SubModePanel  ← action・job viewを受け取るpresentation
+```
+
+- 共通化する責務: duplicate-start防止、project operation記録、task登録、poll、progress、成功、失敗、interrupted、利用者向けjob view。
+- mode別に残す責務: endpoint、request payload、result型、成功結果のstate反映、resume可否、解析／出力の意味。
+- `App.tsx`または単一の巨大なmode switchへ全operationを集約しない。
+- panelから`OperationRunner`や生のoperation APIを直接呼ばず、mode coordinatorが返すactionとjob viewだけを渡す。
+- Cutの通常drag／nudgeの最小長0.1秒と時間dialogの最小長0.001秒は意図的差分として維持する。単一の最小長へ統一しない。
+- Cut/Subの解析pipeline、domain model、REST endpoint、sidecarは統合しない。
 
 ## 詳細タスク
 
@@ -384,3 +413,178 @@ Cut/Sub は、動画、波形、再生、保存、ジョブ管理を共有し、
   - version 1.1.57の隔離distをbuildしてCut通常E2Eを完走し、実DOM履歴で`Exporting Smoke Song Edited (1/1)`、内部ID非露出、`EXPORT_PROGRESS_TITLE_COUNT_OK`、`E2E_OK`を確認した。
   - 通常利用中の既定distは強制終了せず保護した。終了後に`dist/songcut-win-x64`を同じソースから再buildし、renderer bundleとElectron実行物がE2E済みbuildとSHA-256一致することを確認した。
   - 検証専用`dist/songcut-win-x64-scut017`は、絶対パスとプロセス不在を確認して削除した。既定distは更新済みのまま保持している。
+
+### SCUT-018 Cut/Sub operation coordinator の責務対称化
+
+- 目的: CutとSubで異なる場所にあるoperation orchestrationを同じ階層へ移し、Appを共通session owner、mode panelをpresentation、mode coordinatorを固有operation ownerとして対称化する。
+- 開始証拠 (2026-08-05):
+  - ブランチ`codex/sub-mode`、HEAD `203fdeb9227399dd233de7c8f5850f7577b0e66a`から開始した。
+  - 開始時の既存変更は、再評価計画を追加した`docs/task-list.md`だけであり、production codeとの重複はない。
+  - 開始前の現行GUI baselineはtypecheck成功、37 files／238 tests成功、`git diff --check`成功である。
+- 現状証拠:
+  - Cutの`analysis`、`transcription`、`export`は`App.tsx`内で`operationRunner.run`を呼ぶ。
+  - Subの`lyrics-analysis`、`subtitle-export`は`SubModePanel.tsx`内で`operationRunner.run`を呼ぶ。
+  - 共通`useOperationRunner`は既にtask登録、排他、running／interrupted、成功／失敗を提供しているため、runner自体の再実装は不要である。
+- 変更範囲: 新規`useCutOperations.ts`、`useSubOperations.ts`または同等のmode別coordinator、`App.tsx`、`CutModePanel.tsx`、`SubModePanel.tsx`、operation contract tests。
+- 設計:
+  - 両coordinatorは共通の`OperationRunner`、API base URL、source、task view、message／state adapterを受け取る。
+  - Cut coordinatorは解析、segment転写、clip exportを所有する。
+  - Sub coordinatorは歌詞解析、字幕export、字幕render cache jobを所有する。
+  - panelへは`actions`、`jobs`、`busy`、operation固有の表示用stateだけを渡す。
+  - mode固有resultの反映は各coordinatorに残し、共通runnerへdomain stateを持ち込まない。
+- 禁止事項:
+  - Cut/Sub operationを単一の巨大な`switch(mode)`へ統合しない。
+  - REST endpoint、request／result payload、resume仕様を変更しない。
+  - Cut解析／転写／exportをSub panelへ移したり、Sub解析／exportをCut panelへ移したりしない。
+  - model downloadやwaveform等のapp共通taskをmode coordinatorへ重複実装しない。
+- 完了条件:
+  - `App.tsx`が`startAnalysis`、`startTranscription`、`startExport`を直接呼ばない。
+  - `SubModePanel.tsx`が`startLyricsAnalysis`、`startSubtitleExport`、`startSubtitleRender`、`operationRunner.run`を直接呼ばない。
+  - Cut/Subのforeground operationが同じ共通runnerとtask registryを通る。
+  - running、成功、失敗、interrupted、duplicate-start防止、progress dialogの既存挙動が維持される。
+  - panel propsから生の`OperationRunner`を除去し、action／view contractへ置換する。
+- テスト: coordinator pure contract、runner integration、operation kind／interrupted永続化、全Vitest、typecheck、build、Cut/Sub E2E。
+- 停止条件: operationのresume可否や成功後document状態について新しい製品判断が必要になった場合は、現行契約を維持したまま責務移動だけを行う。
+- 完了証拠 (2026-08-05):
+  - `useCutOperations.ts`がCut解析、手動／background転写、clip exportを所有し、`useSubOperations.ts`が歌詞解析、字幕export、字幕render job、歌詞配置、render cache結果適用を所有する。
+  - `App.tsx`は両coordinatorを同じcomposition層で生成し、state／task adapterを渡す。`SubModePanel.tsx`から生の`OperationRunner`、API base URL、source path、operation API呼出しを除去した。
+  - `App.tsx`／`CutModePanel.tsx`／`SubModePanel.tsx`に対象の`startAnalysis`、`startTranscription`、`startExport`、`startLyricsAnalysis`、`startSubtitleExport`、`startSubtitleRender`、`operationRunner.run`が残っていないことを`rg`で確認した。
+  - `luna_worker`による独立レビューを2回実施し、stale subtitle render taskのclear、最新Sub stateへの解析結果適用、background転写監視のApp外移動、監視中の手動転写排他、未完了監視cleanupを追加した。
+  - coordinator contract 6件を追加し、既存runner contractを含む全Vitestは39 files／244 tests成功、`npm run typecheck`成功、`npm run build`成功、`git diff --check`成功である。
+  - ポータブル版1.1.58を生成し、Cut通常E2Eは`E2E_OK`（解析、background転写、progress dialog、clip／TS export）、Sub実データE2Eは`SUB_E2E_OK`（39字幕、PNG cache、style invalidation、SRT／style sidecar、字幕焼き込み動画）まで成功した。
+
+### SCUT-019 BoundaryPolicyの実配線と時間編集policy整理
+
+- 開始証拠 (2026-08-05):
+  - SCUT-018完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 39 files／244 tests、typecheck、production build、Cut通常E2E、Sub実データE2E成功である。
+- 目的: 共通`BoundaryPolicy`をテスト専用の抽象にせず、Cut/Sub双方のdrag、nudge、時間dialogから利用する。ただし操作別の意図的差分は維持する。
+- 現状証拠:
+  - Subは`resolveBoundaryTime`／`nudgeBoundaryTime`をproductionで使用している。
+  - Cutはdragとnudgeで個別`clamp`を使用し、`CUT_BOUNDARY_POLICY`はproductionから参照されていない。
+  - `SegmentTimingDialog`は共通UIだが、内部にmode分岐と独自validationを持つ。
+- 変更範囲: `boundaries.ts`、`SegmentTimingDialog.tsx`、Cut/Sub境界adapter、関連unit/component tests。
+- 設計:
+  - `drag`、`nudge`、`dialog`の操作意図をpolicy生成時に明示する。
+  - Cut drag／nudgeは最小0.1秒、Cut時間dialogは最小0.001秒を維持する。
+  - Subはrhythm snap、前後segment非重複、strict boundaryを維持する。
+  - pointer lifecycleとcancel semanticsは既存`useBoundaryDrag`に残す。
+- 禁止事項: Cutの0.1秒／0.001秒差の統一、Subの拍snap解除、lane制約変更、Cut pointercancel時commitとSub rollbackの統一。
+- 完了条件: すべての境界変更入口が共通resolverへ到達し、各操作の意図的差分がpolicy contract testで判別できる。
+- テスト: drag、nudge、dialog arrow、直接入力、neighbor edge、cancel、commit count、全Vitest、typecheck、build。
+- 停止条件: 既存E2Eと現在の数値契約が矛盾する場合は、挙動を変更せず差異を証拠化して判断を求める。
+- 完了証拠 (2026-08-05):
+  - Cut dragは`resolveBoundaryTime`とdrag policy、Cut nudgeは`nudgeBoundaryTime`とnudge policy、Cut/Sub時間dialogは`resolveBoundaryRange`へ到達する。Sub drag／nudgeも既存の共通resolver経路を維持した。
+  - Cut drag／nudgeの最小0.1秒と時間dialogの最小0.001秒を別policyとして固定した。Subは同じrhythm／strict policyを3入口で用い、操作差はresolve／nudge APIで表現する。
+  - Sub時間dialogの直接入力もgridへsnapし、実在する前後segmentだけをstrict neighborとして渡すことで先頭0秒と末尾media durationを許容した。
+  - pointer lifecycleは変更せず、Cutのpointercancel時commitとSubのcancel時rollback／release時1回commitを既存hook testsで確認した。
+  - manual作成、解析結果、project hydrateによる境界生成は利用者の境界編集入口ではないためresolver対象外とし、mode固有creation／ingest契約として維持した。
+  - `luna_worker`による独立監査で全production配線と意図的差分を確認した。対象testは5 files／41 tests、全Vitestは40 files／251 tests成功、`npm run typecheck`、`npm run build`、`git diff --check`も成功した。
+
+### SCUT-020 mode別project adapterによるcompose／hydrate分離
+
+- 開始証拠 (2026-08-05):
+  - SCUT-019完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018／019の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 40 files／251 tests、typecheck、production build成功である。
+- 目的: schema v3の共通envelopeを維持しながら、Cut/Sub固有stateのcompose／hydrateをmode別adapterへ分け、混在不能を呼出側の型でも保証する。
+- 現状証拠: `composeProjectDocument`はCutのanalysis、segments、export candidatesを必須入力とし、Sub stateをoptional fieldで受け取るCut中心の形になっている。
+- 変更範囲: `project.ts`、mode別project adapter、`App.tsx`のcreate／hydrate／compose配線、project tests。
+- 禁止事項: schema version変更、保存JSONの不要な変更、`.songcut`／`.sub.songcut`統合、mutable document共有。
+- 完了条件:
+  - Cut adapterがCut fieldsとCut operationだけを受け取る。
+  - Sub adapterがsubtitle stateとSub operationだけを受け取り、Cut fieldsを入力に要求しない。
+  - 共通source、settings、waveform、view state、revision処理は一つのbase serializerを使う。
+  - legacy mode省略Cutと既存v3 sidecarがbyte互換方針を保ってround-tripする。
+- テスト: mode別compose／hydrate、mixed inputの型・runtime拒否、実sidecar parse、全Vitest、typecheck、build。
+- 停止条件: schema bumpまたは既存sidecar migrationが必要になった場合は実装を止め、非破壊adapter案へ戻す。
+- 完了証拠 (2026-08-05):
+  - `projectBase.ts`へschema v3の共通create／serialize／hydrateを集約し、source、settings、waveform、view state、revisionをCut/Subで一つの実装から処理する。
+  - `projectAdapters.ts`へCut/Sub専用create／compose／hydrateとoperation type guard／assertを分離した。Sub compose inputはsubtitleとSub operationだけをmode payloadとして受け、Cut analysis／segments／export candidatesを要求しない。
+  - Appのcompose、hydrate、新規sidecar作成をmode別adapterへ配線し、Sub hydrate時はCut stateを空へ、Cut hydrate時はsubtitle stateを既定値へ戻してmode間残留を防止した。
+  - legacy Cutの`mode`省略と`settings.export`省略を保持し、既存`createProjectDocument`／`composeProjectDocument`は互換wrapperとして残した。schema version、`.songcut`／`.sub.songcut`形式は変更していない。
+  - 型contractとruntime検査の両方でmixed mode base、mode外operation、Sub inputへのCut field混入を拒否し、hydrate結果は永続documentとmutable値を共有しない。
+  - `luna_worker`がserializer／adapter／testsを実装し、Main側でApp配線を統合・再検証した。全Vitest 41 files／256 tests、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。
+  - 既存E2E生成物のCut sidecarとSub sidecarをbuild済みschemaでparseし、Cut mode文書と3-lane Sub mode文書がともにschema v3として読めることを確認した。
+
+### SCUT-021 App composition root の縮小
+
+- 開始証拠 (2026-08-05):
+  - SCUT-020完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018～020の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 41 files／256 tests、typecheck、production build、既存Cut/Sub実sidecar parse成功である。
+- 目的: SCUT-018／020で得た境界を使い、`App.tsx`を共通media/session/persistence、active mode選択、画面配線へ集中させる。
+- 変更範囲: `App.tsx`、mode session/controller hooks、panel props、App内のCut固有dialog helper配置。
+- 禁止事項: state管理ライブラリ導入、全stateの一括移行、UI／DOM class変更、無関係なhelper整理。
+- 完了条件:
+  - Appがmode固有API orchestrationとmode固有project変換を持たない。
+  - Cut/Sub controller生成とoperation actionが対称なmode session境界から得られる。
+  - panelへ渡す共通media／transport propsが型付きview modelとしてまとまる。
+  - Appに残すmode分岐はactive panel、subtitle overlay、mode capabilityなどcomposition上必要なものに限定される。
+- テスト: App配線contract、menu／shortcut、mode switch、autosave、waveform cache、全Vitest、typecheck、build、Cut/Sub E2E。
+- 停止条件: 画面構造や利用者操作を変えないと抽出できない箇所は、無理に共通化せずmode session側のadapterとして残す。
+- 完了証拠 (2026-08-05):
+  - `modeSession.ts`がCut/Subのcontroller、mode固有operation coordinator、共通panel viewを同じcontractで返し、Appは`createModeController`を直接生成しない。
+  - `modeViewModel.ts`の`ModeMediaViewModel`／`ModeTransportViewModel`へsource、waveform、playback、zoom、boundary controlを集約し、Cut/Sub panelへどちらも`view`一つで渡す。
+  - AppのCut/Sub operation actionは各mode sessionの`operations`経由となり、active controllerだけをmode capabilityとして選択する。生operation API、`operationRunner.run`、generic project compose／createはAppに残っていない。
+  - Cut専用時間dialog変換を`CutSegmentTimingDialog.tsx`へ、出力・segment管理・task status・model／export進捗等のview-only componentを`AppDialogs.tsx`へ移した。DOM classと表示契約は維持した。
+  - App配線source contract 3件を追加し、menu／shortcut、autosave、waveform cache、mode controller／session testsを含む全Vitest 44 files／262 tests、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。
+  - Appは開始時約3,950行から3,225行へ縮小した。stateful media／persistence処理、active panel、Sub overlay、mode capability等のcomposition責務はAppに残した。
+  - 2つの`luna_worker`がmode session/view modelとview-only dialog抽出を分担し、Main側でpanel/App配線を統合した。
+  - ポータブル版1.1.58を再buildし、Cut通常E2Eは`E2E_OK`（menu、shortcut、autosave、background転写、0.001秒Cut dialog、clip／TS export）、Sub実データE2Eは`SUB_E2E_OK`（39字幕、rhythm、PNG cache、overlay、SRT／style、焼き込み動画）まで成功した。
+
+### SCUT-022 Whisper execution session の共通化
+
+- 開始証拠 (2026-08-05):
+  - SCUT-021完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018～021の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 44 files／262 tests、typecheck、production／portable build、Cut `E2E_OK`、Sub `SUB_E2E_OK`成功である。
+- 目的: Cut転写、Sub標準align、Uta-Alignに分散したWhisper model読込、runtime選択、CPU fallback、generate、chunk正規化を共通sessionへ集約する。
+- 変更範囲: `transcription.py`、`lyrics_alignment.py`、`uta_alignment.py`、新規Whisper execution module、関連pytest。
+- 禁止事項: alignment algorithm統合、chunk利用方法の統一、model選択仕様変更、strict device指定時の暗黙fallback追加。
+- 完了条件:
+  - 3経路が同じpipeline factoryとdevice fallback契約を使う。
+  - Cutはsegment単位、Subはactive interval単位、Utaはrequest単位という入力分割を維持する。
+  - timestampの絶対化とdomain result生成は各callerに残す。
+- テスト: pipeline fakeによるdevice選択、auto CPU fallback、strict failure、language token、chunk timestamp、既存transcription／alignment pytest。
+- 停止条件: Uta-Align backendのpipeline lifetimeが共通sessionと互換でない場合は、factoryとfallbackだけを共有し、request APIは固有に残す。
+- 完了証拠 (2026-08-05):
+  - 新規`whisper_execution.py`へOpenVINO pipeline factory、constructor／generateのauto時CPU fallback、strict device時のfallback禁止、language token付与、相対chunk／word timestamp正規化を集約した。
+  - Cutはsegment、Sub標準alignはactive interval、Uta-Alignはrequest内active intervalという入力分割を維持し、media絶対offset、丸め、domain result生成は各callerに残した。
+  - pipeline fakeでdevice選択、constructor／generate fallback、strict failure、language token、chunk sentinel、word属性を固定した。Main側の全`pytest -q`は374 passed／2 skipped／36 subtests passed、`compileall`と`git diff --check`も成功した。
+
+### SCUT-023 FFmpeg process runner の共通化
+
+- 開始証拠 (2026-08-05):
+  - SCUT-022完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018～022の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Python pytest 374件成功／2件skip／36 subtests成功、GUI Vitest 44 files／262 tests、typecheck、production／portable build、Cut `E2E_OK`、Sub `SUB_E2E_OK`成功である。
+- 目的: Cut smart exportとSub subtitle exportに分散したprocess起動、stderr保持、return code、progress解析を共通primitiveへ移す。
+- 変更範囲: `ffmpeg_tools.py`または新規process module、`smart_export.py`、`subtitle_export.py`、関連pytest。
+- 禁止事項: smart render計画とsubtitle filter commandの統合、encoder設定変更、出力形式変更。
+- 完了条件:
+  - 共通runnerがWindows no-window、stdout／stderr、tail、終了判定、任意progress callbackを扱う。
+  - Cut/Subはcommand生成と進捗配分だけを固有に保持する。
+  - failure messageに既存以上の診断情報が残る。
+- テスト: fake process、非0終了、progress protocol、UTF-8 replacement、出力検証、既存smart export／subtitle export pytest。
+- 停止条件: smart exportの同期実行契約とsubtitle exportのstreaming契約を同じAPIへ押し込む必要がある場合は、共通low-level primitiveを二つのwrapperから使う形に限定する。
+- 完了証拠 (2026-08-05):
+  - 新規`ffmpeg_process.py`へ同期／streaming runnerを分けて追加し、Windows no-window、UTF-8 replacement、stdout／stderr、bounded tail、return code、任意line callbackを共通化した。
+  - smart exportは同期runner、subtitle burnはstreaming runner、字幕PNG生成とASS filter probeは同期runnerへ配線した。command生成、Subのprogress protocol／0.15～0.96配分、Cut/Sub固有の出力検証は各callerに維持した。
+  - fake process、非0終了、UTF-8 replacement、tail、progress配線、smart no-video、Sub出力存在／size／durationのテストを追加した。対象pytestは35 passed、全pytestは382 passed／2 skipped／36 subtests passed、`compileall`と`git diff --check`も成功した。
+
+### SCUT-024 P4/P5 contract testと配布版回帰確認
+
+- 開始証拠 (2026-08-05):
+  - SCUT-023完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018～023の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Python pytest 382件成功／2件skip／36 subtests成功、GUI Vitest 44 files／262 tests、typecheck、production／portable build、Cut `E2E_OK`、Sub `SUB_E2E_OK`成功である。
+- 目的: 追加共通化後の責務境界と意図的差分を自動テスト・実アプリで固定し、文書の完了状態を実配線と一致させる。
+- 変更範囲: contract tests、E2E scriptsの必要最小限、task list証拠。
+- 禁止事項: 既存E2E成功条件削除、テスト都合の仕様弱体化、Cut/Sub固有pipelineの統合。
+- 完了条件:
+  - App／panelが禁止された生API・runner importを持たないことをcontract検査できる。
+  - Cut 0.1秒drag／0.001秒dialog、Sub rhythm／non-overlap、mode別sidecar、全operation lifecycleが成功する。
+  - typecheck、全Vitest、pytest、build、再build済みCut/Sub E2E、`git diff --check`が成功する。
+  - 実行不能な実環境検証がある場合は`実環境検証待ち`として理由と範囲を記録する。
+- 停止条件: model、fixture、対話desktop不足時はローカル検証済みまで進め、実環境成功を推測しない。
+- 完了証拠 (2026-08-05):
+  - Appから生runner／mode coordinator hookを除去し、新規`useModeOperations`が共通runnerを一度生成してCut/Sub coordinatorへ注入するcomposition境界へ移した。両panelは共通`ModePanelViewModel`とmode coordinatorだけを受け取る。
+  - GUI横断contractでApp／panelの禁止依存、共通runner注入、mode別sidecar、5種の永続operation lifecycle、`subtitle-render`の非永続task lifecycleを固定した。既存boundary／dialog testでCut 0.1秒drag・0.001秒dialogとSub rhythm／non-overlapも維持した。Python横断contractでWhisper 3 callerの共通sessionとcaller固有offset、Cut/Sub FFmpeg共通runnerと固有progress／validationを固定した。
+  - 最終検証はGUI Vitest 45 files／271 tests、typecheck、Python pytest 385 passed／2 skipped／36 subtests passed、production build、`git diff --check`が成功した。
+  - portable版1.1.58を再buildした。Cut通常E2Eは343.6秒で`E2E_OK`（menu、shortcut、autosave、0.001秒dialog、background転写chunk、clip／TS export）、Sub実データE2Eは603.8秒で`SUB_E2E_OK`（39字幕、rhythm／non-overlap、PNG cache、overlay、2 laneのSRT／style、394.378秒の字幕動画）まで成功した。

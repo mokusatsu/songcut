@@ -47,12 +47,32 @@ export type BoundaryPolicy = {
   nudgeStep?: number;
 };
 
-/** Cut boundaries move in decimal seconds and do not snap to a rhythm grid. */
-export const CUT_BOUNDARY_POLICY: BoundaryPolicy = {
-  minimumDuration: 0.1,
-  strict: false,
-  clamp: true,
+export type BoundaryEditIntent = "drag" | "nudge" | "dialog";
+
+export type CutBoundaryPolicyOptions = {
+  nudgeStep?: number;
+  clamp?: boolean;
 };
+
+/**
+ * Cut uses free decimal seconds for every operation, while preserving its
+ * intentional precision difference: timeline edits keep 0.1 s and the timing
+ * dialog accepts 0.001 s ranges.
+ */
+export function createCutBoundaryPolicy(
+  intent: BoundaryEditIntent,
+  options: CutBoundaryPolicyOptions = {},
+): BoundaryPolicy {
+  return {
+    minimumDuration: intent === "dialog" ? 0.001 : 0.1,
+    strict: false,
+    clamp: options.clamp ?? intent !== "dialog",
+    nudgeStep: options.nudgeStep,
+  };
+}
+
+/** Backwards-compatible default for Cut timeline drag behavior. */
+export const CUT_BOUNDARY_POLICY: BoundaryPolicy = createCutBoundaryPolicy("drag");
 
 export function resolveBoundaryTime(
   range: TimeRange,
@@ -81,6 +101,30 @@ export function nudgeBoundaryTime(
       ? current + direction * policy.nudgeStep
       : null;
   return acceptedBoundaryTime(proposed, context, policy.strict === true, policy.clamp === true);
+}
+
+/** Resolve both edges of a proposed range through the same policy contract. */
+export function resolveBoundaryRange(
+  proposedRange: TimeRange,
+  policy: BoundaryPolicy,
+  neighbors: BoundaryNeighbors = {},
+): TimeRange | null {
+  const start = resolveBoundaryTime(
+    proposedRange,
+    "start",
+    proposedRange.start,
+    policy,
+    neighbors,
+  );
+  if (start === null) return null;
+  const end = resolveBoundaryTime(
+    { start, end: proposedRange.end },
+    "end",
+    proposedRange.end,
+    policy,
+    neighbors,
+  );
+  return end === null ? null : { start, end };
 }
 
 export function boundaryNudgePlaybackRange(

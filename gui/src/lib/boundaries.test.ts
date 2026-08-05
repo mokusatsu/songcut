@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   CUT_BOUNDARY_POLICY,
   boundaryNudgePlaybackRange,
+  createCutBoundaryPolicy,
   nearestBoundaryTarget,
   nudgeBoundaryTime,
+  resolveBoundaryRange,
   resolveBoundaryTime,
 } from "./boundaries";
 import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "./subtitles";
@@ -121,6 +123,44 @@ describe("BoundaryPolicy", () => {
       -1,
       { ...CUT_BOUNDARY_POLICY, nudgeStep: 0.125 },
     )).toBe(2.875);
+  });
+
+  it("preserves Cut's intentional timeline and dialog minimum-duration difference", () => {
+    const range = { start: 1, end: 3 };
+    expect(resolveBoundaryTime(
+      range,
+      "end",
+      1.001,
+      createCutBoundaryPolicy("drag"),
+      { nextStart: 10 },
+    )).toBe(1.1);
+    expect(resolveBoundaryTime(
+      range,
+      "end",
+      1.001,
+      createCutBoundaryPolicy("dialog"),
+      { nextStart: 10 },
+    )).toBe(1.001);
+    expect(nudgeBoundaryTime(
+      { start: 1, end: 1.1 },
+      "end",
+      -1,
+      createCutBoundaryPolicy("nudge", { nudgeStep: 0.1 }),
+      { previousEnd: 0, nextStart: 10 },
+    )).toBe(1.1);
+  });
+
+  it("resolves both dialog edges through one policy and media bounds", () => {
+    expect(resolveBoundaryRange(
+      { start: 1.234, end: 1.235 },
+      createCutBoundaryPolicy("dialog"),
+      { previousEnd: 0, nextStart: 10 },
+    )).toEqual({ start: 1.234, end: 1.235 });
+    expect(resolveBoundaryRange(
+      { start: 1, end: 10.001 },
+      createCutBoundaryPolicy("dialog"),
+      { previousEnd: 0, nextStart: 10 },
+    )).toBeNull();
   });
 
   it("applies minimum-duration and neighbor constraints after a policy snap", () => {

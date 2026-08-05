@@ -3,6 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
+  createCutBoundaryPolicy,
+  resolveBoundaryRange,
+  type BoundaryPolicy,
+} from "@/lib/boundaries";
+import {
   adjacentRhythmTime,
   cutTimeArrowStep,
   formatTimeInput,
@@ -10,7 +15,8 @@ import {
   nearestRhythmTime,
   parseTimeInput,
 } from "@/lib/segmentTiming";
-import type { RhythmGridPoint } from "@/lib/subtitles";
+import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "@/lib/subtitles";
+import { TIME_RANGE_EPSILON } from "@/lib/timeRange";
 import { tr } from "@/i18n";
 
 export type SegmentTimingTarget = {
@@ -36,6 +42,12 @@ export function SegmentTimingDialog(props: {
   const [startInput, setStartInput] = useState("0:00.000");
   const [extentInput, setExtentInput] = useState("0:00.000");
   const grid = props.rhythmGrid ?? [];
+  const policy = useMemo(
+    () => props.mode === "cut"
+      ? createCutBoundaryPolicy("dialog")
+      : createSubtitleBoundaryPolicy(grid),
+    [grid, props.mode],
+  );
 
   useEffect(() => {
     if (!props.open || !props.segment) return;
@@ -45,14 +57,15 @@ export function SegmentTimingDialog(props: {
   }, [props.open, props.segment]);
 
   const evaluation = useMemo(
-    () => evaluateTiming({
+    () => evaluateSegmentTiming({
       startInput,
       extentInput,
       rangeMode,
       mode: props.mode,
+      policy,
       mediaDuration: props.mediaDuration,
-      previousEnd: props.previousEnd,
-      nextStart: props.nextStart,
+      previousEnd: props.mode === "cut" ? 0 : props.previousEnd,
+      nextStart: props.mode === "cut" ? props.mediaDuration : props.nextStart,
     }),
     [
       extentInput,
@@ -60,12 +73,13 @@ export function SegmentTimingDialog(props: {
       props.mode,
       props.nextStart,
       props.previousEnd,
+      policy,
       rangeMode,
       startInput,
     ],
   );
-  const startNearest = evaluation.start === null ? null : nearestRhythmTime(grid, evaluation.start);
-  const endNearest = evaluation.end === null ? null : nearestRhythmTime(grid, evaluation.end);
+  const startNearest = evaluation.proposedStart === null ? null : nearestRhythmTime(grid, evaluation.proposedStart);
+  const endNearest = evaluation.proposedEnd === null ? null : nearestRhythmTime(grid, evaluation.proposedEnd);
 
   const normalizeStart = () => {
     const value = parseTimeInput(startInput);
@@ -85,7 +99,7 @@ export function SegmentTimingDialog(props: {
       const duration = rangeMode === "duration" ? currentExtent : null;
       const maximum = duration !== null
         ? Math.min(props.mediaDuration - duration, (props.nextStart ?? props.mediaDuration) - duration)
-        : Math.min((fixedEnd ?? props.mediaDuration) - 0.1, props.mediaDuration);
+        : Math.min((fixedEnd ?? props.mediaDuration) - policy.minimumDuration, props.mediaDuration);
       setStartInput(formatTimeInput(clamp(currentStart + direction * step, 0, Math.max(0, maximum))));
       return;
     }
@@ -107,7 +121,7 @@ export function SegmentTimingDialog(props: {
       : currentExtent ?? props.segment?.end ?? start;
     if (props.mode === "cut") {
       const step = cutTimeArrowStep(event.shiftKey, event.ctrlKey);
-      const minimumEnd = start + 0.001;
+      const minimumEnd = start + policy.minimumDuration;
       const maximumEnd = Math.min(props.mediaDuration, props.nextStart ?? props.mediaDuration);
       const end = clamp(currentEnd + direction * step, minimumEnd, maximumEnd);
       setExtentInput(formatTimeInput(rangeMode === "duration" ? end - start : end));
@@ -134,7 +148,7 @@ export function SegmentTimingDialog(props: {
           label={tr("segmentTiming.start")}
           value={startInput}
           error={evaluation.startError}
-          hint={props.mode === "sub" && evaluation.start !== null && startNearest !== null && !isOnRhythmGrid(grid, evaluation.start)
+          hint={props.mode === "sub" && evaluation.proposedStart !== null && startNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedStart)
             ? tr("segmentTiming.nearestGrid", { time: formatTimeInput(startNearest) })
             : null}
           onChange={setStartInput}
@@ -179,7 +193,7 @@ export function SegmentTimingDialog(props: {
           onBlur={normalizeExtent}
           onArrow={changeExtentByKeyboard}
         />
-        {props.mode === "sub" && evaluation.end !== null && endNearest !== null && !isOnRhythmGrid(grid, evaluation.end) ? (
+        {props.mode === "sub" && evaluation.proposedEnd !== null && endNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedEnd) ? (
           <span className="settings-field-help">
             {tr("segmentTiming.nearestEndGrid", { time: formatTimeInput(endNearest) })}
           </span>
@@ -234,38 +248,58 @@ function TimeField(props: {
   );
 }
 
-function evaluateTiming(input: {
+export function evaluateSegmentTiming(input: {
   startInput: string;
   extentInput: string;
   rangeMode: RangeMode;
   mode: "cut" | "sub";
+  policy: BoundaryPolicy;
   mediaDuration: number;
   previousEnd?: number;
   nextStart?: number;
 }) {
-  const start = parseTimeInput(input.startInput);
+  const proposedStart = parseTimeInput(input.startInput);
   const extent = parseTimeInput(input.extentInput);
-  const startError = start === null ? tr("segmentTiming.invalidTime") : null;
+  const startError = proposedStart === null ? tr("segmentTiming.invalidTime") : null;
   const extentError = extent === null ? tr("segmentTiming.invalidTime") : null;
-  const end = start === null || extent === null
+  const proposedEnd = proposedStart === null || extent === null
     ? null
     : input.rangeMode === "duration"
-      ? start + extent
+      ? proposedStart + extent
       : extent;
   let rangeError: string | null = null;
-  const minimumLength = input.mode === "cut" ? 0.001 : 0.000001;
-  if (start !== null && end !== null) {
-    if (end - start < minimumLength) rangeError = tr("segmentTiming.positiveDuration");
-    else if (start < 0 || end > input.mediaDuration + 0.000001) rangeError = tr("segmentTiming.outOfMedia");
-    else if (input.mode === "sub" && input.previousEnd !== undefined && start < input.previousEnd - 0.000001) {
+  let resolved: { start: number; end: number } | null = null;
+  if (proposedStart !== null && proposedEnd !== null) {
+    if (proposedEnd - proposedStart < input.policy.minimumDuration - TIME_RANGE_EPSILON) {
+      rangeError = tr("segmentTiming.positiveDuration");
+    }
+    else if (proposedStart < 0 || proposedEnd > input.mediaDuration + 0.000001) rangeError = tr("segmentTiming.outOfMedia");
+    else if (input.mode === "sub" && input.previousEnd !== undefined && proposedStart < input.previousEnd - 0.000001) {
       rangeError = tr("segmentTiming.previousOverlap");
-    } else if (input.mode === "sub" && input.nextStart !== undefined && end > input.nextStart + 0.000001) {
+    } else if (input.mode === "sub" && input.nextStart !== undefined && proposedEnd > input.nextStart + 0.000001) {
       rangeError = tr("segmentTiming.nextOverlap");
+    } else {
+      resolved = resolveBoundaryRange(
+        { start: proposedStart, end: proposedEnd },
+        input.policy,
+        { previousEnd: input.previousEnd, nextStart: input.nextStart },
+      );
+      if (!resolved) {
+        if (input.previousEnd !== undefined && proposedStart <= input.previousEnd + 0.000001) {
+          rangeError = tr("segmentTiming.previousOverlap");
+        } else if (input.nextStart !== undefined && proposedEnd >= input.nextStart - 0.000001) {
+          rangeError = tr("segmentTiming.nextOverlap");
+        } else {
+          rangeError = tr("segmentTiming.invalidTime");
+        }
+      }
     }
   }
   return {
-    start,
-    end,
+    start: resolved?.start ?? null,
+    end: resolved?.end ?? null,
+    proposedStart,
+    proposedEnd,
     startError,
     extentError,
     rangeError,

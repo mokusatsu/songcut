@@ -10,43 +10,28 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { EditorTransportControls } from "@/components/EditorTransportControls";
-import type { EditorTransportControlsProps } from "@/components/EditorTransportControls";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import { TimelineSurface } from "@/components/TimelineSurface";
-import { clamp, formatTime } from "@/lib/time";
+import { formatTime } from "@/lib/time";
+import { CUT_BOUNDARY_POLICY, resolveBoundaryTime } from "@/lib/boundaries";
 import { useBoundaryDrag } from "@/lib/useBoundaryDrag";
-import type { WaveformPhase } from "@/lib/useProgressiveWaveform";
 import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
+import type { ModeMediaViewModel, ModePanelViewModel } from "@/lib/modeViewModel";
 import { tr } from "@/i18n";
-import type { Segment, WaveformDisplayMode, WaveformPoint } from "@/types";
+import type { Segment } from "@/types";
 
-const MIN_SEGMENT_SECONDS = 0.1;
-
-export type CutTimelineProps = {
-  duration: number;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: WaveformPhase;
-  waveformProgress: number;
-  waveformDisplayMode: WaveformDisplayMode;
+export type CutTimelineProps = ModeMediaViewModel & {
   waveformAmplitudeProfile: CutWaveformAmplitudeProfile;
   segments: Segment[];
   selectedSegment: Segment | null;
-  currentTime: number;
-  playing: boolean;
-  zoom: number;
-  focusRequest: number;
-  editing: boolean;
-  onSeek: (time: number) => void;
-  onScrub: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-  onHandleEditingChange: (editing: boolean) => void;
   onChange: (patch: Partial<Segment>) => void;
   onChangeCommitted: () => void;
   onEditTiming: () => void;
 };
+
+export type CutTimelineDomainProps = Omit<CutTimelineProps, keyof ModeMediaViewModel>;
 
 export type CutSegmentsProps = {
   segments: Segment[];
@@ -59,7 +44,7 @@ export type CutSegmentsProps = {
 };
 
 export type CutModePanelProps = {
-  sourceAvailable: boolean;
+  view: ModePanelViewModel;
   apiReady: boolean;
   checkedCount: number;
   onLoad: () => void;
@@ -70,8 +55,7 @@ export type CutModePanelProps = {
   guideText: string;
   onGuideTextChange: (value: string) => void;
   taskStatus: React.ReactNode;
-  transport: EditorTransportControlsProps;
-  timeline: CutTimelineProps;
+  timeline: CutTimelineDomainProps;
   segments: CutSegmentsProps;
 };
 
@@ -83,11 +67,11 @@ export function CutModePanel(props: CutModePanelProps) {
           <FolderOpen size={16} />
           {tr("common.load")}
         </Button>
-        <Button onClick={props.onAnalyze} disabled={!props.sourceAvailable || !props.apiReady}>
+        <Button onClick={props.onAnalyze} disabled={!props.view.media.sourceAvailable || !props.apiReady}>
           <Wand2 size={16} />
           {tr("common.analyze")}
         </Button>
-        <Button variant="secondary" onClick={props.onExport} disabled={props.checkedCount === 0 || !props.sourceAvailable}>
+        <Button variant="secondary" onClick={props.onExport} disabled={props.checkedCount === 0 || !props.view.media.sourceAvailable}>
           <Scissors size={16} />
           {tr("common.export")}
         </Button>
@@ -100,13 +84,13 @@ export function CutModePanel(props: CutModePanelProps) {
           {tr("common.settings")}
         </Button>
         <div className="spacer" />
-        <EditorTransportControls {...props.transport} />
+        <EditorTransportControls {...props.view.transport} />
       </header>
       <div className="guide-row">
         <Textarea value={props.guideText} onChange={(event) => props.onGuideTextChange(event.target.value)} placeholder={tr("app.guidePlaceholder")} />
         {props.taskStatus}
       </div>
-      <TimelineStack {...props.timeline} />
+      <TimelineStack {...props.view.media} {...props.timeline} />
       <SegmentList {...props.segments} />
     </>
   );
@@ -186,6 +170,17 @@ function SegmentTimeline(props: {
   const startX = segment ? (segment.start / safeDuration) * props.width : 0;
   const endX = segment ? (segment.end / safeDuration) * props.width : 0;
   const draggingX = draggingEdge === "start" ? startX : draggingEdge === "end" ? endX : null;
+  const previewBoundary = (edge: "start" | "end", time: number) => {
+    if (!segment) return;
+    const resolved = resolveBoundaryTime(
+      segment,
+      edge,
+      time,
+      CUT_BOUNDARY_POLICY,
+      { previousEnd: 0, nextStart: safeDuration },
+    );
+    if (resolved !== null) props.onChange({ [edge]: resolved, user_edited: true });
+  };
   const setHandleEditing = (edge: "start" | "end", editing: boolean) => {
     setDraggingEdge(editing ? edge : null);
     props.onEditingChange(editing);
@@ -215,7 +210,7 @@ function SegmentTimeline(props: {
               duration={safeDuration}
               viewportRef={props.viewportRef}
               onEditingChange={(editing) => setHandleEditing("start", editing)}
-              onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
+              onChange={(time) => previewBoundary("start", time)}
               onChangeCommitted={props.onChangeCommitted}
             />
             <DragHandle
@@ -225,7 +220,7 @@ function SegmentTimeline(props: {
               duration={safeDuration}
               viewportRef={props.viewportRef}
               onEditingChange={(editing) => setHandleEditing("end", editing)}
-              onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
+              onChange={(time) => previewBoundary("end", time)}
               onChangeCommitted={props.onChangeCommitted}
             />
           </>

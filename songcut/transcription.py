@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 import shutil
 import tempfile
@@ -15,6 +14,7 @@ import numpy as np
 
 from .ffmpeg_tools import FfmpegPaths
 from .hardware import detect_openvino_devices
+from .whisper_execution import WhisperExecutionSession
 
 
 @dataclass(frozen=True)
@@ -140,25 +140,6 @@ class SegmentTranscript:
     device_used: str
     model_id: str
     error: str | None = None
-
-
-def _absolute_chunk_bounds(segment_start: float, segment_end: float, chunk: Any) -> tuple[float, float]:
-    """Convert relative timestamps, including OpenVINO's -1 end sentinel, to safe media times."""
-    duration = max(0.0, segment_end - segment_start)
-
-    def bounded(value: Any, default: float) -> float:
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return default
-        if not math.isfinite(number) or number < 0:
-            return default
-        return min(number, duration)
-
-    relative_start = bounded(getattr(chunk, "start_ts", None), 0.0)
-    relative_end = bounded(getattr(chunk, "end_ts", None), duration)
-    relative_end = max(relative_start, relative_end)
-    return round(segment_start + relative_start, 3), round(segment_start + relative_end, 3)
 
 
 def default_model_root() -> Path:
@@ -482,8 +463,12 @@ def transcribe_segments(
 
     runtime = select_whisper_runtime(requested_device)
     target_model = ensure_whisper_model(model_dir, model_key=model_key)
-    pipe = ov_genai.WhisperPipeline(str(target_model), runtime.device_used)
-    cpu_pipe: Any | None = None
+    session = WhisperExecutionSession.from_openvino(
+        model_path=target_model,
+        runtime=runtime,
+        requested_device=requested_device,
+        language_token=language_token,
+    )
 
     results: list[SegmentTranscript] = []
     with tempfile.TemporaryDirectory(prefix="songcut-whisper-") as tmp:
@@ -497,43 +482,18 @@ def transcribe_segments(
                 extract_segment_wav(ffmpeg_paths.ffmpeg, source, wav_path, start=start, end=end)
                 raw_speech = read_wav_mono_16k(wav_path)
                 kwargs: dict[str, Any] = {"task": "transcribe", "return_timestamps": True}
-                if language_token:
-                    kwargs["language"] = language_token
                 if initial_prompt:
                     kwargs["initial_prompt"] = initial_prompt
-                active_runtime = runtime
-                try:
-                    decoded = pipe.generate(raw_speech, **kwargs)
-                except Exception as primary_exc:
-                    if requested_device.lower() != "auto" or runtime.device_used == "CPU":
-                        raise
-                    if cpu_pipe is None:
-                        cpu_pipe = ov_genai.WhisperPipeline(str(target_model), "CPU")
-                    try:
-                        decoded = cpu_pipe.generate(raw_speech, **kwargs)
-                        active_runtime = WhisperRuntime(
-                            backend=runtime.backend,
-                            device_requested=runtime.device_requested,
-                            device_used="CPU",
-                            available_devices=runtime.available_devices,
-                            fallbacks=[
-                                *runtime.fallbacks,
-                                f"{runtime.device_used} Whisper generation failed; retried on CPU ({primary_exc.__class__.__name__}).",
-                            ],
-                            note="Auto Whisper device fell back to CPU after generation failure.",
-                        )
-                    except Exception as cpu_exc:
-                        raise RuntimeError(
-                            f"{runtime.device_used} Whisper generation failed: {primary_exc}; CPU fallback failed: {cpu_exc}"
-                        ) from cpu_exc
+                decoded = session.generate(raw_speech, kwargs)
                 chunks = []
-                for chunk in (getattr(decoded, "chunks", None) or []):
-                    chunk_start, chunk_end = _absolute_chunk_bounds(start, end, chunk)
+                for chunk in session.normalize_decoded_chunks(decoded, max(0.0, end - start)):
                     chunks.append(
                         TranscriptChunk(
-                            start=chunk_start,
-                            end=chunk_end,
-                            text=str(chunk.text).strip(),
+                            # The caller owns conversion from local inference
+                            # timestamps to media-absolute segment timestamps.
+                            start=round(start + chunk.start, 3),
+                            end=round(start + chunk.end, 3),
+                            text=chunk.text,
                         )
                     )
                 text = str(getattr(decoded, "texts", [""])[0] if hasattr(decoded, "texts") else decoded).strip()
@@ -542,8 +502,8 @@ def transcribe_segments(
                     text=text,
                     language=getattr(decoded, "language", None),
                     chunks=chunks,
-                    backend=active_runtime.backend,
-                    device_used=active_runtime.device_used,
+                    backend=session.backend,
+                    device_used=session.device_used,
                     model_id=spec.model_id,
                 )
             except Exception as exc:
@@ -552,8 +512,8 @@ def transcribe_segments(
                     text="",
                     language=None,
                     chunks=[],
-                    backend=runtime.backend,
-                    device_used=runtime.device_used,
+                    backend=session.backend,
+                    device_used=session.device_used,
                     model_id=spec.model_id,
                     error=str(exc),
                 )
