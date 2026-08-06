@@ -54,6 +54,7 @@ const defaultEventTarget = (): BoundaryDragEventTarget | null => {
  * Boundary conversion and mode policy stay in the callbacks; this helper only
  * owns global listener lifetime and exactly-once release commit semantics.
  */
+/** `createBoundaryDragLifecycle`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createBoundaryDragLifecycle(
   callbacks: BoundaryDragCallbacks,
   eventTarget: BoundaryDragEventTarget | null = defaultEventTarget(),
@@ -148,6 +149,7 @@ export type UseBoundaryDragOptions = BoundaryDragCallbacks & {
 /** React adapter for the pure lifecycle. Callbacks are kept current without
  * recreating the controller, so rapid preview renders cannot capture stale
  * mode state or geometry. */
+/** `useBoundaryDrag`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useBoundaryDrag(options: UseBoundaryDragOptions): BoundaryDragController {
   const optionsRef = useRef(options);
   optionsRef.current = options;

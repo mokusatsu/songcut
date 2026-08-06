@@ -60,6 +60,7 @@ export type EditorTransportControlsProps = {
   };
 };
 
+/** `EditorTransportControls`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function EditorTransportControls(props: EditorTransportControlsProps) {
   const nudge = props.boundaryNudge;
   const nudgeLeftTitle = nudge.kind === "seconds" ? tr("controls.nudgeLeft") : tr("controls.nudgeRhythmLeft");

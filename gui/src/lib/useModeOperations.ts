@@ -29,6 +29,7 @@ export type ModeOperationCoordinators = {
  * App supplies state adapters, while API calls and runner usage stay behind
  * this symmetric operation boundary.
  */
+/** `useModeOperations`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useModeOperations(options: ModeOperationOptions): ModeOperationCoordinators {
   const operationRunner = useOperationRunner(options.runner);
   const cut = useCutOperations({ ...options.cut, operationRunner });

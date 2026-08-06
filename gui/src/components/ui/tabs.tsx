@@ -8,6 +8,7 @@ type TabsProps = Omit<React.ComponentPropsWithoutRef<typeof TabsPrimitive.Root>,
   onValueChange?: (value: string) => void | Promise<void>;
 };
 
+/** `Tabs`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export const Tabs = React.forwardRef<React.ElementRef<typeof TabsPrimitive.Root>, TabsProps>(
   ({ onValueChange, ...props }, ref) => {
     const focusScope = useFocusScope();
@@ -22,6 +23,7 @@ export const Tabs = React.forwardRef<React.ElementRef<typeof TabsPrimitive.Root>
 );
 Tabs.displayName = TabsPrimitive.Root.displayName;
 
+/** `TabsList`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
@@ -30,6 +32,7 @@ export const TabsList = React.forwardRef<
 ));
 TabsList.displayName = TabsPrimitive.List.displayName;
 
+/** `TabsTrigger`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export const TabsTrigger = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.Trigger>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.Trigger>

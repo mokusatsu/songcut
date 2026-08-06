@@ -474,6 +474,7 @@ const ja: TranslationShape<typeof en> = {
 
 export const rendererTranslations = { en, ja } as const;
 
+/** `initializeRendererI18n`で翻訳resourceとlocaleを初期化し、i18n instanceを利用可能にする。 */
 export async function initializeRendererI18n(language: UiLanguage) {
   await i18next.use(initReactI18next).init({
     lng: language,
@@ -485,14 +486,17 @@ export async function initializeRendererI18n(language: UiLanguage) {
   if (typeof document !== "undefined") document.documentElement.lang = language;
 }
 
+/** 翻訳keyと置換値から、現在のrenderer localeに対応する表示文言を返す。 */
 export function tr(key: string, options?: TOptions) {
   return String(i18next.t(key, options));
 }
 
+/** `currentUiLanguage`の候補と条件から、利用すべき値または操作を決定する。 */
 export function currentUiLanguage(): UiLanguage {
   return i18next.resolvedLanguage === "ja" ? "ja" : "en";
 }
 
+/** `localizeJobMessage`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeJobMessage(job: { message?: string; message_code?: string; message_args?: Record<string, string | number> } | null | undefined) {
   if (!job) return "";
   if (job.message_code && i18next.exists(`messages.${job.message_code}`)) {
@@ -501,6 +505,7 @@ export function localizeJobMessage(job: { message?: string; message_code?: strin
   return job.message ?? "";
 }
 
+/** `localizeFilenameTemplateError`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeFilenameTemplateError(error: string | null) {
   if (!error) return null;
   if (error === "Filename template cannot be empty.") return tr("filename.empty");
@@ -537,6 +542,7 @@ const knownUiMessages: Record<string, string> = {
   "Could not read the dropped file path.": "messages.droppedFilePath",
 };
 
+/** `localizeUiMessage`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeUiMessage(message: string) {
   if (!message || currentUiLanguage() === "en" || /[\u3040-\u30ff\u3400-\u9fff]/.test(message)) return message;
   const key = knownUiMessages[message];

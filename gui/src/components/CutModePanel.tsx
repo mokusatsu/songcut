@@ -55,6 +55,7 @@ export type CutModePanelProps = {
   segments: CutSegmentsProps;
 };
 
+/** `CutModePanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function CutModePanel(props: CutModePanelProps) {
   return (
     <>

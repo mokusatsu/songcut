@@ -27,10 +27,12 @@ function serializeSave<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/** `projectPathForVideo`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function projectPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
   return sidecarPathForVideo(path.resolve(videoPath), mode);
 }
 
+/** `loadProject`の対象をローカル環境から読み取り、型付きの値として返す。 */
 export async function loadProject(projectPath: string): Promise<ProjectOpenResult> {
   ensureProjectExtension(projectPath);
   const candidates: Array<{ candidatePath: string; recoveredFrom: ProjectOpenResult["recoveredFrom"] }> = [
@@ -57,6 +59,7 @@ export async function loadProject(projectPath: string): Promise<ProjectOpenResul
   return { projectPath, document: valid[0].document, recoveredFrom: valid[0].recoveredFrom };
 }
 
+/** `saveProject`の値を検証済みの形式で永続先へ保存する。 */
 export async function saveProject(projectPath: string, document: ProjectDocumentV1): Promise<ProjectSaveResult> {
   ensureProjectExtension(projectPath);
   assertProjectDocument(document);
@@ -66,10 +69,12 @@ export async function saveProject(projectPath: string, document: ProjectDocument
   });
 }
 
+/** `recoveryPath`のsnapshotから編集状態を復元し、通常の保存経路へ戻す。 */
 export function recoveryPath(userDataPath: string) {
   return path.join(userDataPath, "recovery", "active.json");
 }
 
+/** `loadRecovery`の対象をローカル環境から読み取り、型付きの値として返す。 */
 export async function loadRecovery(userDataPath: string): Promise<RecoverySnapshot | null> {
   const target = recoveryPath(userDataPath);
   if (!(await fileExists(target))) return null;
@@ -78,6 +83,7 @@ export async function loadRecovery(userDataPath: string): Promise<RecoverySnapsh
   return raw;
 }
 
+/** `saveRecovery`の値を検証済みの形式で永続先へ保存する。 */
 export async function saveRecovery(userDataPath: string, snapshot: RecoverySnapshot): Promise<void> {
   assertRecoverySnapshot(snapshot);
   await serializeSave(() =>
@@ -85,6 +91,7 @@ export async function saveRecovery(userDataPath: string, snapshot: RecoverySnaps
   );
 }
 
+/** `clearRecovery`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
 export async function clearRecovery(userDataPath: string): Promise<void> {
   await serializeSave(async () => {
     const target = recoveryPath(userDataPath);
@@ -94,6 +101,7 @@ export async function clearRecovery(userDataPath: string): Promise<void> {
   });
 }
 
+/** `fingerprintSource`の内容とmetadataから、移動後も照合できる識別値を生成する。 */
 export async function fingerprintSource(filePath: string): Promise<SourceIdentity> {
   const resolved = path.resolve(filePath);
   const info = await stat(resolved);
@@ -125,6 +133,7 @@ export async function fingerprintSource(filePath: string): Promise<SourceIdentit
   }
 }
 
+/** `findProjectSource`の候補と条件から、利用すべき値または操作を決定する。 */
 export async function findProjectSource(projectPath: string, document: ProjectDocumentV1): Promise<string | null> {
   const candidates = [
     document.source.absolute_path,
@@ -141,10 +150,12 @@ export async function findProjectSource(projectPath: string, document: ProjectDo
   return null;
 }
 
+/** `sourceIdentityMatches`の二つの入力が同一対象または重複範囲を表すか判定する。 */
 export function sourceIdentityMatches(document: ProjectDocumentV1, identity: SourceIdentity) {
   return document.source.size_bytes === identity.size_bytes && document.source.fingerprint.value === identity.fingerprint.value;
 }
 
+/** `archiveRelinkedProject`の値を検証済みの形式で永続先へ保存する。 */
 export async function archiveRelinkedProject(projectPath: string): Promise<string | null> {
   if (!(await fileExists(projectPath))) return null;
   let candidate = `${projectPath}.relinked.bak`;
@@ -154,6 +165,7 @@ export async function archiveRelinkedProject(projectPath: string): Promise<strin
   return candidate;
 }
 
+/** `archiveConflict`の値を検証済みの形式で永続先へ保存する。 */
 export async function archiveConflict(filePath: string): Promise<string> {
   const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   const candidate = `${filePath}.conflict-${stamp}`;

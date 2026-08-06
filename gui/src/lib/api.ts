@@ -9,7 +9,11 @@ import type {
   WaveformUpdate
 } from "@/types";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
-import { normalizeSubtitleStyle, type LyricsLane } from "@/lib/subtitles";
+import {
+  normalizeSubtitleStyle,
+  type LyricsLane,
+  type SubtitleRenderRequestItem,
+} from "@/lib/subtitles";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -84,6 +88,7 @@ export class ApiError extends Error {
   }
 }
 
+/** `postJson`でJSON bodyを送信し、HTTP失敗を詳細付き例外へ変換する。 */
 export async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -103,22 +108,26 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
   return (await response.json()) as T;
 }
 
+/** `getJson`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`);
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
 }
 
+/** `deleteJson`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
 export async function deleteJson<T>(baseUrl: string, path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, { method: "DELETE" });
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
 }
 
+/** `probeVideo`でmediaを解析し、再生時間・stream・codec情報を取得する。 */
 export function probeVideo(baseUrl: string, filePath: string) {
   return postJson<VideoInfo>(baseUrl, "/videos/probe", { path: filePath });
 }
 
+/** `startAnalysis`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startAnalysis(
   baseUrl: string,
   filePath: string,
@@ -136,43 +145,53 @@ export function startAnalysis(
   });
 }
 
+/** `startWaveform`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startWaveform(baseUrl: string, filePath: string) {
   return postJson<JobRecord>(baseUrl, "/waveform/jobs", { path: filePath });
 }
 
+/** `getWaveformUpdates`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function getWaveformUpdates(baseUrl: string, jobId: string, cursor: number, limit = 2048) {
   const query = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
   return getJson<WaveformUpdate>(baseUrl, `/waveform/jobs/${encodeURIComponent(jobId)}/updates?${query}`);
 }
 
+/** `cancelOrReleaseWaveform`の入力が要求された条件やschemaを満たすか検証する。 */
 export function cancelOrReleaseWaveform(baseUrl: string, jobId: string) {
   return deleteJson<JobRecord>(baseUrl, `/waveform/jobs/${encodeURIComponent(jobId)}`);
 }
 
+/** `getWhisperStatus`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function getWhisperStatus(baseUrl: string) {
   return getJson<WhisperStatus>(baseUrl, "/models/whisper");
 }
 
+/** `startWhisperDownload`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startWhisperDownload(baseUrl: string, model: WhisperModelKey = "whisper-large-v3-turbo-int8-ov") {
   return postJson<JobRecord>(baseUrl, "/models/whisper/download", { model });
 }
 
+/** `getDemucsStatus`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function getDemucsStatus(baseUrl: string) {
   return getJson<DemucsStatus>(baseUrl, "/models/demucs");
 }
 
+/** `startDemucsDownload`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startDemucsDownload(baseUrl: string) {
   return postJson<JobRecord>(baseUrl, "/models/demucs/download", {});
 }
 
+/** `getMmsStatus`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function getMmsStatus(baseUrl: string) {
   return getJson<MmsStatus>(baseUrl, "/models/mms");
 }
 
+/** `startMmsDownload`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startMmsDownload(baseUrl: string) {
   return postJson<JobRecord>(baseUrl, "/models/mms/download", {});
 }
 
+/** `startTranscription`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startTranscription(
   baseUrl: string,
   sourcePath: string,
@@ -190,10 +209,12 @@ export function startTranscription(
   });
 }
 
+/** `checkFfmpeg`の現在値を検査し、後続処理に必要な判定結果を返す。 */
 export function checkFfmpeg(baseUrl: string) {
   return getJson<FfmpegCheckResult>(baseUrl, "/ffmpeg/check");
 }
 
+/** `startExport`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startExport(
   baseUrl: string,
   sourcePath: string,
@@ -211,6 +232,7 @@ export function startExport(
   });
 }
 
+/** `startLyricsAnalysis`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startLyricsAnalysis(
   baseUrl: string,
   sourcePath: string,
@@ -229,6 +251,7 @@ export function startLyricsAnalysis(
   });
 }
 
+/** `startSubtitleExport`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startSubtitleExport(
   baseUrl: string,
   sourcePath: string,
@@ -246,19 +269,6 @@ export function startSubtitleExport(
   });
 }
 
-export type SubtitleRenderRequestItem = {
-  segment_id: string;
-  signature: string;
-  text: string;
-  style: LyricsLane["style"];
-};
-
-export type SubtitleRenderRequest = {
-  width: number;
-  height: number;
-  items: SubtitleRenderRequestItem[];
-};
-
 export type SubtitleRenderResultItem = {
   segment_id: string;
   signature: string;
@@ -267,6 +277,7 @@ export type SubtitleRenderResultItem = {
   height: number;
 };
 
+/** `startSubtitleRender`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startSubtitleRender(
   baseUrl: string,
   videoWidth: number,
@@ -280,6 +291,7 @@ export function startSubtitleRender(
   });
 }
 
+/** `getExportPlan`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function getExportPlan(baseUrl: string, sourcePath: string, items: unknown[]) {
   return postJson<ExportRenderPlan>(baseUrl, "/export/plan", {
     source_path: sourcePath,
@@ -287,18 +299,22 @@ export function getExportPlan(baseUrl: string, sourcePath: string, items: unknow
   });
 }
 
+/** `startScratchProxy`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startScratchProxy(baseUrl: string, sourcePath: string) {
   return postJson<JobRecord>(baseUrl, "/scratch-proxy/jobs", { path: sourcePath });
 }
 
+/** `cancelScratchProxy`の入力が要求された条件やschemaを満たすか検証する。 */
 export function cancelScratchProxy(baseUrl: string, jobId: string) {
   return deleteJson<JobRecord>(baseUrl, `/scratch-proxy/jobs/${encodeURIComponent(jobId)}`);
 }
 
+/** `releaseScratchProxy`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
 export function releaseScratchProxy(baseUrl: string, proxyId: string) {
   return deleteJson<{ released: boolean }>(baseUrl, `/scratch-proxies/${encodeURIComponent(proxyId)}`);
 }
 
+/** `waitForJob`の完了条件まで待機し、成功時の結果または失敗を返す。 */
 export async function waitForJob<T = unknown>(
   baseUrl: string,
   id: string,
@@ -317,6 +333,7 @@ export async function waitForJob<T = unknown>(
 
 export type { ScratchProxyResult };
 
+/** `isAnalysisResult`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isAnalysisResult(value: unknown): value is AnalysisResult {
   return Boolean(value && typeof value === "object" && Array.isArray((value as AnalysisResult).segments));
 }

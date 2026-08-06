@@ -59,6 +59,7 @@ export type CutBoundaryPolicyOptions = {
  * intentional precision difference: timeline edits keep 0.1 s and the timing
  * dialog accepts 0.001 s ranges.
  */
+/** `createCutBoundaryPolicy`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createCutBoundaryPolicy(
   intent: BoundaryEditIntent,
   options: CutBoundaryPolicyOptions = {},
@@ -74,6 +75,7 @@ export function createCutBoundaryPolicy(
 /** Backwards-compatible default for Cut timeline drag behavior. */
 export const CUT_BOUNDARY_POLICY: BoundaryPolicy = createCutBoundaryPolicy("drag");
 
+/** `resolveBoundaryTime`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveBoundaryTime(
   range: TimeRange,
   edge: BoundaryEdge,
@@ -86,6 +88,7 @@ export function resolveBoundaryTime(
   return acceptedBoundaryTime(snapped, context, policy.strict === true, policy.clamp === true);
 }
 
+/** `nudgeBoundaryTime`で指定された変更を不変更新として状態へ反映する。 */
 export function nudgeBoundaryTime(
   range: TimeRange,
   edge: BoundaryEdge,
@@ -104,6 +107,7 @@ export function nudgeBoundaryTime(
 }
 
 /** Resolve both edges of a proposed range through the same policy contract. */
+/** `resolveBoundaryRange`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveBoundaryRange(
   proposedRange: TimeRange,
   policy: BoundaryPolicy,
@@ -127,6 +131,7 @@ export function resolveBoundaryRange(
   return end === null ? null : { start, end };
 }
 
+/** `boundaryNudgePlaybackRange`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function boundaryNudgePlaybackRange(
   segment: TimedEntity,
   edge: BoundaryEdge,
@@ -138,6 +143,7 @@ export function boundaryNudgePlaybackRange(
   };
 }
 
+/** `nearestBoundaryTarget`の候補と条件から、利用すべき値または操作を決定する。 */
 export function nearestBoundaryTarget(
   segments: readonly (TimedEntity & { id: string })[],
   time: number,

@@ -7,6 +7,7 @@ export type ToggleProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "o
   onPressedChange: (pressed: boolean) => void;
 };
 
+/** `Toggle`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export const Toggle = React.forwardRef<HTMLButtonElement, ToggleProps>(
   ({ pressed, onPressedChange, className, tabIndex, onClick, ...props }, ref) => {
     const handleToggleClick: React.MouseEventHandler<HTMLButtonElement> = (event) => {

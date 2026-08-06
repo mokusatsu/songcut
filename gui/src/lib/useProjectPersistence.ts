@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProjectDocumentV1, ProjectSaveStatus, RecoverySnapshot } from "@/lib/project";
 
+/** `projectAutoSaveKey`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function projectAutoSaveKey(
   projectPath: string,
   document: Pick<ProjectDocumentV1, "project_id" | "revision"> | null
@@ -8,6 +9,7 @@ export function projectAutoSaveKey(
   return document ? `${projectPath}\0${document.project_id}\0${document.revision}` : "";
 }
 
+/** `useProjectPersistence`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useProjectPersistence(
   projectPath: string,
   document: ProjectDocumentV1 | null,

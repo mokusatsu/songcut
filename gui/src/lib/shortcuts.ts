@@ -42,6 +42,7 @@ export type EditorShortcutControlDescriptor = {
  * Classifies controls by editing intent rather than by generic interactivity.
  * Editor action buttons intentionally do not suppress WASD/Space shortcuts.
  */
+/** `isEditorShortcutControlSuppressed`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isEditorShortcutControlSuppressed(control: EditorShortcutControlDescriptor): boolean {
   if (control.explicitSuppression) return true;
   const tagName = control.tagName.toLowerCase();
@@ -52,6 +53,7 @@ export function isEditorShortcutControlSuppressed(control: EditorShortcutControl
   return role === "textbox" || role === "combobox" || role === "searchbox" || role === "spinbutton";
 }
 
+/** `resolveEditorShortcut`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveEditorShortcut(event: ShortcutEvent): EditorShortcutAction | null {
   if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return null;
 
@@ -90,6 +92,7 @@ export function resolveEditorShortcut(event: ShortcutEvent): EditorShortcutActio
   }
 }
 
+/** `isEditorShortcutSuppressed`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isEditorShortcutSuppressed(event: KeyboardEvent): boolean {
   if (document.querySelector("[role='dialog'][aria-modal='true']")) return true;
   const target = event.target;

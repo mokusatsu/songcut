@@ -12,6 +12,7 @@ type DialogProps = PropsWithChildren<{
   className?: string;
 }>;
 
+/** `Dialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function Dialog({ open, title, onClose, className, children }: DialogProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);

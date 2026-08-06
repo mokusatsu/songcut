@@ -66,6 +66,7 @@ export type SubProjectHydratedState = ProjectBaseHydratedState & {
 export type ProjectHydratedState = CutProjectHydratedState | SubProjectHydratedState;
 
 /** Create a new Cut sidecar using only the common base creator. */
+/** `createCutProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createCutProjectDocument(
   projectPath: string,
   source: SourceIdentity,
@@ -75,6 +76,7 @@ export function createCutProjectDocument(
 }
 
 /** Create a new Sub sidecar using only the common base creator. */
+/** `createSubProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createSubProjectDocument(
   projectPath: string,
   source: SourceIdentity,
@@ -83,18 +85,22 @@ export function createSubProjectDocument(
   return createBaseProjectDocument(projectPath, source, videoInfo, "sub") as SubProjectDocumentV3;
 }
 
+/** `isCutProjectOperation`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isCutProjectOperation(operation: ProjectOperation): operation is CutProjectOperation {
   return operation === null || isProjectOperationKindForMode("cut", operation.kind);
 }
 
+/** `isSubProjectOperation`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isSubProjectOperation(operation: ProjectOperation): operation is SubProjectOperation {
   return operation === null || isProjectOperationKindForMode("sub", operation.kind);
 }
 
+/** `assertCutProjectOperation`の入力が要求された条件やschemaを満たすか検証する。 */
 export function assertCutProjectOperation(operation: ProjectOperation): asserts operation is CutProjectOperation {
   assertOperationForMode("cut", operation);
 }
 
+/** `assertSubProjectOperation`の入力が要求された条件やschemaを満たすか検証する。 */
 export function assertSubProjectOperation(operation: ProjectOperation): asserts operation is SubProjectOperation {
   assertOperationForMode("sub", operation);
 }
@@ -104,6 +110,7 @@ export function assertSubProjectOperation(operation: ProjectOperation): asserts 
  * Legacy v3 Cut documents may omit `mode`; the base serializer preserves that
  * omission while still treating the document as Cut internally.
  */
+/** `composeCutProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function composeCutProjectDocument(
   base: ProjectDocumentV1,
   state: CutProjectComposeState,
@@ -158,6 +165,7 @@ export function composeCutProjectDocument(
 }
 
 /** Compose a Sub document without requiring any Cut analysis fields. */
+/** `composeSubProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function composeSubProjectDocument(
   base: ProjectDocumentV1,
   state: SubProjectComposeState,
@@ -182,6 +190,7 @@ export function composeSubProjectDocument(
 }
 
 /** Hydrate the common envelope and Cut-owned state from a validated document. */
+/** `hydrateCutProjectDocument`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function hydrateCutProjectDocument(value: unknown): CutProjectHydratedState {
   const document = modeDocument(value, "cut");
   const common = hydrateProjectBase(document);
@@ -218,6 +227,7 @@ export function hydrateCutProjectDocument(value: unknown): CutProjectHydratedSta
 }
 
 /** Hydrate the common envelope and Sub-owned state without exposing Cut data. */
+/** `hydrateSubProjectDocument`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function hydrateSubProjectDocument(value: unknown): SubProjectHydratedState {
   const document = modeDocument(value, "sub");
   const subtitle = validateSubtitleState(document.subtitle) ?? createDefaultSubtitleState();
@@ -230,6 +240,7 @@ export function hydrateSubProjectDocument(value: unknown): SubProjectHydratedSta
 }
 
 /** Hydrate either mode through its mode-discriminated adapter. */
+/** `hydrateProjectDocument`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function hydrateProjectDocument(value: unknown): ProjectHydratedState {
   const normalized = normalizeProjectDocument(value);
   return normalized.mode === "sub"

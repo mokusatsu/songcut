@@ -20,6 +20,7 @@ export const CUT_WAVEFORM_AMPLITUDE_PROFILE_STORAGE_KEY = "songcut:waveform-ampl
 type StorageReader = Pick<Storage, "getItem">;
 type StorageWriter = Pick<Storage, "setItem">;
 
+/** `readWaveformDisplayModes`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readWaveformDisplayModes(storage: StorageReader): WaveformDisplayModes {
   const storedCut = storage.getItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEYS.cut);
   const cutSource = storedCut ?? storage.getItem(LEGACY_WAVEFORM_DISPLAY_MODE_STORAGE_KEY);
@@ -32,6 +33,7 @@ export function readWaveformDisplayModes(storage: StorageReader): WaveformDispla
   };
 }
 
+/** `writeWaveformDisplayMode`の値を検証済みの形式で永続先へ保存する。 */
 export function writeWaveformDisplayMode(
   storage: StorageWriter,
   mode: AppMode,
@@ -40,16 +42,19 @@ export function writeWaveformDisplayMode(
   storage.setItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEYS[mode], displayMode);
 }
 
+/** `normalizeCutWaveformAmplitudeProfile`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeCutWaveformAmplitudeProfile(value: unknown): CutWaveformAmplitudeProfile {
   return value === "adaptive" || value === "singing-mc-contrast"
     ? value
     : DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE;
 }
 
+/** `readCutWaveformAmplitudeProfile`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readCutWaveformAmplitudeProfile(storage: StorageReader): CutWaveformAmplitudeProfile {
   return normalizeCutWaveformAmplitudeProfile(storage.getItem(CUT_WAVEFORM_AMPLITUDE_PROFILE_STORAGE_KEY));
 }
 
+/** `writeCutWaveformAmplitudeProfile`の値を検証済みの形式で永続先へ保存する。 */
 export function writeCutWaveformAmplitudeProfile(
   storage: StorageWriter,
   profile: CutWaveformAmplitudeProfile

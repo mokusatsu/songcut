@@ -18,11 +18,6 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
 import { tr } from "@/i18n";
-import type {
-  SubModePanelActions,
-  SubModePanelCapabilities,
-  SubModePanelOperationView,
-} from "@/lib/modePanelContract";
 import {
   SUBTITLE_EFFECTS,
   defaultSubtitleEffectParams,
@@ -46,10 +41,39 @@ import {
   type LyricsLane,
   type LyricsSegment,
   type SubtitleProjectState,
+  type SubtitleRenderRequest,
   type SubtitleStyle,
 } from "@/lib/subtitles";
 import { clamp, formatTime } from "@/lib/time";
 import type { ModePanelViewModel } from "@/lib/modeViewModel";
+import type { JobRecord } from "@/types";
+
+type SubModePanelOperationView = {
+  analysisJob: JobRecord | null;
+  exportJob: JobRecord | null;
+  busy: "analysis" | "export" | null;
+};
+
+type SubModePanelCapabilities = {
+  canAddSegment: boolean;
+  canDeleteSelectedSegment: boolean;
+};
+
+type SubModePanelActions = {
+  load: () => void;
+  openSettings: () => void;
+  prepareAnalysis: () => Promise<void>;
+  analyzeLyrics: (lyricsText: string) => Promise<void>;
+  exportSubtitles: () => Promise<boolean>;
+  renderSubtitles: (request: SubtitleRenderRequest) => Promise<void>;
+  invalidateSubtitleRender: () => void;
+  listSystemFonts: () => Promise<string[]>;
+  confirmRemoveLane: (lane: LyricsLane) => boolean;
+  selectSegment: (laneId: string, segment: LyricsSegment) => void;
+  addSegment: () => void;
+  removeSelectedSegment: () => void;
+  showMessage: (message: string) => void;
+};
 
 export type SubModePanelProps = {
   view: ModePanelViewModel;
@@ -75,6 +99,7 @@ export type SubModePanelProps = {
   onBoundaryCommit: () => void;
 };
 
+/** `SubModePanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SubModePanel(props: SubModePanelProps) {
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [lyricsText, setLyricsText] = useState("");
@@ -159,6 +184,7 @@ export function SubModePanel(props: SubModePanelProps) {
     };
   }, [styleLane, systemFonts, fontListError, props.actions.listSystemFonts]);
 
+  /** `analyzeLyrics`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function analyzeLyrics() {
     if (!lyricsText.trim()) return;
     setLyricsOpen(false);
@@ -166,6 +192,7 @@ export function SubModePanel(props: SubModePanelProps) {
     await props.actions.analyzeLyrics(lyricsText);
   }
 
+  /** `openLyricsDialog`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function openLyricsDialog() {
     setPreparingModel(true);
     try {
@@ -178,10 +205,12 @@ export function SubModePanel(props: SubModePanelProps) {
     }
   }
 
+  /** `exportSubtitles`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function exportSubtitles() {
     if (await props.actions.exportSubtitles()) setExportProgressOpen(true);
   }
 
+  /** `addLane`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function addLane(alignment: number) {
     if (props.state.lanes.length >= 3) return;
     const lane = createLyricsLane(alignment, `Lyrics ${props.state.lanes.length + 1}`);
@@ -194,6 +223,7 @@ export function SubModePanel(props: SubModePanelProps) {
     setLaneDialogOpen(false);
   }
 
+  /** `removeLane`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   function removeLane(laneId: string) {
     if (props.state.lanes.length <= 1) return;
     const lane = props.state.lanes.find((item) => item.id === laneId);
@@ -210,6 +240,7 @@ export function SubModePanel(props: SubModePanelProps) {
     });
   }
 
+  /** `updateLane`で指定された変更を不変更新として状態へ反映する。 */
   function updateLane(laneId: string, lane: LyricsLane, selectedId = props.state.selected_segment_id) {
     props.onStateChange({
       ...props.state,
@@ -371,6 +402,7 @@ export function SubModePanel(props: SubModePanelProps) {
 }
 
 
+/** `SubtitleOverlay`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SubtitleOverlay(props: {
   state: SubtitleProjectState;
   currentTime: number;
@@ -429,6 +461,7 @@ export function SubtitleOverlay(props: {
   );
 }
 
+/** `AlignmentGrid`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function AlignmentGrid(props: { value: number; onChange: (alignment: number) => void }) {
   return (
     <div className="alignment-grid" role="radiogroup" aria-label={tr("sub.subtitlePositionTitle")}>
@@ -448,6 +481,7 @@ export function AlignmentGrid(props: { value: number; onChange: (alignment: numb
   );
 }
 
+/** `SubtitleStyleEditor`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 function SubtitleStyleEditor(props: {
   style: SubtitleStyle;
   effect: SubtitleEffectSettings;
@@ -466,15 +500,19 @@ function SubtitleStyleEditor(props: {
   const fontOptions = props.fonts?.includes(style.font_name)
     ? props.fonts
     : [style.font_name, ...(props.fonts ?? [])];
+  /** `patch`で指定された変更を不変更新として状態へ反映する。 */
   function patch(value: Partial<SubtitleStyle>) {
     props.onChange(normalizeSubtitleStyle({ ...style, ...value }));
   }
+  /** `patchEffect`で指定された変更を不変更新として状態へ反映する。 */
   function patchEffect(value: Partial<SubtitleEffectSettings>) {
     props.onEffectChange({ ...effect, ...value });
   }
+  /** `patchEffectParam`で指定された変更を不変更新として状態へ反映する。 */
   function patchEffectParam(name: string, value: SubtitleEffectParameterValue) {
     patchEffect({ params: { ...effect.params, [name]: value } });
   }
+  /** `saveStylePreset`の値を検証済みの形式で永続先へ保存する。 */
   function saveStylePreset() {
     const name = stylePresetName.trim();
     if (!name) return;
@@ -492,6 +530,7 @@ function SubtitleStyleEditor(props: {
       setStylePresetMessage(tr("sub.presetSaveFailed", { detail: String(error) }));
     }
   }
+  /** `applyStylePreset`で指定された変更を不変更新として状態へ反映する。 */
   function applyStylePreset() {
     const preset = stylePresets.find((item) => item.id === selectedStylePresetId);
     if (!preset) return;
@@ -682,6 +721,7 @@ function SubtitleStyleEditor(props: {
   );
 }
 
+/** `ColorControl`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 function ColorControl(props: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <label className="color-control" title={props.label}>
@@ -696,24 +736,28 @@ function ColorControl(props: { label: string; value: string; onChange: (value: s
   );
 }
 
+/** `subtitleEffectLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function subtitleEffectLabel(name: string, fallback: string) {
   const key = `sub.effect.${name}`;
   const translated = tr(key);
   return translated === key ? fallback : translated;
 }
 
+/** `subtitleEffectParameterLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function subtitleEffectParameterLabel(name: string, fallback: string) {
   const key = `sub.effect.param.${name}`;
   const translated = tr(key);
   return translated === key ? fallback : translated;
 }
 
+/** `subtitleEffectOptionLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function subtitleEffectOptionLabel(value: string, fallback: string) {
   const key = `sub.effect.option.${value}`;
   const translated = tr(key);
   return translated === key ? fallback : translated;
 }
 
+/** `hasSubtitleSegments`の入力が要求された条件やschemaを満たすか検証する。 */
 function hasSubtitleSegments(state: SubtitleProjectState) {
   return state.lanes.some((lane) => lane.segments.length > 0);
 }

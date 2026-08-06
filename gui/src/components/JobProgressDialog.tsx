@@ -39,6 +39,7 @@ export type JobProgressDialogProps = {
   closeAction?: JobProgressCloseAction;
 };
 
+/** `resolveJobProgressDialogState`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveJobProgressDialogState(
   job: JobRecord | null | undefined,
   progressOverride?: number,
@@ -60,6 +61,7 @@ export function resolveJobProgressDialogState(
   };
 }
 
+/** `resolveJobProgressMessage`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveJobProgressMessage(
   job: JobRecord | null | undefined,
   pendingMessage: string,
@@ -71,6 +73,7 @@ export function resolveJobProgressMessage(
   return job?.message || pendingMessage;
 }
 
+/** `shouldRenderJobProgressError`の入力が要求された条件やschemaを満たすか検証する。 */
 export function shouldRenderJobProgressError(
   job: JobRecord | null | undefined,
   error: JobProgressDialogProps["error"],
@@ -78,6 +81,7 @@ export function shouldRenderJobProgressError(
   return error !== false && Boolean(error ?? job?.error);
 }
 
+/** `resolveJobProgressDialogActionLabel`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveJobProgressDialogActionLabel(
   state: JobProgressDialogState,
   closeAction: JobProgressCloseAction,
@@ -87,6 +91,7 @@ export function resolveJobProgressDialogActionLabel(
   return state.active ? closeAction.activeLabel : closeAction.terminalLabel;
 }
 
+/** `JobProgressDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function JobProgressDialog(props: JobProgressDialogProps) {
   const state = resolveJobProgressDialogState(props.job, props.progressOverride, props.closeAction?.statuses);
   const statusMessage = resolveJobProgressMessage(props.job, props.pendingMessage, state, props.statusMessage);

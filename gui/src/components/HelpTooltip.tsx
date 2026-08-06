@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { createPortal } from "react-dom";
 import { CircleHelp } from "lucide-react";
 
+/** `HelpTooltip`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function HelpTooltip(props: { label: string; children: ReactNode }) {
   const id = `help-${useId().replace(/:/g, "")}`;
   const triggerRef = useRef<HTMLButtonElement>(null);

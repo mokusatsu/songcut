@@ -6,7 +6,6 @@ import {
   startSubtitleExport,
   startSubtitleRender,
   waitForJob,
-  type SubtitleRenderRequest,
   type SubtitleRenderResultItem,
   type WhisperSettings,
 } from "@/lib/api";
@@ -19,6 +18,7 @@ import {
   subtitleRenderSignature,
   type LyricsAnalysisResult,
   type LyricsSegment,
+  type SubtitleRenderRequest,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
 import type { JobRecord } from "@/types";
@@ -70,10 +70,12 @@ const DEFAULT_SERVICES: SubOperationServices = {
   waitForJob,
 };
 
+/** `isActive`の入力が要求された条件やschemaを満たすか検証する。 */
 function isActive(job: JobRecord | null) {
   return job?.status === "queued" || job?.status === "running";
 }
 
+/** `placeLyricsAnalysisResult`で歌詞解析結果を既存laneへ配置し、選択状態を更新する。 */
 export function placeLyricsAnalysisResult(
   state: SubtitleProjectState,
   result: LyricsAnalysisResult,
@@ -138,6 +140,7 @@ export function placeLyricsAnalysisResult(
   };
 }
 
+/** `applySubtitleRenderResults`で指定された変更を不変更新として状態へ反映する。 */
 export function applySubtitleRenderResults(
   state: SubtitleProjectState,
   items: SubtitleRenderResultItem[],
@@ -171,6 +174,7 @@ export function applySubtitleRenderResults(
   };
 }
 
+/** `createSubOperationCoordinator`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createSubOperationCoordinator(
   getOptions: () => SubOperationOptions,
   services: SubOperationServices = DEFAULT_SERVICES,
@@ -305,6 +309,7 @@ export function createSubOperationCoordinator(
   };
 }
 
+/** `useSubOperations`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useSubOperations(
   options: SubOperationOptions,
   services: SubOperationServices = DEFAULT_SERVICES,

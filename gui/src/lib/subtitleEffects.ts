@@ -154,16 +154,19 @@ export const DEFAULT_SUBTITLE_EFFECT: SubtitleEffectSettings = {
   params: {},
 };
 
+/** `subtitleEffectDefinition`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function subtitleEffectDefinition(name: string) {
   return SUBTITLE_EFFECTS.find((effect) => effect.name === name) ?? SUBTITLE_EFFECTS[0];
 }
 
+/** `defaultSubtitleEffectParams`で定義済みschemaに沿った初期parameterを生成する。 */
 export function defaultSubtitleEffectParams(name: string) {
   return Object.fromEntries(
     subtitleEffectDefinition(name).params.map((parameter) => [parameter.name, parameter.defaultValue])
   );
 }
 
+/** `normalizeSubtitleEffect`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeSubtitleEffect(value: unknown): SubtitleEffectSettings {
   if (!value || typeof value !== "object") return { ...DEFAULT_SUBTITLE_EFFECT, params: {} };
   const candidate = value as Partial<SubtitleEffectSettings>;

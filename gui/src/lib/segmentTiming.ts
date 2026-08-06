@@ -2,6 +2,7 @@ import type { RhythmGridPoint } from "@/lib/subtitles";
 
 const EPSILON = 1e-6;
 
+/** `parseTimeInput`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseTimeInput(value: string): number | null {
   const text = value.trim();
   if (!text) return null;
@@ -25,6 +26,7 @@ export function parseTimeInput(value: string): number | null {
   return hours * 3600 + minutes * 60 + seconds;
 }
 
+/** `formatTimeInput`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function formatTimeInput(seconds: number): string {
   const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   const totalMilliseconds = Math.round(safe * 1000);
@@ -40,17 +42,20 @@ export function formatTimeInput(seconds: number): string {
     : `${minute}:${suffix}`;
 }
 
+/** `cutTimeArrowStep`でtimeline入力をCut刻みまたはrhythm grid上の時刻へ変換する。 */
 export function cutTimeArrowStep(shiftKey: boolean, ctrlKey: boolean): number {
   if (ctrlKey) return 1;
   if (shiftKey) return 0.001;
   return 0.1;
 }
 
+/** `rhythmGridTimes`でtimeline入力をCut刻みまたはrhythm grid上の時刻へ変換する。 */
 export function rhythmGridTimes(grid: readonly RhythmGridPoint[]): number[] {
   return [...new Set(grid.map((point) => point.time).filter((time) => Number.isFinite(time) && time >= 0))]
     .sort((left, right) => left - right);
 }
 
+/** `nearestRhythmTime`の候補と条件から、利用すべき値または操作を決定する。 */
 export function nearestRhythmTime(grid: readonly RhythmGridPoint[], value: number): number | null {
   const times = rhythmGridTimes(grid);
   if (!times.length || !Number.isFinite(value)) return null;
@@ -60,6 +65,7 @@ export function nearestRhythmTime(grid: readonly RhythmGridPoint[], value: numbe
 }
 
 /** Finds the nearest rhythm point strictly inside a candidate boundary range. */
+/** `nearestRhythmTimeInRange`の候補と条件から、利用すべき値または操作を決定する。 */
 export function nearestRhythmTimeInRange(
   grid: readonly RhythmGridPoint[],
   value: number,
@@ -75,6 +81,7 @@ export function nearestRhythmTimeInRange(
   );
 }
 
+/** `adjacentRhythmTime`でtimeline入力をCut刻みまたはrhythm grid上の時刻へ変換する。 */
 export function adjacentRhythmTime(
   grid: readonly RhythmGridPoint[],
   value: number,
@@ -88,6 +95,7 @@ export function adjacentRhythmTime(
 }
 
 /** Moves one index from the nearest grid point, matching the subtitle nudge contract. */
+/** `nudgedRhythmTime`で指定された変更を不変更新として状態へ反映する。 */
 export function nudgedRhythmTime(
   grid: readonly RhythmGridPoint[],
   value: number,
@@ -102,6 +110,7 @@ export function nudgedRhythmTime(
   return times[Math.max(0, Math.min(times.length - 1, nearestIndex + direction))] ?? null;
 }
 
+/** `isOnRhythmGrid`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isOnRhythmGrid(grid: readonly RhythmGridPoint[], value: number): boolean {
   const nearest = nearestRhythmTime(grid, value);
   return nearest !== null && Math.abs(nearest - value) <= 0.0005;

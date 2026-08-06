@@ -22,6 +22,7 @@ export type ModeToolbarProps = {
 };
 
 /** Common command order and transport placement for Cut and Sub editors. */
+/** `ModeToolbar`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function ModeToolbar(props: ModeToolbarProps) {
   const className = ["toolbar", props.className].filter(Boolean).join(" ");
   return (

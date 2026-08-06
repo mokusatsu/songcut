@@ -10,19 +10,13 @@ import { clamp, formatTime } from "@/lib/time";
 import {
   cancelScratchProxy,
   checkFfmpeg,
-  getDemucsStatus,
   getExportPlan,
-  getMmsStatus,
-  getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
-  startDemucsDownload,
   startScratchProxy,
-  startMmsDownload,
-  startWhisperDownload,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, DemucsStatus, MmsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, WhisperSettings } from "@/lib/api";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
 import { CutModePanel } from "@/components/CutModePanel";
 import { CutSegmentTimingDialog } from "@/components/CutSegmentTimingDialog";
@@ -61,7 +55,7 @@ import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
 import { useModeOperations } from "@/lib/useModeOperations";
-import { createSubModePanelAdapter } from "@/lib/subModePanelAdapter";
+import { useModelPreparation } from "@/lib/useModelPreparation";
 import {
   ExportProgressDialog,
   FfmpegCheckDialog,
@@ -184,6 +178,7 @@ const zoomLevels = [1, 2, 4, 8, 16, 32];
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
 const cutDragBoundaryPolicy = createCutBoundaryPolicy("drag");
 
+/** `listSystemFonts`で利用可能な候補をplatformまたは状態から列挙して返す。 */
 function listSystemFonts() {
   return window.songcut.listSystemFonts();
 }
@@ -203,6 +198,7 @@ type SwitchSaveFailure = {
   recoverySaved: boolean;
 };
 
+/** アプリ全体の状態とmode sessionを組み立て、選択中モードの画面とdialogを描画する。 */
 export default function App(props: {
   initialLocaleSettings: { language: UiLanguage; preference: UiLanguagePreference };
 }) {
@@ -231,9 +227,6 @@ export default function App(props: {
   const videoPathRef = useRef("");
   const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
-  const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
-  const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
-  const mmsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
   const [waveformSessionCache] = useState(() => createWaveformSessionCache());
   const [apiBaseUrl, setApiBaseUrl] = useState("");
@@ -287,13 +280,6 @@ export default function App(props: {
     readBoundaryRefinementSettings
   );
   const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
-  const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
-  const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
-  const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
-  const [demucsStatus, setDemucsStatus] = useState<DemucsStatus | null>(null);
-  const [demucsDownloadOpen, setDemucsDownloadOpen] = useState(false);
-  const [mmsStatus, setMmsStatus] = useState<MmsStatus | null>(null);
-  const [mmsDownloadOpen, setMmsDownloadOpen] = useState(false);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -306,6 +292,29 @@ export default function App(props: {
   const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
   const [filenameTemplate, setFilenameTemplate] = useState(DEFAULT_FILENAME_TEMPLATE);
   const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
+
+  const {
+    whisperStatus,
+    demucsStatus,
+    mmsStatus,
+    whisperPreflightOpen,
+    setWhisperPreflightOpen,
+    whisperDownloadOpen,
+    setWhisperDownloadOpen,
+    demucsDownloadOpen,
+    setDemucsDownloadOpen,
+    mmsDownloadOpen,
+    setMmsDownloadOpen,
+    refreshWhisperStatus,
+    ensureWhisper,
+    ensureDemucs,
+    ensureMms,
+  } = useModelPreparation({
+    apiBaseUrl,
+    whisperModel: whisperSettings.model,
+    updateTask: taskRegistry.updateTask,
+    onMessage: setMessage,
+  });
 
   projectBaseRef.current = projectBase;
   videoPathRef.current = videoPath;
@@ -365,11 +374,13 @@ export default function App(props: {
     () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
     [segments, exportCandidates, filenameTemplate]
   );
+  /** `openOutputReview`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function openOutputReview() {
     setExportPlanState({ status: "idle", plan: null, error: null });
     setOutputOpen(true);
   }
 
+  /** `checkExportRenderDetails`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   async function checkExportRenderDetails() {
     if (!apiBaseUrl || !videoPath) return;
     const items = outputPlan.items.filter((item) => item.checked);
@@ -493,6 +504,7 @@ export default function App(props: {
 
   projectDocumentRef.current = projectDocument;
 
+  /** `markProjectChanged`の変更をrevisionへ記録し、永続化対象であることを示す。 */
   function markProjectChanged() {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
   }
@@ -544,6 +556,7 @@ export default function App(props: {
     },
   });
 
+  /** `updateFilenameTemplate`で指定された変更を不変更新として状態へ反映する。 */
   function updateFilenameTemplate(value: string) {
     setFilenameTemplate(value);
     markProjectChanged();
@@ -608,13 +621,6 @@ export default function App(props: {
   useEffect(() => {
     window.songcut.apiBaseUrl().then(setApiBaseUrl).catch((error) => setMessage(String(error)));
   }, []);
-
-  useEffect(() => {
-    if (!apiBaseUrl) return;
-    void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
-    void refreshDemucsStatus().catch((error) => setMessage(`Demucs status unavailable: ${String(error)}`));
-    void refreshMmsStatus().catch((error) => setMessage(`MMS status unavailable: ${String(error)}`));
-  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (!apiBaseUrl || recoveryCheckedRef.current) return;
@@ -756,27 +762,7 @@ export default function App(props: {
     return cutModeSession.operations.watchBackgroundTranscription(jobId);
   }, [apiBaseUrl, analysis?.transcription_job_id, cutOperations]);
 
-  async function refreshWhisperStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getWhisperStatus(apiBaseUrl);
-    setWhisperStatus(status);
-    return status;
-  }
-
-  async function refreshDemucsStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getDemucsStatus(apiBaseUrl);
-    setDemucsStatus(status);
-    return status;
-  }
-
-  async function refreshMmsStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getMmsStatus(apiBaseUrl);
-    setMmsStatus(status);
-    return status;
-  }
-
+  /** `checkRecoveryOnStartup`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   async function checkRecoveryOnStartup() {
     try {
       const raw = await window.songcut.loadRecovery();
@@ -798,6 +784,7 @@ export default function App(props: {
     }
   }
 
+  /** `showWaveformForDocument`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function showWaveformForDocument(document: ProjectDocumentV1, sourcePath: string | null) {
     const displayPath = sourcePath ?? document.source.absolute_path;
     const snapshot = document.waveform_snapshot;
@@ -825,6 +812,7 @@ export default function App(props: {
     if (decision.source === "generate" && sourcePath) void progressiveWaveform.start(sourcePath);
   }
 
+  /** `hydrateProject`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
   async function hydrateProject(nextProjectPath: string, document: ProjectDocumentV1, preferredSource?: string) {
     if (!apiBaseUrl) return;
     const hydrated = hydrateProjectDocument(document);
@@ -903,6 +891,7 @@ export default function App(props: {
     );
   }
 
+  /** `loadVideo`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
   async function loadVideo(filePath: string, discardCurrentChanges = false) {
     if (!apiBaseUrl) return;
     if (!discardCurrentChanges) {
@@ -1008,6 +997,7 @@ export default function App(props: {
     );
   }
 
+  /** `activateOpenedProject`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function activateOpenedProject(opened: ProjectOpenResult, discardCurrentChanges = false) {
     if (!discardCurrentChanges) {
       try {
@@ -1033,11 +1023,13 @@ export default function App(props: {
     if (opened.recoveredFrom !== "target") setMessage(`Project recovered from its ${opened.recoveredFrom} copy.`);
   }
 
+  /** `loadProjectPath`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
   async function loadProjectPath(filePath: string, discardCurrentChanges = false) {
     const opened = parseProjectOpenResult(await window.songcut.loadProject(filePath));
     await activateOpenedProject(opened, discardCurrentChanges);
   }
 
+  /** `openProject`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function openProject() {
     try {
       const raw = await window.songcut.openProject();
@@ -1050,6 +1042,7 @@ export default function App(props: {
     }
   }
 
+  /** `switchMode`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function switchMode(nextMode: AppMode) {
     if (nextMode === mode) return;
     if (runningJob) {
@@ -1086,6 +1079,7 @@ export default function App(props: {
     }
   }
 
+  /** `recoverProject`のsnapshotから編集状態を復元し、通常の保存経路へ戻す。 */
   async function recoverProject() {
     if (!recoveryCandidate) return;
     const target = recoveryCandidate.project_path || (await window.songcut.projectPathForVideo(recoveryCandidate.document.source.absolute_path));
@@ -1102,12 +1096,14 @@ export default function App(props: {
     setMessage("Recovered edits were saved to the project sidecar.");
   }
 
+  /** `discardRecovery`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   async function discardRecovery() {
     await window.songcut.clearRecovery();
     setRecoveryOpen(false);
     setRecoveryCandidate(null);
   }
 
+  /** `relinkSource`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function relinkSource() {
     const current = projectDocumentRef.current;
     if (!current) return;
@@ -1148,6 +1144,7 @@ export default function App(props: {
     await completeRelink(conflict, false);
   }
 
+  /** `completeRelink`の進行中状態を完了させ、一時resourceと表示状態を整理する。 */
   async function completeRelink(conflict: RelinkConflict, archiveDamagedDestination: boolean) {
     const current = projectDocumentRef.current;
     if (!current) return;
@@ -1176,6 +1173,7 @@ export default function App(props: {
     setMessage("Source relinked and the project was saved beside the media.");
   }
 
+  /** `configureScratchProxy`の設定に基づいて必要なresourceを作成または解放する。 */
   async function configureScratchProxy(generation: number) {
     await disposeScratchProxy(apiBaseUrl);
     if (scratchProxyConfigurationGenerationRef.current !== generation) return;
@@ -1246,6 +1244,7 @@ export default function App(props: {
     }
   }
 
+  /** `disposeScratchProxy`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   async function disposeScratchProxy(baseUrl: string, clearTask = true) {
     const proxyAudio = scratchProxyAudioRef.current;
     if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
@@ -1266,223 +1265,14 @@ export default function App(props: {
     if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
   }
 
+  /** `selectVideo`の候補と条件から、利用すべき値または操作を決定する。 */
   async function selectVideo() {
     const filePath = await window.songcut.selectVideo();
     if (!filePath) return;
     await loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  async function ensureWhisper(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (whisperDownloadPromiseRef.current) return whisperDownloadPromiseRef.current;
-
-    const modelKey = whisperSettings.model;
-    let trackedJob = createPendingTask("download-whisper", tr("dialogs.whisperDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-whisper", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshWhisperStatus();
-        const currentModel = currentStatus?.models.find((model) => model.key === modelKey) ?? null;
-        if (currentModel?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentModel.installed_bytes;
-            trackDownload({
-              id: "already-ready",
-              kind: "download-whisper",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.whisperDownloadComplete"),
-              result: {
-                model: currentModel.key,
-                model_dir: currentModel.model_dir,
-                source: currentModel.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setWhisperDownloadOpen(true);
-            setMessage(`Whisper ${modelKey} model is ready.`);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setWhisperDownloadOpen(true);
-        trackDownload({
-          id: "starting",
-          kind: "download-whisper",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.whisperDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startWhisperDownload(apiBaseUrl, modelKey);
-        trackDownload(started);
-        await waitForJob(
-          apiBaseUrl,
-          started.id,
-          trackDownload,
-          250
-        );
-        await refreshWhisperStatus();
-        setMessage(`Whisper ${modelKey} model is ready.`);
-      } catch (error) {
-        setWhisperDownloadOpen(true);
-        const current = trackedJob;
-        trackDownload(failTask(current, error, tr("dialogs.whisperDownloadFailed")));
-        throw error;
-      } finally {
-        whisperDownloadPromiseRef.current = null;
-      }
-    })();
-    whisperDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
-  async function ensureDemucs(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (demucsDownloadPromiseRef.current) return demucsDownloadPromiseRef.current;
-
-    let trackedJob = createPendingTask("download-demucs", tr("dialogs.demucsDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-demucs", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshDemucsStatus();
-        if (currentStatus?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentStatus.installed_bytes;
-            trackDownload({
-              id: "already-ready-demucs",
-              kind: "download-demucs",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.demucsDownloadComplete"),
-              result: {
-                model: currentStatus.model,
-                model_dir: currentStatus.model_dir,
-                source: currentStatus.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setDemucsDownloadOpen(true);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setDemucsDownloadOpen(true);
-        trackDownload({
-          id: "starting-demucs",
-          kind: "download-demucs",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.demucsDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startDemucsDownload(apiBaseUrl);
-        trackDownload(started);
-        await waitForJob(
-          apiBaseUrl,
-          started.id,
-          trackDownload,
-          250
-        );
-        await refreshDemucsStatus();
-      } catch (error) {
-        setDemucsDownloadOpen(true);
-        const current = trackedJob;
-        trackDownload(failTask(current, error, tr("dialogs.demucsDownloadFailed")));
-        throw error;
-      } finally {
-        demucsDownloadPromiseRef.current = null;
-      }
-    })();
-    demucsDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
-  async function ensureMms(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (mmsDownloadPromiseRef.current) return mmsDownloadPromiseRef.current;
-
-    let trackedJob = createPendingTask("download-mms", tr("dialogs.mmsDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-mms", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshMmsStatus();
-        if (currentStatus?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentStatus.installed_bytes;
-            trackDownload({
-              id: "already-ready-mms",
-              kind: "download-mms",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.mmsDownloadComplete"),
-              result: {
-                model: currentStatus.model,
-                model_dir: currentStatus.model_dir,
-                source: currentStatus.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setMmsDownloadOpen(true);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setMmsDownloadOpen(true);
-        trackDownload({
-          id: "starting-mms",
-          kind: "download-mms",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.mmsDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startMmsDownload(apiBaseUrl);
-        trackDownload(started);
-        await waitForJob(apiBaseUrl, started.id, trackDownload, 250);
-        await refreshMmsStatus();
-      } catch (error) {
-        setMmsDownloadOpen(true);
-        trackDownload(failTask(trackedJob, error, tr("dialogs.mmsDownloadFailed")));
-        throw error;
-      } finally {
-        mmsDownloadPromiseRef.current = null;
-      }
-    })();
-    mmsDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
+  /** `runFfmpegCheck`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runFfmpegCheck(showSuccess: boolean) {
     if (!apiBaseUrl) return;
     if (showSuccess) setFfmpegCheckOpen(true);
@@ -1501,6 +1291,7 @@ export default function App(props: {
     }
   }
 
+  /** `analyze`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function analyze() {
     if (whisperSettings.enabled && !selectedWhisperModel?.ready) {
       setWhisperPreflightOpen(true);
@@ -1509,14 +1300,17 @@ export default function App(props: {
     await runAnalysis(whisperSettings.enabled);
   }
 
+  /** `runAnalysis`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runAnalysis(transcribeAfter: boolean) {
     await cutModeSession.operations.runAnalysis(transcribeAfter);
   }
 
+  /** `runTranscription`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runTranscription(candidateSegments = segments, resumeInterrupted = true) {
     await cutModeSession.operations.runTranscription(candidateSegments, resumeInterrupted);
   }
 
+  /** `exportClips`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function exportClips(outputDir: string, createVideoFolder: boolean) {
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
@@ -1531,11 +1325,13 @@ export default function App(props: {
     });
   }
 
+  /** `cancelQuit`の入力が要求された条件やschemaを満たすか検証する。 */
   function cancelQuit() {
     setQuitConfirmOpen(false);
     void window.songcut.cancelClose();
   }
 
+  /** `confirmQuit`の確認済み変更を編集状態へ適用する。 */
   async function confirmQuit() {
     setQuitConfirmOpen(false);
     const current = projectDocumentRef.current;
@@ -1561,10 +1357,12 @@ export default function App(props: {
     await window.songcut.confirmClose();
   }
 
+  /** `buildOutputItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildOutputItems(): OutputItem[] {
     return outputPlan.items;
   }
 
+  /** `buildBaseOutputItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildBaseOutputItems(): OutputItem[] {
     return segments.map((segment, index) => {
       const candidate = exportCandidates[index];
@@ -1581,6 +1379,7 @@ export default function App(props: {
     });
   }
 
+  /** `buildSegmentReviewItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildSegmentReviewItems(reviewSegments: readonly Segment[]) {
     const baseItems = new Map(buildBaseOutputItems().map((item) => [item.segmentId, item]));
     const requested = reviewSegments.flatMap((segment) => {
@@ -1591,6 +1390,7 @@ export default function App(props: {
     return templated.error ? requested : templated.items;
   }
 
+  /** `exportTimestampText`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function exportTimestampText(format: TimestampExportFormat) {
     const items = buildOutputItems().filter((item) => item.checked);
     const text = buildTimestampExportText(items, format);
@@ -1608,15 +1408,18 @@ export default function App(props: {
     setMessage(tr("messages.copiedTimestamp", { count: items.length, format: tr(`timestampExport.${format}`) }));
   }
 
+  /** `updateSegment`で指定された変更を不変更新として状態へ反映する。 */
   function updateSegment(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
     markProjectChanged();
   }
 
+  /** `previewSegmentUpdate`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function previewSegmentUpdate(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
   }
 
+  /** `addNewSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function addNewSegment() {
     if (!projectBase) return;
     const pair = createManualSegment(segments, currentTime, duration, tr("segments.newTitle"));
@@ -1630,11 +1433,13 @@ export default function App(props: {
     setMessage(tr("messages.added", { id: pair.segment.id }));
   }
 
+  /** `focusSubtitleSegment`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function focusSubtitleSegment(segment: LyricsSegment) {
     setSubtitleFocusRequest((request) => request + 1);
     seek(segment.start);
   }
 
+  /** `selectSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSubtitleSegment(laneId: string, segment: LyricsSegment) {
     setSubtitleState((current) => ({
       ...current,
@@ -1645,6 +1450,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `addNewSubtitleSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function addNewSubtitleSegment() {
     const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
     if (!lane) return;
@@ -1664,6 +1470,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `removeSelectedSubtitleSegment`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   function removeSelectedSubtitleSegment() {
     const id = subtitleState.selected_segment_id;
     if (!id) return;
@@ -1687,6 +1494,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `selectAdjacentSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectAdjacentSubtitleSegment(direction: -1 | 1) {
     const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
     if (!lane?.segments.length) return;
@@ -1696,6 +1504,7 @@ export default function App(props: {
     selectSubtitleSegment(lane.id, ordered[nextIndex]);
   }
 
+  /** `nudgeSelectedSubtitleBoundary`で指定された変更を不変更新として状態へ反映する。 */
   function nudgeSelectedSubtitleBoundary(direction: -1 | 1) {
     const selectedId = subtitleState.selected_segment_id;
     if (!selectedId) return;
@@ -1715,6 +1524,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `selectedSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectedSubtitleSegment() {
     for (const lane of subtitleState.lanes) {
       const segment = lane.segments.find((item) => item.id === subtitleState.selected_segment_id);
@@ -1723,6 +1533,7 @@ export default function App(props: {
     return null;
   }
 
+  /** `playSubtitleBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playSubtitleBoundary(edge: "start" | "end") {
     const segment = selectedSubtitleSegment();
     if (!segment) return;
@@ -1731,6 +1542,7 @@ export default function App(props: {
     else playFrom(Math.max(segment.start, segment.end - previewSeconds), segment.end);
   }
 
+  /** `jumpSubtitleBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function jumpSubtitleBoundary(direction: -1 | 1) {
     const boundaries = subtitleState.lanes
       .flatMap((lane) => lane.segments.flatMap((segment) => [segment.start, segment.end]))
@@ -1742,6 +1554,7 @@ export default function App(props: {
     if (target !== undefined) seek(target);
   }
 
+  /** `requestRemoveSelectedSegment`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestRemoveSelectedSegment() {
     if (!selectedSegmentId) return;
     const segment = segments.find((item) => item.id === selectedSegmentId);
@@ -1756,6 +1569,7 @@ export default function App(props: {
     });
   }
 
+  /** `requestRemoveUncheckedSegments`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestRemoveUncheckedSegments() {
     const targets = segments.filter((segment) => segment.checked === false);
     if (!targets.length) return;
@@ -1769,6 +1583,7 @@ export default function App(props: {
     });
   }
 
+  /** `requestSortSegments`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestSortSegments() {
     if (segments.length < 2) return;
     const sorted = sortSegmentsByStart({ segments, exportCandidates });
@@ -1781,6 +1596,7 @@ export default function App(props: {
     });
   }
 
+  /** `confirmSegmentManagement`の確認済み変更を編集状態へ適用する。 */
   function confirmSegmentManagement() {
     const review = segmentManagementReview;
     if (!review) return;
@@ -1796,6 +1612,7 @@ export default function App(props: {
     setSegmentManagementReview(null);
   }
 
+  /** `applySegmentCollection`で指定された変更を不変更新として状態へ反映する。 */
   function applySegmentCollection(next: SegmentCollection, removedIds = new Set<string>()) {
     const priorSelectedIndex = selectedSegmentId
       ? segments.findIndex((segment) => segment.id === selectedSegmentId)
@@ -1817,6 +1634,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `checkAllSegments`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   function checkAllSegments() {
     if (!uncheckedCount) return;
     setSegments(setAllSegmentsChecked(segments, true));
@@ -1824,6 +1642,7 @@ export default function App(props: {
     setMessage(tr("messages.checkedAll"));
   }
 
+  /** `uncheckAllSegments`の選択状態を解除し、export対象を更新する。 */
   function uncheckAllSegments() {
     if (!checkedCount) return;
     setSegments(setAllSegmentsChecked(segments, false));
@@ -1831,6 +1650,7 @@ export default function App(props: {
     setMessage(tr("messages.uncheckedAll"));
   }
 
+  /** `invertExportSelection`で指定された変更を不変更新として状態へ反映する。 */
   function invertExportSelection() {
     if (!segments.length) return;
     setSegments(invertSegmentChecks(segments));
@@ -1838,12 +1658,14 @@ export default function App(props: {
     setMessage(tr("messages.inverted"));
   }
 
+  /** `selectSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSegment(segment: Segment) {
     setSelectedSegmentId(segment.id);
     setSegmentFocusRequest((request) => request + 1);
     seek(segment.start);
   }
 
+  /** `selectAdjacentSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectAdjacentSegment(direction: -1 | 1) {
     if (!selectedSegment) return;
     const index = segments.findIndex((segment) => segment.id === selectedSegment.id);
@@ -1852,6 +1674,7 @@ export default function App(props: {
     selectSegment(segments[nextIndex]);
   }
 
+  /** `applyTranscripts`で指定された変更を不変更新として状態へ反映する。 */
   function applyTranscripts(transcripts: Transcript[]) {
     if (!transcripts.length) return;
     const transcriptMap = new Map(
@@ -1878,6 +1701,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `cancelScratchPreview`の入力が要求された条件やschemaを満たすか検証する。 */
   function cancelScratchPreview(restorePosition: boolean) {
     scratchPreviewGenerationRef.current += 1;
     if (scratchPreviewTimerRef.current !== null) {
@@ -1900,10 +1724,12 @@ export default function App(props: {
     }
   }
 
+  /** `finishScratchPreview`の進行中状態を完了させ、一時resourceと表示状態を整理する。 */
   function finishScratchPreview() {
     cancelScratchPreview(true);
   }
 
+  /** `seek`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function seek(time: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -1913,6 +1739,7 @@ export default function App(props: {
     playbackStopAtRef.current = video.paused ? null : segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
   }
 
+  /** `playFrom`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playFrom(time: number, stopAt?: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -1924,11 +1751,13 @@ export default function App(props: {
     void video.play();
   }
 
+  /** `playVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playVideo() {
     finishScratchPreview();
     void videoRef.current?.play();
   }
 
+  /** `pauseVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function pauseVideo() {
     if (scratchPreviewTimeRef.current !== null) {
       finishScratchPreview();
@@ -1937,6 +1766,7 @@ export default function App(props: {
     videoRef.current?.pause();
   }
 
+  /** `scratchPreview`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function scratchPreview(time: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -1986,12 +1816,14 @@ export default function App(props: {
       });
   }
 
+  /** `openSettings`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function openSettings(tab: SettingsTab = "common") {
     setSettingsInitialTab(tab);
     setSettingsOpen(true);
     if (apiBaseUrl) void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
   }
 
+  /** `closeSettings`のflowまたはdialogを閉じ、編集中の一時状態を初期化する。 */
   function closeSettings() {
     const milliseconds = normalizeScratchPreviewMilliseconds(
       scratchPreviewMillisecondsInput,
@@ -2003,18 +1835,21 @@ export default function App(props: {
     if (milliseconds !== scratchPreviewMilliseconds) setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
   }
 
+  /** `playStartBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playStartBoundary() {
     if (!selectedSegment) return;
     const seconds = parseBoundarySeconds(boundarySecondsInput);
     playFrom(selectedSegment.start, Math.min(selectedSegment.end, selectedSegment.start + seconds));
   }
 
+  /** `playEndBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playEndBoundary() {
     if (!selectedSegment) return;
     const seconds = parseBoundarySeconds(boundarySecondsInput);
     playFrom(Math.max(selectedSegment.start, selectedSegment.end - seconds), selectedSegment.end);
   }
 
+  /** `jumpBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function jumpBoundary(direction: -1 | 1) {
     const boundaries = segments.flatMap((segment) => [segment.start, segment.end]).sort((a, b) => a - b);
     const target =
@@ -2024,6 +1859,7 @@ export default function App(props: {
     if (target !== undefined) seek(target);
   }
 
+  /** `nudgeNearestBoundary`で指定された変更を不変更新として状態へ反映する。 */
   function nudgeNearestBoundary(direction: -1 | 1) {
     const target = nearestBoundaryTarget(segments, currentTime, selectedSegment?.id);
     if (!target) return;
@@ -2194,37 +2030,33 @@ export default function App(props: {
       },
     },
   });
-  const subModePanelAdapter = createSubModePanelAdapter({
-    session: subModeSession,
-    load: selectVideo,
-    openSettings: () => openSettings("sub"),
-    prepareAnalysis: async () => {
-      await ensureDemucs();
-      setDemucsDownloadOpen(false);
-      await ensureWhisper();
-      setWhisperDownloadOpen(false);
-      if (whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
-        await ensureMms();
-        setMmsDownloadOpen(false);
-      }
-    },
-    exportSubtitles: async () => {
-      if (!videoInfo) return false;
-      const outputDir = await window.songcut.selectOutputDirectory();
-      if (!outputDir) return false;
-      void subModeSession.operations.exportSubtitles(
-        outputDir,
-        videoInfo.video.width || 1920,
-        videoInfo.video.height || 1080,
-      );
-      return true;
-    },
-    listSystemFonts,
-    confirmRemoveLane: () => window.confirm(tr("sub.removeLaneConfirm")),
-    showMessage: setMessage,
-  });
+  /** `prepareSubAnalysis`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
+  async function prepareSubAnalysis() {
+    await ensureDemucs();
+    setDemucsDownloadOpen(false);
+    await ensureWhisper();
+    setWhisperDownloadOpen(false);
+    if (whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
+      await ensureMms();
+      setMmsDownloadOpen(false);
+    }
+  }
+
+  /** `requestSubtitleExport`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
+  async function requestSubtitleExport() {
+    if (!videoInfo) return false;
+    const outputDir = await window.songcut.selectOutputDirectory();
+    if (!outputDir) return false;
+    void subModeSession.operations.exportSubtitles(
+      outputDir,
+      videoInfo.video.width || 1920,
+      videoInfo.video.height || 1080,
+    );
+    return true;
+  }
   const activeModeController = mode === "cut" ? cutModeSession.controller : subModeSession.controller;
 
+  /** `runEditorCommand`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function runEditorCommand(action: EditorAction) {
     executeEditorAction(action, {
       execute(resolved) {
@@ -2316,6 +2148,7 @@ export default function App(props: {
     });
   }
 
+  /** `onDrop`のUI eventを受け取り、対象fileまたは編集状態へ反映する。 */
   function onDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setDropActive(false);
@@ -2588,7 +2421,30 @@ export default function App(props: {
           <SubModePanel
             view={subModeSession.view}
             state={subtitleState}
-            {...subModePanelAdapter}
+            capabilities={{
+              canAddSegment: subModeSession.controller.capabilities.canAddSegment,
+              canDeleteSelectedSegment: subModeSession.controller.capabilities.canDeleteSelectedSegment,
+            }}
+            operation={{
+              analysisJob: subModeSession.operations.analysisJob,
+              exportJob: subModeSession.operations.exportJob,
+              busy: subModeSession.operations.busy,
+            }}
+            actions={{
+              load: selectVideo,
+              openSettings: () => openSettings("sub"),
+              prepareAnalysis: prepareSubAnalysis,
+              analyzeLyrics: subModeSession.operations.analyzeLyrics,
+              exportSubtitles: requestSubtitleExport,
+              renderSubtitles: subModeSession.operations.renderSubtitles,
+              invalidateSubtitleRender: subModeSession.operations.invalidateSubtitleRender,
+              listSystemFonts,
+              confirmRemoveLane: () => window.confirm(tr("sub.removeLaneConfirm")),
+              selectSegment: (laneId, segment) => subModeSession.controller.actions.select(segment, laneId),
+              addSegment: subModeSession.controller.actions.add,
+              removeSelectedSegment: subModeSession.controller.actions.remove,
+              showMessage: setMessage,
+            }}
             taskStatus={taskStatus}
             onStateChange={(state) => {
               setSubtitleState(state);
@@ -3000,6 +2856,7 @@ export default function App(props: {
   );
 }
 
+/** `isProjectOperationKind`の入力が要求された条件やschemaを満たすか検証する。 */
 function isProjectOperationKind(kind: string | undefined): kind is NonNullable<ProjectOperation>["kind"] {
   switch (kind) {
     case "analysis":
@@ -3013,6 +2870,7 @@ function isProjectOperationKind(kind: string | undefined): kind is NonNullable<P
   }
 }
 
+/** `offlineVideoInfo`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
   return {
     path: document.source.absolute_path,
@@ -3028,18 +2886,22 @@ function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
   };
 }
 
+/** `isProjectNotFoundError`の入力が要求された条件やschemaを満たすか検証する。 */
 function isProjectNotFoundError(error: unknown) {
   return String(error).includes("Project not found:");
 }
 
+/** `sameWindowsPath`の入力が要求された条件やschemaを満たすか検証する。 */
 function sameWindowsPath(left: string, right: string) {
   return left.replaceAll("/", "\\").toLowerCase() === right.replaceAll("/", "\\").toLowerCase();
 }
 
+/** `sourceDurationMatches`の二つの入力が同一対象または重複範囲を表すか判定する。 */
 function sourceDurationMatches(expected: number, actual: number) {
   return Math.abs(expected - actual) <= Math.max(0.05, expected * 0.00001);
 }
 
+/** `projectSaveStatusLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>["status"]) {
   switch (status) {
     case "idle":
@@ -3057,10 +2919,12 @@ function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>
   }
 }
 
+/** `localizedError`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 function localizedError(error: unknown) {
   return localizeUiMessage(String(error));
 }
 
+/** `previewRange`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
 function previewRange(video: HTMLVideoElement | null, start: number, end: number) {
   if (!video) return;
   const duration = Math.max(0, end - start);
@@ -3078,24 +2942,29 @@ function previewRange(video: HTMLVideoElement | null, start: number, end: number
   }, 5000);
 }
 
+/** `segmentStopAtForTime`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentStopAtForTime(segment: Segment | null, time: number) {
   if (!segment || segment.end <= segment.start) return null;
   return time >= segment.start - 0.03 && time < segment.end - 0.03 ? segment.end : null;
 }
 
+/** `readScratchPreviewMilliseconds`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readScratchPreviewMilliseconds() {
   return readStoredScratchPreviewMilliseconds(window.localStorage);
 }
 
+/** `readScratchAudioProxyEnabled`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readScratchAudioProxyEnabled() {
   return readStoredScratchAudioProxyEnabled(window.localStorage);
 }
 
+/** `clampMediaTime`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function clampMediaTime(media: HTMLMediaElement, time: number) {
   const maximum = Number.isFinite(media.duration) && media.duration > 0 ? Math.max(0, media.duration - 0.001) : time;
   return clamp(time, 0, maximum);
 }
 
+/** `loadScratchProxyAudio`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 async function loadScratchProxyAudio(audio: HTMLAudioElement, url: string) {
   audio.pause();
   audio.preload = "auto";
@@ -3115,11 +2984,13 @@ async function loadScratchProxyAudio(audio: HTMLAudioElement, url: string) {
   }
 }
 
+/** `waitForMediaReady`の完了条件まで待機し、成功時の結果または失敗を返す。 */
 function waitForMediaReady(media: HTMLMediaElement, timeoutMilliseconds: number) {
   if (media.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
   return waitForMediaEvent(media, "loadedmetadata", timeoutMilliseconds);
 }
 
+/** `waitForMediaEvent`の完了条件まで待機し、成功時の結果または失敗を返す。 */
 function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" | "seeked", timeoutMilliseconds: number) {
   return new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -3144,18 +3015,22 @@ function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" 
   });
 }
 
+/** `readBoundarySecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readBoundarySecondsInput() {
   return readStoredBoundarySecondsInput(window.localStorage);
 }
 
+/** `readBoundaryNudgeSecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readBoundaryNudgeSecondsInput() {
   return readStoredBoundaryNudgeSecondsInput(window.localStorage);
 }
 
+/** `readVideoSplitPercent`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readVideoSplitPercent() {
   return readStoredVideoSplitPercent(window.localStorage);
 }
 
+/** `readStoredWaveformDisplayModes`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readStoredWaveformDisplayModes(): WaveformDisplayModes {
   try {
     const preferences = readModePreferences(window.localStorage);
@@ -3168,6 +3043,7 @@ function readStoredWaveformDisplayModes(): WaveformDisplayModes {
   }
 }
 
+/** `readStoredCutWaveformAmplitudeProfile`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readStoredCutWaveformAmplitudeProfile(): CutWaveformAmplitudeProfile {
   try {
     return readCutWaveformAmplitudeProfile(window.localStorage);
@@ -3176,10 +3052,12 @@ function readStoredCutWaveformAmplitudeProfile(): CutWaveformAmplitudeProfile {
   }
 }
 
+/** `readCreateSourceFolder`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readCreateSourceFolder() {
   return readStoredCreateSourceFolder(window.localStorage);
 }
 
+/** `waveformDisplayModeLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
   switch (mode) {
     case "rms":
@@ -3193,15 +3071,18 @@ function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
   }
 }
 
+/** `segmentTitle`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentTitle(segment: Segment) {
   return segment.title?.trim() || segment.id;
 }
 
+/** `segmentDialogTitle`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentDialogTitle(segment: Segment) {
   const title = segment.title?.trim();
   return title ? `${title} / ${segment.id}` : segment.id;
 }
 
+/** `safeFilenameStem`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function safeFilenameStem(title: string, fallback: string) {
   const value = title
     .replaceAll("/", " - ")
@@ -3213,6 +3094,7 @@ function safeFilenameStem(title: string, fallback: string) {
   return value || fallback;
 }
 
+/** `filenameStemForSegment`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
   const explicitTitle = segment.title?.trim();
   const fallback =
@@ -3229,16 +3111,19 @@ function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
   return base;
 }
 
+/** `extensionOf`のfilenameから小文字化した拡張子を取り出す。 */
 function extensionOf(name: string) {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
 }
 
+/** `filenameWithoutExtension`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function filenameWithoutExtension(name: string) {
   const dot = name.lastIndexOf(".");
   return (dot > 0 ? name.slice(0, dot) : name).trim() || "video";
 }
 
+/** `deviceLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function deviceLabel(device: AnalysisDevice | WhisperDevice) {
   switch (device) {
     case "auto":

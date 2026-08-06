@@ -24,6 +24,7 @@ export type TimelineSurfaceSlot =
 export type TimelineWheelScope = "surface" | "waveform";
 
 /** Return whether a wheel event should be handled by the shared timeline route. */
+/** `shouldRouteTimelineWheel`の入力が要求された条件やschemaを満たすか検証する。 */
 export function shouldRouteTimelineWheel(
   scope: TimelineWheelScope,
   waveformTarget: boolean,
@@ -32,6 +33,7 @@ export function shouldRouteTimelineWheel(
 }
 
 /** Detect a waveform descendant without requiring a browser DOM in pure tests. */
+/** `isTimelineWaveformTarget`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isTimelineWaveformTarget(target: EventTarget | null): boolean {
   if (!target || typeof target !== "object") return false;
   const candidate = target as { closest?: (selector: string) => unknown };
@@ -40,6 +42,7 @@ export function isTimelineWaveformTarget(target: EventTarget | null): boolean {
 }
 
 /** Resolve a mode-specific slot against the shared timeline viewport context. */
+/** `renderTimelineSurfaceSlot`でtimeline slotを現在の表示条件に応じたReact要素へ変換する。 */
 export function renderTimelineSurfaceSlot(
   slot: TimelineSurfaceSlot | undefined,
   context: TimelineSurfaceContext,
@@ -85,6 +88,7 @@ type TimelineSurfaceProps = {
  * owns the scroll viewport, sizing, waveform, playhead, wheel routing, and
  * scrub/focus behavior.
  */
+/** `TimelineSurface`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function TimelineSurface(props: TimelineSurfaceProps) {
   const editorFocus = useEditorFocus();
   const timelineViewport = useTimelineViewport({

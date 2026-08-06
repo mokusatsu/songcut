@@ -52,6 +52,7 @@ export type SegmentManagementReview =
       after: OutputItem[];
     };
 
+/** `TimestampCommentDialogs`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function TimestampCommentDialogs(props: {
   flow: TimestampCommentFlow;
   onClose: () => void;
@@ -159,6 +160,7 @@ function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
   return tr(candidate.source === "description" ? "timestamp.description" : "timestamp.comment");
 }
 
+/** `OutputDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function OutputDialog(props: {
   open: boolean;
   items: OutputItem[];
@@ -240,6 +242,7 @@ export function OutputDialog(props: {
   );
 }
 
+/** `SegmentManagementDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SegmentManagementDialog(props: {
   review: SegmentManagementReview | null;
   canPreview: boolean;
@@ -412,6 +415,7 @@ function formatDuration(seconds: number) {
   return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
 }
 
+/** `WhisperDownloadProgressDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function WhisperDownloadProgressDialog(props: {
   open: boolean;
   job: JobRecord | null;
@@ -429,6 +433,7 @@ export function WhisperDownloadProgressDialog(props: {
   );
 }
 
+/** `ModelDownloadProgressDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function ModelDownloadProgressDialog(props: {
   open: boolean;
   job: JobRecord | null;
@@ -488,6 +493,7 @@ function formatDownloadBytes(value: number) {
   return `${Math.max(0, Math.round(value))} B`;
 }
 
+/** `ExportProgressDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function ExportProgressDialog(props: {
   open: boolean;
   job: JobRecord | null;
@@ -572,6 +578,7 @@ function actualExportPlanState(job: JobRecord | null): ExportPlanState | null {
   return { status: "ready", plan: { items }, error: null };
 }
 
+/** `FfmpegCheckDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function FfmpegCheckDialog(props: {
   open: boolean;
   pending: boolean;
@@ -611,6 +618,7 @@ export function FfmpegCheckDialog(props: {
   );
 }
 
+/** `TaskStatusPanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function TaskStatusPanel({
   runningTasks,
   failedTasks,
@@ -709,6 +717,7 @@ function TaskStatusRow({ entry, onDismiss }: { entry: TaskRegistryEntry; onDismi
   );
 }
 
+/** `jobKindLabel`のjob種別をtask status表示用の文言へ変換する。 */
 export function jobKindLabel(kind: string) {
   if (kind === "analysis") return tr("tasks.analysis");
   if (kind === "lyrics-analysis") return tr("tasks.lyricsAnalysis");

@@ -52,10 +52,12 @@ const FocusScopeContext = createContext<FocusScopeContextValue>(normalFocusScope
  * value outside of an editor scope.  This is deliberately pure so it can be
  * tested without a DOM and reused by all action primitives.
  */
+/** `resolveActionTabIndex`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveActionTabIndex(kind: FocusScopeKind, requested: number | undefined): number | undefined {
   return kind === "editor" ? -1 : requested;
 }
 
+/** `shouldRestoreEditorRoot`の入力が要求された条件やschemaを満たすか検証する。 */
 export function shouldRestoreEditorRoot(kind: FocusScopeKind, target: FocusReturnTargetDescriptor): boolean {
   if (kind !== "editor") return false;
   const tagName = target.tagName.toLowerCase();
@@ -69,6 +71,7 @@ export function shouldRestoreEditorRoot(kind: FocusScopeKind, target: FocusRetur
   return role === "button" || role === "checkbox" || role === "radio" || role === "tab";
 }
 
+/** `shouldExitEditorTextEntry`の入力が要求された条件やschemaを満たすか検証する。 */
 export function shouldExitEditorTextEntry(
   kind: FocusScopeKind,
   event: { key: string; defaultPrevented: boolean; isComposing: boolean; keyCode: number }
@@ -81,6 +84,7 @@ export function shouldExitEditorTextEntry(
 }
 
 /** Compose a consumer handler with an internal handler while respecting preventDefault. */
+/** `composeEventHandlers`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function composeEventHandlers<E extends SyntheticEvent<HTMLElement>>(
   consumer: ((event: E) => void) | undefined,
   internal: ((event: E) => void) | undefined,
@@ -103,6 +107,7 @@ function focusElement(element: HTMLElement | null): void {
   }
 }
 
+/** `useFocusScope`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useFocusScope(): FocusScopeContextValue {
   return useContext(FocusScopeContext);
 }
@@ -115,6 +120,7 @@ export const useEditorFocus = useFocusScope;
  * Button/Toggle/Checkbox primitives.  Passing the consumer handler here keeps
  * preventDefault semantics identical to the common controls.
  */
+/** `useEditorActionFocusProps`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useEditorActionFocusProps<E extends HTMLElement = HTMLElement>(
   onClick?: MouseEventHandler<E>,
   tabIndex?: number
@@ -129,6 +135,7 @@ export function useEditorActionFocusProps<E extends HTMLElement = HTMLElement>(
   };
 }
 
+/** `useEditorTextEntryKeyDown`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useEditorTextEntryKeyDown<E extends HTMLElement = HTMLElement>(
   onKeyDown?: KeyboardEventHandler<E>
 ): KeyboardEventHandler<E> {
@@ -156,6 +163,7 @@ type EditorFocusProviderProps = PropsWithChildren<{
  * layout.  Consumers should pass a ref to the existing editor root.  The
  * root must be focusable (normally `tabIndex={-1}`).
  */
+/** `EditorFocusProvider`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function EditorFocusProvider({ rootRef, children }: EditorFocusProviderProps) {
   const fallbackRootRef = useRef<HTMLElement | null>(null);
   const resolvedRootRef = rootRef ?? fallbackRootRef;
@@ -207,6 +215,7 @@ type EditorFocusScopeProps = PropsWithChildren<
  * EditorFocusProvider when the editor already has a root element whose DOM
  * shape must remain unchanged.
  */
+/** `EditorFocusScope`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function EditorFocusScope({ children, className, rootRef, ...props }: EditorFocusScopeProps) {
   const internalRootRef = useRef<HTMLDivElement | null>(null);
   const setRootRef = useCallback(
@@ -233,6 +242,7 @@ export function EditorFocusScope({ children, className, rootRef, ...props }: Edi
  * but controls in this subtree keep their normal tab stops and do not return
  * focus to the editor after activation.
  */
+/** `NormalFocusScope`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function NormalFocusScope({ children }: PropsWithChildren) {
   const parent = useFocusScope();
   const value = useMemo<FocusScopeContextValue>(
@@ -259,6 +269,7 @@ type DialogFocusOptions = {
  * independent of the Dialog markup so custom dialog shells can share the
  * same normal-scope behavior.
  */
+/** `useDialogFocus`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useDialogFocus({ open, dialogRef, initialFocusRef }: DialogFocusOptions): void {
   const focusScope = useFocusScope();
   const returnFocusRef = useRef<HTMLElement | null>(null);

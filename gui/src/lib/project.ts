@@ -44,6 +44,7 @@ export { projectOwnedSettingsFromDocument };
 
 export const DEFAULT_WHISPER_SETTINGS: WhisperSettings = BASE_DEFAULT_WHISPER_SETTINGS;
 
+/** `createProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createProjectDocument(
   projectPath: string,
   source: SourceIdentity,
@@ -53,6 +54,7 @@ export function createProjectDocument(
   return createBaseProjectDocument(projectPath, source, videoInfo, mode);
 }
 
+/** `composeProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function composeProjectDocument(
   base: ProjectDocumentV1,
   state: {
@@ -113,6 +115,7 @@ export function composeProjectDocument(
   } satisfies CutProjectComposeState);
 }
 
+/** `analysisFromProject`でproject内容から解析状態を復元または鮮度判定する。 */
 export function analysisFromProject(document: ProjectDocumentV1): AnalysisResult | null {
   const snapshot = document.analysis_snapshot;
   if (!snapshot) return null;
@@ -135,6 +138,7 @@ export function analysisFromProject(document: ProjectDocumentV1): AnalysisResult
   };
 }
 
+/** `waveformFromProject`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function waveformFromProject(document: ProjectDocumentV1): WaveformPoint[] {
   const snapshot = document.waveform_snapshot;
   if (!snapshot) return [];
@@ -143,14 +147,17 @@ export function waveformFromProject(document: ProjectDocumentV1): WaveformPoint[
   return decodeWaveformPoints(snapshot.data_base64, snapshot.point_count);
 }
 
+/** `exportCandidatesFromProject`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
 export function exportCandidatesFromProject(document: ProjectDocumentV1): ExportCandidate[] {
   return document.export_candidates.map(stripProjectCandidate);
 }
 
+/** `filenameTemplateFromProject`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function filenameTemplateFromProject(document: ProjectDocumentV1) {
   return document.settings.export?.filename_template ?? DEFAULT_FILENAME_TEMPLATE;
 }
 
+/** `projectMode`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function projectMode(document: ProjectDocumentV1): AppMode {
   return document.mode === "sub" ? "sub" : "cut";
 }
@@ -160,10 +167,12 @@ export function projectMode(document: ProjectDocumentV1): AppMode {
  * legacy v3 Cut shape (omitted `mode`) is normalized on a shallow copy by the
  * schema boundary helper; all persisted fields remain untouched.
  */
+/** `normalizeProjectDocument`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeProjectDocument(document: unknown): ModeProjectDocument {
   return normalizeSchemaProjectDocument(document);
 }
 
+/** `isProjectOperationCompatible`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isProjectOperationCompatible(
   mode: AppMode,
   operation: ProjectOperation,
@@ -171,14 +180,17 @@ export function isProjectOperationCompatible(
   return operation === null || isProjectOperationKindForMode(mode, operation.kind);
 }
 
+/** `subtitleStateFromProject`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function subtitleStateFromProject(document: ProjectDocumentV1): SubtitleProjectState {
   return validateSubtitleState(document.subtitle) ?? createDefaultSubtitleState();
 }
 
+/** `normalizeInterruptedOperation`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeInterruptedOperation(operation: ProjectOperation): ProjectOperation {
   return operation ? { ...operation, status: "interrupted" } : null;
 }
 
+/** `parseProjectOpenResult`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseProjectOpenResult(value: unknown): ProjectOpenResult {
   if (!value || typeof value !== "object") throw new Error("Invalid project open result.");
   const result = value as Partial<ProjectOpenResult>;
@@ -187,6 +199,7 @@ export function parseProjectOpenResult(value: unknown): ProjectOpenResult {
   return result as ProjectOpenResult;
 }
 
+/** `parseSourceIdentity`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseSourceIdentity(value: unknown): SourceIdentity {
   if (!value || typeof value !== "object") throw new Error("Invalid source identity.");
   const source = value as SourceIdentity;
@@ -202,6 +215,7 @@ export function parseSourceIdentity(value: unknown): SourceIdentity {
   return source;
 }
 
+/** `parseRecoverySnapshot`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   if (!value || typeof value !== "object") throw new Error("Invalid recovery snapshot.");
   const snapshot = value as RecoverySnapshot;
@@ -210,6 +224,7 @@ export function parseRecoverySnapshot(value: unknown): RecoverySnapshot {
   return snapshot;
 }
 
+/** `transcriptSettingsAreStale`でproject内容から解析状態を復元または鮮度判定する。 */
 export function transcriptSettingsAreStale(segment: Segment, settings: WhisperSettings) {
   const transcript = segment.transcript;
   if (!transcript) return false;

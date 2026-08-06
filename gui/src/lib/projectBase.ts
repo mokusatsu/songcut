@@ -50,6 +50,7 @@ export type ProjectBaseHydratedState = {
 };
 
 /** Create a fresh schema-v3 envelope for either mode. */
+/** `createBaseProjectDocument`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createBaseProjectDocument(
   projectPath: string,
   source: SourceIdentity,
@@ -97,6 +98,7 @@ export function createBaseProjectDocument(
  * omit `mode`.  Preserve that omission when composing a legacy Cut sidecar so
  * a save does not introduce an unrelated JSON field.
  */
+/** `serializeProjectBase`で編集状態を保存用の独立した値へ変換する。 */
 export function serializeProjectBase(
   base: ProjectDocumentV1,
   state: ProjectBaseComposeState,
@@ -158,6 +160,7 @@ export function serializeProjectBase(
 }
 
 /** Hydrate only the fields owned by the common project session. */
+/** `hydrateProjectBase`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function hydrateProjectBase(document: ProjectDocumentV1): ProjectBaseHydratedState {
   const mode: AppMode = document.mode === "sub" ? "sub" : "cut";
   const snapshot = document.waveform_snapshot;
@@ -186,6 +189,7 @@ function sourceDurationMatches(expected: number, actual: number) {
 }
 
 /** Clone persisted values before returning them to mutable React state. */
+/** `cloneValue`で編集状態を保存用の独立した値へ変換する。 */
 export function cloneValue<T>(value: T): T {
   if (value === undefined || value === null) return value;
   if (typeof structuredClone === "function") return structuredClone(value);

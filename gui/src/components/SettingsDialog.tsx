@@ -41,10 +41,12 @@ export const SETTINGS_DIALOG_SCOPE_BY_TAB: Record<SettingsTab, readonly Settings
   "ai-models": ["project"],
 };
 
+/** `settingsScopesForTab`で指定された変更を不変更新として状態へ反映する。 */
 export function settingsScopesForTab(tab: SettingsTab): readonly SettingsScope[] {
   return SETTINGS_DIALOG_SCOPE_BY_TAB[tab];
 }
 
+/** `SettingsDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SettingsDialog(props: {
   open: boolean;
   initialTab: SettingsTab;

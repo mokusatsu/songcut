@@ -19,8 +19,8 @@ const appSource = source("../App.tsx");
 const cutPanelSource = source("../components/CutModePanel.tsx");
 const subPanelSource = source("../components/SubModePanel.tsx");
 const subTimelineSource = source("../components/SubTimelineEditor.tsx");
-const subPanelAdapterSource = source("./subModePanelAdapter.ts");
 const modeOperationsSource = source("./useModeOperations.ts");
+const modelPreparationSource = source("./useModelPreparation.ts");
 const subOperationsSource = source("./useSubOperations.ts");
 
 function job(kind: string, status: JobRecord["status"] = "running"): JobRecord {
@@ -109,6 +109,23 @@ describe("SCUT-024..028 commonization contracts", () => {
     expect(subPanelSource).toContain("operation: SubModePanelOperationView");
   });
 
+  it("keeps model download lifecycle out of the App composition root", () => {
+    expect(appSource).toContain('from "@/lib/useModelPreparation"');
+    expect(appSource).toContain("useModelPreparation({");
+    for (const detail of [
+      "whisperDownloadPromiseRef",
+      "demucsDownloadPromiseRef",
+      "mmsDownloadPromiseRef",
+      "startWhisperDownload(",
+      "startDemucsDownload(",
+      "startMmsDownload(",
+    ]) {
+      expect(appSource).not.toContain(detail);
+    }
+    expect(modelPreparationSource).toContain("runModelDownload({");
+    expect(modelPreparationSource).toContain("runExclusive(");
+  });
+
   it("shares toolbar and timeline media contracts while keeping boundary policy outside panels", () => {
     expect(cutPanelSource).toContain("<ModeToolbar");
     expect(subPanelSource).toContain("<ModeToolbar");
@@ -117,7 +134,7 @@ describe("SCUT-024..028 commonization contracts", () => {
     expect(cutPanelSource).not.toContain("resolveBoundaryTime");
   });
 
-  it("separates Sub timeline editing and session-to-panel adaptation by responsibility", () => {
+  it("separates Sub timeline editing and keeps panel intent wiring in the composition root", () => {
     expect(subPanelSource).toContain('from "@/components/SubTimelineEditor"');
     expect(subPanelSource).toContain("<SubTimelineEditor");
     expect(subPanelSource).not.toContain("function LyricsSegmentView");
@@ -125,11 +142,11 @@ describe("SCUT-024..028 commonization contracts", () => {
     expect(subTimelineSource).toContain("export function SubTimelineEditor");
     expect(subTimelineSource).toContain("useBoundaryDrag");
 
-    expect(appSource).toContain('from "@/lib/subModePanelAdapter"');
-    expect(appSource).toContain("createSubModePanelAdapter({");
-    expect(appSource).toContain("{...subModePanelAdapter}");
-    expect(subPanelAdapterSource).toContain("Raw controllers/coordinators stop here");
-    expect(subPanelAdapterSource).not.toContain("window.songcut");
+    expect(appSource).not.toContain('from "@/lib/subModePanelAdapter"');
+    expect(appSource).not.toContain("createSubModePanelAdapter(");
+    expect(appSource).toContain("analyzeLyrics: subModeSession.operations.analyzeLyrics");
+    expect(appSource).toContain("selectSegment: (laneId, segment) => subModeSession.controller.actions.select(segment, laneId)");
+    expect(subPanelSource).not.toContain('from "@/lib/api"');
   });
 
   it("keeps Cut and Sub project sidecars independent", () => {

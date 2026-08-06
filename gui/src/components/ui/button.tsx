@@ -7,6 +7,7 @@ export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "sm" | "md" | "icon";
 };
 
+/** `Button`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "default", size = "md", tabIndex, onClick, ...props }, ref) => {
     const actionFocus = useEditorActionFocusProps<HTMLButtonElement>(onClick, tabIndex);

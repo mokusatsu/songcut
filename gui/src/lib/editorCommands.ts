@@ -56,6 +56,7 @@ const cutOnlyCommands = new Set<EditorAction["type"]>([
  * Returning null keeps file/settings commands on their existing menu-only
  * path and makes malformed future menu additions harmless to the dispatcher.
  */
+/** `normalizeEditorCommand`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeEditorCommand(
   command: SongcutMenuCommand | EditorShortcutAction
 ): NormalizedEditorCommand | null {
@@ -116,6 +117,7 @@ export function normalizeEditorCommand(
  * Resolve capability before touching state.  Cut-only segment management and
  * export commands are intentionally unhandled in Sub mode.
  */
+/** `editorActionFromMenuCommand`でmenu commandをeditorの操作意図へ変換する。 */
 export function editorActionFromMenuCommand(
   command: SongcutMenuCommand | EditorShortcutAction,
   mode: AppMode
@@ -127,6 +129,7 @@ export function editorActionFromMenuCommand(
 }
 
 /** Execute a resolved action through one adapter shared by menu and keyboard. */
+/** `executeEditorAction`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
 export function executeEditorAction(action: EditorAction, adapter: EditorActionAdapter): void {
   adapter.execute(action);
 }

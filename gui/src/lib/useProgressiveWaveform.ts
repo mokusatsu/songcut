@@ -31,6 +31,7 @@ const EMPTY_STATE: ProgressiveWaveformState = {
   generated: false
 };
 
+/** `useProgressiveWaveform`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useProgressiveWaveform(
   baseUrl: string,
   onJobUpdate: (job: JobRecord | null) => void,

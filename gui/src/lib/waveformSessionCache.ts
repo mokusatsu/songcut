@@ -63,6 +63,7 @@ type CacheOptions = {
  * Entries are keyed by source fingerprint and are deliberately copied on both
  * insertion and lookup so mutable editor state cannot leak through the cache.
  */
+/** `createWaveformSessionCache`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createWaveformSessionCache(options: CacheOptions = {}): WaveformSessionCache {
   const expectedGenerator = options.generator ?? DEFAULT_WAVEFORM_GENERATOR;
   const expectedEncoding = options.encoding ?? WAVEFORM_BINARY_ENCODING;
@@ -129,6 +130,7 @@ export function createWaveformSessionCache(options: CacheOptions = {}): Waveform
   };
 }
 
+/** `waveformDurationsMatch`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function waveformDurationsMatch(expected: number, actual: number) {
   return (
     Number.isFinite(expected) &&
@@ -143,6 +145,7 @@ export function waveformDurationsMatch(expected: number, actual: number) {
  * Applies the load order used when opening a project or switching modes:
  * document snapshot first, then the current App session cache, then generation.
  */
+/** `selectWaveformHydration`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectWaveformHydration(
   cache: WaveformSessionCache,
   input: {

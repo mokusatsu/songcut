@@ -324,14 +324,17 @@ const whisperModels = new Set<WhisperModelKey>([
 const cutOperationKinds = new Set<CutOperationKind>(["analysis", "transcription", "export"]);
 const subOperationKinds = new Set<SubOperationKind>(["lyrics-analysis", "subtitle-export"]);
 
+/** 動画pathとmodeから、衝突しないCut/Sub sidecarの保存pathを決定する。 */
 export function sidecarPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
   return mode === "sub" ? `${videoPath}.sub.songcut` : `${videoPath}.songcut`;
 }
 
+/** `isProjectOperationKindForMode`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isProjectOperationKindForMode(mode: "cut" | "sub", kind: string): boolean {
   return mode === "sub" ? subOperationKinds.has(kind as SubOperationKind) : cutOperationKinds.has(kind as CutOperationKind);
 }
 
+/** `parseProjectText`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseProjectText(text: string): ProjectDocumentV1 {
   let value: unknown;
   try {
@@ -343,6 +346,7 @@ export function parseProjectText(text: string): ProjectDocumentV1 {
   return value;
 }
 
+/** `assertProjectDocument`の入力が要求された条件やschemaを満たすか検証する。 */
 export function assertProjectDocument(value: unknown): asserts value is ModeProjectDocument {
   const root = objectValue(value, "project");
   if (root.format !== PROJECT_FORMAT) throw new Error("Not a songcut project.");
@@ -448,6 +452,7 @@ export function assertProjectDocument(value: unknown): asserts value is ModeProj
  * shallow copy while parse/load continue returning the original object shape
  * for byte-compatible round trips.
  */
+/** `normalizeProjectDocument`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeProjectDocument(value: unknown): ModeProjectDocument {
   assertProjectDocument(value);
   if (value.mode === undefined) return { ...value, mode: "cut" } as CutProjectDocumentV3;
@@ -485,6 +490,7 @@ function validateModeInvariants(root: Record<string, unknown>) {
   }
 }
 
+/** `assertRecoverySnapshot`の入力が要求された条件やschemaを満たすか検証する。 */
 export function assertRecoverySnapshot(value: unknown): asserts value is RecoverySnapshot {
   const root = objectValue(value, "recovery");
   if (root.format !== "songcut-recovery" || root.schema_version !== 1) throw new Error("Invalid recovery snapshot.");

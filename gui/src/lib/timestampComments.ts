@@ -11,10 +11,12 @@ export type TimestampCommentFlow =
       canGoBack: boolean;
     };
 
+/** `closeTimestampCommentFlow`のflowまたはdialogを閉じ、編集中の一時状態を初期化する。 */
 export function closeTimestampCommentFlow(): TimestampCommentFlow {
   return { mode: "closed", candidates: [] };
 }
 
+/** `beginTimestampCommentFlow`で複数段階の入力flowを次または前の状態へ遷移させる。 */
 export function beginTimestampCommentFlow(candidates: TimestampCommentCandidate[]): TimestampCommentFlow {
   const available = candidates.slice(0, 2);
   if (available.length === 0) return closeTimestampCommentFlow();
@@ -30,11 +32,13 @@ export function beginTimestampCommentFlow(candidates: TimestampCommentCandidate[
   return { mode: "select", candidates: available, selectedId: available[0].id };
 }
 
+/** `selectTimestampCommentCandidate`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectTimestampCommentCandidate(flow: TimestampCommentFlow, id: string): TimestampCommentFlow {
   if (flow.mode !== "select" || !flow.candidates.some((candidate) => candidate.id === id)) return flow;
   return { ...flow, selectedId: id };
 }
 
+/** 選択済みtimestamp候補を編集段階へ進め、既存文面をdraftとして設定する。 */
 export function editSelectedTimestampComment(flow: TimestampCommentFlow): TimestampCommentFlow {
   if (flow.mode !== "select") return flow;
   const candidate = flow.candidates.find((item) => item.id === flow.selectedId);
@@ -48,15 +52,18 @@ export function editSelectedTimestampComment(flow: TimestampCommentFlow): Timest
   };
 }
 
+/** `updateTimestampCommentDraft`で指定された変更を不変更新として状態へ反映する。 */
 export function updateTimestampCommentDraft(flow: TimestampCommentFlow, draft: string): TimestampCommentFlow {
   return flow.mode === "edit" ? { ...flow, draft } : flow;
 }
 
+/** `backToTimestampCommentSelection`で複数段階の入力flowを次または前の状態へ遷移させる。 */
 export function backToTimestampCommentSelection(flow: TimestampCommentFlow): TimestampCommentFlow {
   if (flow.mode !== "edit" || !flow.canGoBack) return flow;
   return { mode: "select", candidates: flow.candidates, selectedId: flow.candidateId };
 }
 
+/** `applyTimestampCommentToGuide`で指定された変更を不変更新として状態へ反映する。 */
 export function applyTimestampCommentToGuide(flow: TimestampCommentFlow, currentGuide: string): string {
   return flow.mode === "edit" ? flow.draft : currentGuide;
 }

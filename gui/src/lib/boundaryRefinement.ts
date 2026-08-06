@@ -41,6 +41,7 @@ const limits: Record<Exclude<keyof BoundaryRefinementSettings, "enabled">, [numb
   post_roll_seconds: [0.3, 1],
 };
 
+/** `normalizeBoundaryRefinementSettings`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeBoundaryRefinementSettings(value: unknown): BoundaryRefinementSettings {
   const source = value && typeof value === "object" ? (value as Partial<BoundaryRefinementSettings>) : {};
   const result = { ...DEFAULT_BOUNDARY_REFINEMENT_SETTINGS };
@@ -57,6 +58,7 @@ export function normalizeBoundaryRefinementSettings(value: unknown): BoundaryRef
   return result;
 }
 
+/** `readBoundaryRefinementSettings`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readBoundaryRefinementSettings(): BoundaryRefinementSettings {
   try {
     const raw = window.localStorage.getItem(BOUNDARY_REFINEMENT_STORAGE_KEY);
@@ -66,6 +68,7 @@ export function readBoundaryRefinementSettings(): BoundaryRefinementSettings {
   }
 }
 
+/** `writeBoundaryRefinementSettings`の値を検証済みの形式で永続先へ保存する。 */
 export function writeBoundaryRefinementSettings(settings: BoundaryRefinementSettings) {
   window.localStorage.setItem(
     BOUNDARY_REFINEMENT_STORAGE_KEY,

@@ -28,6 +28,7 @@ export type WaveformAmplitudeScale = {
   rmsGain: number;
 };
 
+/** `normalizeWaveformDisplayMode`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeWaveformDisplayMode(
   value: unknown,
   fallback: WaveformDisplayMode = DEFAULT_WAVEFORM_DISPLAY_MODE
@@ -37,6 +38,7 @@ export function normalizeWaveformDisplayMode(
     : fallback;
 }
 
+/** `buildWaveformPyramid`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function buildWaveformPyramid(waveform: readonly WaveformPoint[]): WaveformPyramid {
   if (waveform.length === 0) return [];
 
@@ -54,6 +56,7 @@ export function buildWaveformPyramid(waveform: readonly WaveformPoint[]): Wavefo
   return levels;
 }
 
+/** `mergeWaveformPoints`で複数のwaveform点列を重複なく時系列へ統合する。 */
 export function mergeWaveformPoints(left: WaveformPoint, right: WaveformPoint): WaveformPoint {
   const sampleCount = left.sample_count + right.sample_count;
   const rmsEnergy = left.rms * left.rms * left.sample_count + right.rms * right.rms * right.sample_count;
@@ -66,6 +69,7 @@ export function mergeWaveformPoints(left: WaveformPoint, right: WaveformPoint): 
   };
 }
 
+/** `selectWaveformLevel`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectWaveformLevel(
   pyramid: readonly (readonly WaveformPoint[])[],
   duration: number,
@@ -81,6 +85,7 @@ export function selectWaveformLevel(
   return pyramid.length - 1;
 }
 
+/** `buildWaveformPath`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function buildWaveformPath(
   points: readonly WaveformPoint[],
   duration: number,
@@ -121,6 +126,7 @@ export function buildWaveformPath(
   return commands.join("");
 }
 
+/** `buildWaveformPathSpecs`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function buildWaveformPathSpecs(
   points: readonly WaveformPoint[],
   duration: number,
@@ -149,6 +155,7 @@ export function buildWaveformPathSpecs(
   ];
 }
 
+/** `calculateWaveformAmplitudeScale`で表示profileとsample分布からwaveformの振幅scaleを算出する。 */
 export function calculateWaveformAmplitudeScale(
   points: readonly WaveformPoint[],
   profile: WaveformAmplitudeProfile = "adaptive"

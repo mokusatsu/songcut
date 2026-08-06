@@ -55,6 +55,7 @@ function enabledAction<Args extends unknown[]>(enabled: boolean, action?: (...ar
  * Disabled actions intentionally become no-ops so menu/keyboard and panel
  * callers can share the same action surface without duplicating guards.
  */
+/** `createModeController`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createModeController<TSelection, TSelectionContext = undefined>(
   config: ModeControllerConfig<TSelection, TSelectionContext>,
 ): ModeController<TSelection, TSelectionContext> {

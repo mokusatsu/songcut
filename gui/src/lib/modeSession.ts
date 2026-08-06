@@ -40,6 +40,7 @@ export type ModeSessionConfig<TSelection, TSelectionContext, TOperations> = {
  * `createModeController` supplies the shared capability guards; this factory
  * only adds the mode operation coordinator and the common panel view model.
  */
+/** `createModeSession`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createModeSession<TSelection, TSelectionContext = undefined, TOperations = undefined>(
   config: ModeSessionConfig<TSelection, TSelectionContext, TOperations>,
 ): ModeSession<TSelection, TSelectionContext, TOperations> {

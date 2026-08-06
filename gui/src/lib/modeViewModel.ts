@@ -85,6 +85,7 @@ export type ModePanelViewModel = {
  * Keep construction explicit at the App boundary while preserving object
  * identity for callers that memoize panel view models.
  */
+/** `createModePanelViewModel`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createModePanelViewModel(
   media: ModeMediaViewModel,
   transport: ModeTransportViewModel,

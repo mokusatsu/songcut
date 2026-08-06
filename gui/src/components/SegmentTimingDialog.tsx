@@ -27,6 +27,7 @@ export type SegmentTimingTarget = {
 
 type RangeMode = "duration" | "end";
 
+/** `SegmentTimingDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SegmentTimingDialog(props: {
   open: boolean;
   mode: "cut" | "sub";
@@ -248,6 +249,7 @@ function TimeField(props: {
   );
 }
 
+/** `evaluateSegmentTiming`の現在値を検査し、後続処理に必要な判定結果を返す。 */
 export function evaluateSegmentTiming(input: {
   startInput: string;
   extentInput: string;

@@ -115,6 +115,7 @@ export type TypedSetting<T> = {
   serialize: (value: T) => string;
 };
 
+/** `readTypedSetting`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readTypedSetting<T>(storage: StorageLike, definition: TypedSetting<T>): T {
   try {
     return definition.parse(storage.getItem(definition.key));
@@ -123,6 +124,7 @@ export function readTypedSetting<T>(storage: StorageLike, definition: TypedSetti
   }
 }
 
+/** `writeTypedSetting`の値を検証済みの形式で永続先へ保存する。 */
 export function writeTypedSetting<T>(storage: StorageLike, definition: TypedSetting<T>, value: T): boolean {
   try {
     storage.setItem(definition.key, definition.serialize(value));
@@ -132,6 +134,7 @@ export function writeTypedSetting<T>(storage: StorageLike, definition: TypedSett
   }
 }
 
+/** `normalizeScratchPreviewMilliseconds`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeScratchPreviewMilliseconds(value: unknown, fallback = DEFAULT_SCRATCH_PREVIEW_MILLISECONDS) {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return fallback;
   const parsed = Number(value);
@@ -140,15 +143,18 @@ export function normalizeScratchPreviewMilliseconds(value: unknown, fallback = D
     : fallback;
 }
 
+/** `parseBoundarySeconds`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseBoundarySeconds(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? clamp(Math.round(parsed), 1, 60) : DEFAULT_BOUNDARY_SECONDS;
 }
 
+/** `formatBoundarySeconds`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function formatBoundarySeconds(value: number) {
   return String(Math.round(value));
 }
 
+/** `normalizeBoundarySecondsInput`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeBoundarySecondsInput(value: string) {
   if (value.trim() === "") return "";
   const parsed = Number(value);
@@ -157,6 +163,7 @@ export function normalizeBoundarySecondsInput(value: string) {
   return digits ? formatBoundarySeconds(parseBoundarySeconds(digits)) : "";
 }
 
+/** `parseBoundaryNudgeSeconds`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseBoundaryNudgeSeconds(value: string) {
   const parsed = Number(value);
   return Number.isFinite(parsed)
@@ -164,10 +171,12 @@ export function parseBoundaryNudgeSeconds(value: string) {
     : DEFAULT_BOUNDARY_NUDGE_SECONDS;
 }
 
+/** `formatBoundaryNudgeSeconds`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function formatBoundaryNudgeSeconds(value: number) {
   return parseBoundaryNudgeSeconds(String(value)).toFixed(1);
 }
 
+/** `normalizeVideoSplitPercent`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeVideoSplitPercent(value: unknown) {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
     return DEFAULT_VIDEO_SPLIT_PERCENT;
@@ -220,54 +229,67 @@ const createSourceFolderSetting: TypedSetting<boolean> = {
   serialize: (value) => String(Boolean(value)),
 };
 
+/** `readScratchPreviewMilliseconds`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readScratchPreviewMilliseconds(storage: StorageLike): number {
   return readTypedSetting(storage, scratchPreviewSetting);
 }
 
+/** `writeScratchPreviewMilliseconds`の値を検証済みの形式で永続先へ保存する。 */
 export function writeScratchPreviewMilliseconds(storage: StorageLike, value: number): boolean {
   return writeTypedSetting(storage, scratchPreviewSetting, value);
 }
 
+/** `readScratchAudioProxyEnabled`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readScratchAudioProxyEnabled(storage: StorageLike): boolean {
   return readTypedSetting(storage, scratchAudioProxySetting);
 }
 
+/** `writeScratchAudioProxyEnabled`の値を検証済みの形式で永続先へ保存する。 */
 export function writeScratchAudioProxyEnabled(storage: StorageLike, value: boolean): boolean {
   return writeTypedSetting(storage, scratchAudioProxySetting, value);
 }
 
+/** `readBoundarySecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readBoundarySecondsInput(storage: StorageLike): string {
   return readTypedSetting(storage, boundarySecondsSetting);
 }
 
+/** `writeBoundarySecondsInput`の値を検証済みの形式で永続先へ保存する。 */
 export function writeBoundarySecondsInput(storage: StorageLike, value: string): boolean {
   return writeTypedSetting(storage, boundarySecondsSetting, value);
 }
 
+/** `readBoundaryNudgeSecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readBoundaryNudgeSecondsInput(storage: StorageLike): string {
   return readTypedSetting(storage, boundaryNudgeSecondsSetting);
 }
 
+/** `writeBoundaryNudgeSecondsInput`の値を検証済みの形式で永続先へ保存する。 */
 export function writeBoundaryNudgeSecondsInput(storage: StorageLike, value: string): boolean {
   return writeTypedSetting(storage, boundaryNudgeSecondsSetting, value);
 }
 
+/** `readVideoSplitPercent`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readVideoSplitPercent(storage: StorageLike): number {
   return readTypedSetting(storage, videoSplitPercentSetting);
 }
 
+/** `writeVideoSplitPercent`の値を検証済みの形式で永続先へ保存する。 */
 export function writeVideoSplitPercent(storage: StorageLike, value: number): boolean {
   return writeTypedSetting(storage, videoSplitPercentSetting, value);
 }
 
+/** `readCreateSourceFolder`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readCreateSourceFolder(storage: StorageLike): boolean {
   return readTypedSetting(storage, createSourceFolderSetting);
 }
 
+/** `writeCreateSourceFolder`の値を検証済みの形式で永続先へ保存する。 */
 export function writeCreateSourceFolder(storage: StorageLike, value: boolean): boolean {
   return writeTypedSetting(storage, createSourceFolderSetting, value);
 }
 
+/** `readAppCommonPreferences`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readAppCommonPreferences(storage: StorageLike): AppCommonPreferences {
   return {
     scratchPreviewMilliseconds: readScratchPreviewMilliseconds(storage),
@@ -277,6 +299,7 @@ export function readAppCommonPreferences(storage: StorageLike): AppCommonPrefere
   };
 }
 
+/** `writeAppCommonPreferences`の値を検証済みの形式で永続先へ保存する。 */
 export function writeAppCommonPreferences(storage: StorageLike, preferences: AppCommonPreferences): boolean {
   return [
     writeScratchPreviewMilliseconds(storage, preferences.scratchPreviewMilliseconds),
@@ -286,6 +309,7 @@ export function writeAppCommonPreferences(storage: StorageLike, preferences: App
   ].every(Boolean);
 }
 
+/** `readWaveformDisplayMode`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readWaveformDisplayMode(storage: StorageLike, mode: AppMode): WaveformDisplayMode {
   try {
     return readWaveformDisplayModes(storage)[mode];
@@ -294,6 +318,7 @@ export function readWaveformDisplayMode(storage: StorageLike, mode: AppMode): Wa
   }
 }
 
+/** `writeWaveformDisplayMode`の値を検証済みの形式で永続先へ保存する。 */
 export function writeWaveformDisplayMode(storage: StorageLike, mode: AppMode, value: WaveformDisplayMode): boolean {
   return writeTypedSetting(storage, {
     key: WAVEFORM_DISPLAY_MODE_STORAGE_KEYS[mode],
@@ -303,6 +328,7 @@ export function writeWaveformDisplayMode(storage: StorageLike, mode: AppMode, va
   }, value);
 }
 
+/** `readModePreferences`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readModePreferences(storage: StorageLike): ModePreferences {
   return {
     cut: readCutModePreferences(storage),
@@ -310,6 +336,7 @@ export function readModePreferences(storage: StorageLike): ModePreferences {
   };
 }
 
+/** `readCutModePreferences`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readCutModePreferences(storage: StorageLike): CutModePreferences {
   let cutWaveformAmplitudeProfile: CutModePreferences["cutWaveformAmplitudeProfile"] = DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE;
   try {
@@ -332,6 +359,7 @@ export function readCutModePreferences(storage: StorageLike): CutModePreferences
   };
 }
 
+/** `readSubModePreferences`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readSubModePreferences(storage: StorageLike): SubModePreferences {
   let waveformDisplayMode = DEFAULT_WAVEFORM_DISPLAY_MODES.sub;
   try {
@@ -348,6 +376,7 @@ export function readSubModePreferences(storage: StorageLike): SubModePreferences
   return { waveformDisplayMode, subtitleStylePresets };
 }
 
+/** `projectOwnedSettingsFromDocument`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function projectOwnedSettingsFromDocument(document: ProjectDocumentV1): ProjectOwnedSettings {
   return {
     analysisDevice: document.settings.analysis_device,
@@ -366,6 +395,7 @@ function readBoundaryRefinementForStorage(storage: StorageLike): BoundaryRefinem
   }
 }
 
+/** `boundaryRefinementDefaults`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function boundaryRefinementDefaults(): BoundaryRefinementSettings {
   return { ...DEFAULT_BOUNDARY_REFINEMENT_SETTINGS };
 }

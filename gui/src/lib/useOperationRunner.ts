@@ -78,6 +78,7 @@ function setOperationStatus(
  * application with the caller. This pure runner is shared by Cut and Sub and
  * is deliberately easy to drive with fake start/poll functions in tests.
  */
+/** `runOperationLifecycle`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
 export async function runOperationLifecycle<TResult>(
   options: OperationLifecycleOptions<TResult>,
   callbacks: OperationRunnerCallbacks,
@@ -128,6 +129,7 @@ export async function runOperationLifecycle<TResult>(
 }
 
 /** Create a runner with a shared per-slot duplicate-start guard. */
+/** `createOperationRunner`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createOperationRunner(callbacks: OperationRunnerCallbacks): OperationRunner {
   const state: RunnerState = { activeSlots: new Set<ProjectOperationKind>() };
   return {
@@ -137,6 +139,7 @@ export function createOperationRunner(callbacks: OperationRunnerCallbacks): Oper
 }
 
 /** React adapter; callback refs keep one duplicate-start guard for the view. */
+/** `useOperationRunner`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useOperationRunner(callbacks: OperationRunnerCallbacks): OperationRunner {
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;

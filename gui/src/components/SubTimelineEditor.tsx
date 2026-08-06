@@ -39,9 +39,8 @@ export type SubTimelineEditorProps = ModeMediaViewModel & {
   onEditTiming: (laneId: string, segmentId: string) => void;
 };
 
-export type SubTimelineDomainProps = Omit<SubTimelineEditorProps, keyof ModeMediaViewModel>;
-
 /** Sub-only timeline surface, lane presentation, and direct segment editing. */
+/** `SubTimelineEditor`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SubTimelineEditor(props: SubTimelineEditorProps) {
   const safeDuration = Math.max(0.001, props.duration);
   const [draggingBoundary, setDraggingBoundary] = useState<{
@@ -210,6 +209,7 @@ export function SubTimelineEditor(props: SubTimelineEditorProps) {
   );
 }
 
+/** `LyricsSegmentView`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 function LyricsSegmentView(props: {
   segment: LyricsSegment;
   level: number;
@@ -273,6 +273,7 @@ function LyricsSegmentView(props: {
     },
   });
 
+  /** `prepareDrag`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function prepareDrag(edge: "start" | "end", target: EventTarget | null) {
     // Pointer-capable browsers dispatch a compatibility mousedown after
     // pointerdown. Do not let that second event clear the active drag guide.
@@ -289,6 +290,7 @@ function LyricsSegmentView(props: {
     return true;
   }
 
+  /** `beginPointerDrag`で複数段階の入力flowを次または前の状態へ遷移させる。 */
   function beginPointerDrag(event: React.PointerEvent, edge: "start" | "end") {
     event.preventDefault();
     event.stopPropagation();
@@ -297,6 +299,7 @@ function LyricsSegmentView(props: {
     }
   }
 
+  /** `beginMouseDrag`で複数段階の入力flowを次または前の状態へ遷移させる。 */
   function beginMouseDrag(event: React.MouseEvent, edge: "start" | "end") {
     event.preventDefault();
     event.stopPropagation();

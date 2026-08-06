@@ -3,6 +3,7 @@ import { WhisperLanguageCombobox } from "@/components/WhisperLanguageCombobox";
 import type { WhisperSettings, WhisperStatus } from "@/lib/api";
 import { tr } from "@/i18n";
 
+/** `WhisperSettingsPanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function WhisperSettingsPanel(props: {
   settings: WhisperSettings;
   status: WhisperStatus | null;

@@ -79,6 +79,7 @@ const DEFAULT_SERVICES: CutOperationServices = {
   waitForJob,
 };
 
+/** `createCutOperationCoordinator`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createCutOperationCoordinator(
   getOptions: () => CutOperationOptions,
   services: CutOperationServices = DEFAULT_SERVICES,
@@ -286,6 +287,7 @@ export function createCutOperationCoordinator(
   return coordinator;
 }
 
+/** `useCutOperations`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useCutOperations(
   options: CutOperationOptions,
   services: CutOperationServices = DEFAULT_SERVICES,
