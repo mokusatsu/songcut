@@ -1,0 +1,24 @@
+# SCUT-020 mode別project adapterによるcompose／hydrate分離
+
+- 開始証拠 (2026-08-05):
+  - SCUT-019完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018／019の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 40 files／251 tests、typecheck、production build成功である。
+- 目的: schema v3の共通envelopeを維持しながら、Cut/Sub固有stateのcompose／hydrateをmode別adapterへ分け、混在不能を呼出側の型でも保証する。
+- 現状証拠: `composeProjectDocument`はCutのanalysis、segments、export candidatesを必須入力とし、Sub stateをoptional fieldで受け取るCut中心の形になっている。
+- 変更範囲: `project.ts`、mode別project adapter、`App.tsx`のcreate／hydrate／compose配線、project tests。
+- 禁止事項: schema version変更、保存JSONの不要な変更、`.songcut`／`.sub.songcut`統合、mutable document共有。
+- 完了条件:
+  - Cut adapterがCut fieldsとCut operationだけを受け取る。
+  - Sub adapterがsubtitle stateとSub operationだけを受け取り、Cut fieldsを入力に要求しない。
+  - 共通source、settings、waveform、view state、revision処理は一つのbase serializerを使う。
+  - legacy mode省略Cutと既存v3 sidecarがbyte互換方針を保ってround-tripする。
+- テスト: mode別compose／hydrate、mixed inputの型・runtime拒否、実sidecar parse、全Vitest、typecheck、build。
+- 停止条件: schema bumpまたは既存sidecar migrationが必要になった場合は実装を止め、非破壊adapter案へ戻す。
+- 完了証拠 (2026-08-05):
+  - `projectBase.ts`へschema v3の共通create／serialize／hydrateを集約し、source、settings、waveform、view state、revisionをCut/Subで一つの実装から処理する。
+  - `projectAdapters.ts`へCut/Sub専用create／compose／hydrateとoperation type guard／assertを分離した。Sub compose inputはsubtitleとSub operationだけをmode payloadとして受け、Cut analysis／segments／export candidatesを要求しない。
+  - Appのcompose、hydrate、新規sidecar作成をmode別adapterへ配線し、Sub hydrate時はCut stateを空へ、Cut hydrate時はsubtitle stateを既定値へ戻してmode間残留を防止した。
+  - legacy Cutの`mode`省略と`settings.export`省略を保持し、既存`createProjectDocument`／`composeProjectDocument`は互換wrapperとして残した。schema version、`.songcut`／`.sub.songcut`形式は変更していない。
+  - 型contractとruntime検査の両方でmixed mode base、mode外operation、Sub inputへのCut field混入を拒否し、hydrate結果は永続documentとmutable値を共有しない。
+  - `luna_worker`がserializer／adapter／testsを実装し、Main側でApp配線を統合・再検証した。全Vitest 41 files／256 tests、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。
+  - 既存E2E生成物のCut sidecarとSub sidecarをbuild済みschemaでparseし、Cut mode文書と3-lane Sub mode文書がともにschema v3として読めることを確認した。

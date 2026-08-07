@@ -15,12 +15,14 @@ describe("project persistence autosave key", () => {
   });
 
   it("changes for an explicit project edit revision", () => {
-    const before = projectDocument("sub", 3, 12.5);
-    const edited = projectDocument("sub", 4, 12.5);
+    for (const mode of ["cut", "sub"] as const) {
+      const before = projectDocument(mode, 3, 12.5);
+      const edited = projectDocument(mode, 4, 12.5);
 
-    expect(projectAutoSaveKey("video.sub.songcut", edited)).not.toBe(
-      projectAutoSaveKey("video.sub.songcut", before)
-    );
+      expect(projectAutoSaveKey(`video.${mode}.songcut`, edited)).not.toBe(
+        projectAutoSaveKey(`video.${mode}.songcut`, before)
+      );
+    }
   });
 });
 

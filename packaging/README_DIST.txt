@@ -3,22 +3,18 @@ songcut portable package
 Run:
   songcut.exe
 
-Contents:
-  songcut.exe          Python launcher and only user-facing entry point
-  runtime\             Python runtime files for the launcher
-  app\                 Electron application files
-  electron\            Electron runtime, with songcut-electron.exe as the GUI shell
-  third_party\ffmpeg\  optional bundled ffmpeg and ffprobe
-  models\              bundled Whisper, Demucs, and MMS Q4 analysis models
-  logs\                launcher and GUI process logs
+Keep all extracted folders together when moving songcut.
 
-songcut.exe starts the local Python API, then starts Electron as its child
-process. ffmpeg.exe and ffprobe.exe are discovered by recursively searching this
-package folder first, then by searching PATH. Keep these folders together when
-moving this package.
+The Full archive may include ffmpeg, ffprobe, and AI models under third_party\
+and models\. The standard archive leaves those folders empty.
 
-Downloaded Whisper, Demucs, and MMS models, the Hugging Face cache, and the
-OpenVINO cache are written under %LOCALAPPDATA%\songcut. The package folder is
-treated as read-only. The GUI never downloads a model unless you explicitly
-choose it. To make a lightweight distribution manually, remove the unwanted
-subdirectories under models\. Missing models can be restored from Settings.
+If songcut reports that ffmpeg is missing, install FFmpeg or place ffmpeg.exe
+and ffprobe.exe under third_party\ffmpeg\. Files available on PATH are also
+detected.
+
+Whisper, Demucs, and MMS models can be prepared explicitly from Settings.
+Downloaded models and caches are stored under %LOCALAPPDATA%\songcut, so the
+extracted package can remain read-only.
+
+Open Help > Japanese Guide or Help > English Guide for instructions. Cut mode
+creates clips and timestamp comments. Sub mode creates lyric-subtitled videos.

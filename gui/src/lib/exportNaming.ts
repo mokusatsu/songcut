@@ -19,6 +19,7 @@ export type FilenameTemplateResult<T> = {
 const PLACEHOLDER_RE = /\{([a-zA-Z][a-zA-Z0-9_-]*)\}/g;
 const WINDOWS_RESERVED_RE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
+/** `validateFilenameTemplate`の入力が要求された条件やschemaを満たすか検証する。 */
 export function validateFilenameTemplate(template: string) {
   const normalized = template.trim();
   if (!normalized) return "Filename template cannot be empty.";
@@ -34,6 +35,7 @@ export function validateFilenameTemplate(template: string) {
   return null;
 }
 
+/** `applyFilenameTemplate`で指定された変更を不変更新として状態へ反映する。 */
 export function applyFilenameTemplate<T extends TemplateItem>(items: readonly T[], template: string): FilenameTemplateResult<T> {
   const error = validateFilenameTemplate(template);
   if (error) return { items: [], error };
@@ -57,6 +59,7 @@ export function applyFilenameTemplate<T extends TemplateItem>(items: readonly T[
   return { items: rendered, error: null };
 }
 
+/** `safeFilenameStem`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function safeFilenameStem(value: string, fallback = "clip", maxLength = 120) {
   let result = value
     .replaceAll("/", " - ")

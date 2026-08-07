@@ -17,21 +17,43 @@ type ShortcutEvent = Pick<
   "altKey" | "code" | "ctrlKey" | "defaultPrevented" | "isComposing" | "keyCode" | "metaKey" | "repeat" | "shiftKey"
 >;
 
-const interactiveSelector = [
+const editorTextEntrySelector = [
   "input",
   "textarea",
   "select",
-  "button",
-  "a[href]",
   "[contenteditable]:not([contenteditable='false'])",
   "[role='textbox']",
-  "[role='button']",
-  "[role='checkbox']",
-  "[role='radio']",
-  "[role='slider']",
-  "[role='menuitem']"
+  "[role='combobox']",
+  "[role='searchbox']",
+  "[role='spinbutton']"
 ].join(",");
 
+const actionInputTypes = new Set(["button", "checkbox", "color", "file", "hidden", "image", "radio", "reset", "submit"]);
+
+export type EditorShortcutControlDescriptor = {
+  tagName: string;
+  inputType?: string | null;
+  role?: string | null;
+  contentEditable?: string | null;
+  explicitSuppression?: boolean;
+};
+
+/**
+ * Classifies controls by editing intent rather than by generic interactivity.
+ * Editor action buttons intentionally do not suppress WASD/Space shortcuts.
+ */
+/** `isEditorShortcutControlSuppressed`の入力が要求された条件やschemaを満たすか検証する。 */
+export function isEditorShortcutControlSuppressed(control: EditorShortcutControlDescriptor): boolean {
+  if (control.explicitSuppression) return true;
+  const tagName = control.tagName.toLowerCase();
+  if (tagName === "textarea" || tagName === "select") return true;
+  if (tagName === "input") return !actionInputTypes.has((control.inputType || "text").toLowerCase());
+  if (control.contentEditable !== null && control.contentEditable !== undefined && control.contentEditable !== "false") return true;
+  const role = control.role?.toLowerCase();
+  return role === "textbox" || role === "combobox" || role === "searchbox" || role === "spinbutton";
+}
+
+/** `resolveEditorShortcut`の候補と条件から、利用すべき値または操作を決定する。 */
 export function resolveEditorShortcut(event: ShortcutEvent): EditorShortcutAction | null {
   if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return null;
 
@@ -70,8 +92,18 @@ export function resolveEditorShortcut(event: ShortcutEvent): EditorShortcutActio
   }
 }
 
+/** `isEditorShortcutSuppressed`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isEditorShortcutSuppressed(event: KeyboardEvent): boolean {
   if (document.querySelector("[role='dialog'][aria-modal='true']")) return true;
   const target = event.target;
-  return target instanceof Element && target.closest(interactiveSelector) !== null;
+  if (!(target instanceof Element)) return false;
+  if (target.closest("[data-editor-shortcuts='suppress']")) return true;
+  const control = target.closest(editorTextEntrySelector);
+  if (!control) return false;
+  return isEditorShortcutControlSuppressed({
+    tagName: control.tagName,
+    inputType: control instanceof HTMLInputElement ? control.type : null,
+    role: control.getAttribute("role"),
+    contentEditable: control.getAttribute("contenteditable"),
+  });
 }

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 from .ass_effects23 import Effect, EffectContext, Rect, decorate_dialogue
-from .ffmpeg_tools import CREATE_NO_WINDOW, FfmpegPaths, find_ffmpeg, probe_duration
+from .ffmpeg_tools import FfmpegPaths, find_ffmpeg, probe_duration
+from .ffmpeg_process import run_ffmpeg_stream, run_ffmpeg_sync
 from .guide import safe_filename_stem
 from .lyrics_alignment import format_srt_timestamp
 
@@ -237,7 +238,7 @@ def render_subtitle_png_base64(
             "1",
             str(png_path),
         ]
-        subprocess.run(command, check=True, creationflags=CREATE_NO_WINDOW)
+        run_ffmpeg_sync(command, process_module=subprocess)
         if not png_path.exists() or png_path.stat().st_size <= 0:
             raise RuntimeError("subtitle frame render did not create a PNG")
         return base64.b64encode(png_path.read_bytes()).decode("ascii")
@@ -345,33 +346,19 @@ def _run_ffmpeg_with_progress(
     progress_start: float,
     progress_end: float,
 ) -> None:
-    process = subprocess.Popen(
-        list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=CREATE_NO_WINDOW,
+    def handle_line(line: str) -> None:
+        seconds = _ffmpeg_progress_seconds(line)
+        if seconds is None or duration <= 0 or on_progress is None:
+            return
+        ratio = min(1.0, max(0.0, seconds / duration))
+        progress = progress_start + ratio * (progress_end - progress_start)
+        on_progress(progress, "Burning subtitles into video.")
+
+    run_ffmpeg_stream(
+        command,
+        on_line=handle_line,
+        process_module=subprocess,
     )
-    output_tail: list[str] = []
-    if process.stdout is not None:
-        for raw_line in process.stdout:
-            line = raw_line.strip()
-            if line:
-                output_tail.append(line)
-                del output_tail[:-30]
-            seconds = _ffmpeg_progress_seconds(line)
-            if seconds is None or duration <= 0 or on_progress is None:
-                continue
-            ratio = min(1.0, max(0.0, seconds / duration))
-            progress = progress_start + ratio * (progress_end - progress_start)
-            on_progress(progress, "Burning subtitles into video.")
-    return_code = process.wait()
-    if return_code != 0:
-        detail = "\n".join(output_tail) or f"ffmpeg exited with {return_code}"
-        raise RuntimeError(detail)
 
 
 def _ffmpeg_progress_seconds(line: str) -> float | None:
@@ -392,15 +379,7 @@ def _ffmpeg_progress_seconds(line: str) -> float | None:
 
 
 def _require_ass_filter(ffmpeg: Path) -> None:
-    result = subprocess.run(
-        [str(ffmpeg), "-hide_banner", "-filters"],
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=CREATE_NO_WINDOW,
-    )
+    result = run_ffmpeg_sync([str(ffmpeg), "-hide_banner", "-filters"], process_module=subprocess)
     if not any(" ass " in line for line in result.stdout.splitlines()):
         raise RuntimeError("The selected FFmpeg build does not provide the ass subtitle filter.")
 

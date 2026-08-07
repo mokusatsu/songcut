@@ -1,0 +1,27 @@
+# SCUT-019 BoundaryPolicyの実配線と時間編集policy整理
+
+- 開始証拠 (2026-08-05):
+  - SCUT-018完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 39 files／244 tests、typecheck、production build、Cut通常E2E、Sub実データE2E成功である。
+- 目的: 共通`BoundaryPolicy`をテスト専用の抽象にせず、Cut/Sub双方のdrag、nudge、時間dialogから利用する。ただし操作別の意図的差分は維持する。
+- 現状証拠:
+  - Subは`resolveBoundaryTime`／`nudgeBoundaryTime`をproductionで使用している。
+  - Cutはdragとnudgeで個別`clamp`を使用し、`CUT_BOUNDARY_POLICY`はproductionから参照されていない。
+  - `SegmentTimingDialog`は共通UIだが、内部にmode分岐と独自validationを持つ。
+- 変更範囲: `boundaries.ts`、`SegmentTimingDialog.tsx`、Cut/Sub境界adapter、関連unit/component tests。
+- 設計:
+  - `drag`、`nudge`、`dialog`の操作意図をpolicy生成時に明示する。
+  - Cut drag／nudgeは最小0.1秒、Cut時間dialogは最小0.001秒を維持する。
+  - Subはrhythm snap、前後segment非重複、strict boundaryを維持する。
+  - pointer lifecycleとcancel semanticsは既存`useBoundaryDrag`に残す。
+- 禁止事項: Cutの0.1秒／0.001秒差の統一、Subの拍snap解除、lane制約変更、Cut pointercancel時commitとSub rollbackの統一。
+- 完了条件: すべての境界変更入口が共通resolverへ到達し、各操作の意図的差分がpolicy contract testで判別できる。
+- テスト: drag、nudge、dialog arrow、直接入力、neighbor edge、cancel、commit count、全Vitest、typecheck、build。
+- 停止条件: 既存E2Eと現在の数値契約が矛盾する場合は、挙動を変更せず差異を証拠化して判断を求める。
+- 完了証拠 (2026-08-05):
+  - Cut dragは`resolveBoundaryTime`とdrag policy、Cut nudgeは`nudgeBoundaryTime`とnudge policy、Cut/Sub時間dialogは`resolveBoundaryRange`へ到達する。Sub drag／nudgeも既存の共通resolver経路を維持した。
+  - Cut drag／nudgeの最小0.1秒と時間dialogの最小0.001秒を別policyとして固定した。Subは同じrhythm／strict policyを3入口で用い、操作差はresolve／nudge APIで表現する。
+  - Sub時間dialogの直接入力もgridへsnapし、実在する前後segmentだけをstrict neighborとして渡すことで先頭0秒と末尾media durationを許容した。
+  - pointer lifecycleは変更せず、Cutのpointercancel時commitとSubのcancel時rollback／release時1回commitを既存hook testsで確認した。
+  - manual作成、解析結果、project hydrateによる境界生成は利用者の境界編集入口ではないためresolver対象外とし、mode固有creation／ingest契約として維持した。
+  - `luna_worker`による独立監査で全production配線と意図的差分を確認した。対象testは5 files／41 tests、全Vitestは40 files／251 tests成功、`npm run typecheck`、`npm run build`、`git diff --check`も成功した。

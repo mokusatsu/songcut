@@ -19,7 +19,8 @@ const editorSettingStorageKeys = {
   boundaryPreview: "songcut:boundary-preview-seconds",
   boundaryNudge: "songcut:boundary-nudge-seconds",
   videoSplit: "songcut:video-split-percent",
-  waveformDisplay: "songcut:waveform-display-mode",
+  waveformDisplay: "songcut:waveform-display-mode:cut",
+  waveformAmplitude: "songcut:waveform-amplitude-profile:cut",
   createSourceFolder: "songcut:create-source-folder"
 };
 
@@ -203,6 +204,28 @@ async function clickButton(cdp, text, occurrence = 0) {
   );
   if (!ok) throw new Error(`Button not found: ${text}`);
   if (ok.disabled) throw new Error(`Button is disabled: ${ok.label}`);
+}
+
+async function clickButtonAt(cdp, text, occurrence = 0) {
+  const point = await evaluate(
+    cdp,
+    `(() => {
+      const buttons = [...document.querySelectorAll("button")].filter((button) => {
+        const label = (button.innerText || button.title).trim();
+        return label === ${JSON.stringify(text)} || label.startsWith(${JSON.stringify(`${text} (`)});
+      });
+      const button = buttons[${occurrence}];
+      if (!button || button.disabled) return null;
+      const rect = button.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`
+  );
+  if (!point) throw new Error(`Enabled button not found for pointer click: ${text}`);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await sleep(60);
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+  await sleep(300);
 }
 
 async function prepareWhisperModel(cdp) {
@@ -496,6 +519,32 @@ async function assertTemporaryInteractiveTargetSuppressed(cdp, targetMarkup, lab
   }
 }
 
+async function assertTemporaryActionTargetActive(cdp, targetMarkup, label) {
+  const selector = `[data-shortcut-action=${JSON.stringify(label)}]`;
+  const added = await evaluate(
+    cdp,
+    `(() => {
+      const host = document.createElement("div");
+      host.innerHTML = ${JSON.stringify(targetMarkup)};
+      const target = host.firstElementChild;
+      if (!target) return false;
+      target.setAttribute("data-shortcut-action", ${JSON.stringify(label)});
+      document.body.appendChild(target);
+      target.focus();
+      return true;
+    })()`
+  );
+  assertPass(added, `${label}: could not add action test target.`);
+  try {
+    await dispatchShortcut(cdp, "KeyX");
+    await dispatchShortcut(cdp, "KeyC", { targetSelector: selector });
+    const after = await shortcutState(cdp);
+    assertPass(after.zoom === "200%", `${label}: editor shortcut was incorrectly suppressed for an action target.`, after);
+  } finally {
+    await evaluate(cdp, `document.querySelector(${JSON.stringify(selector)})?.remove(); true`);
+  }
+}
+
 async function setBoundarySecondsInput(cdp, value) {
   const changed = await evaluate(
     cdp,
@@ -554,7 +603,8 @@ async function editorSettingState(cdp) {
         boundaryPreviewStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryPreview)}),
         boundaryNudgeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)}),
         videoSplitStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}),
-        waveformDisplayStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)})
+        waveformDisplayStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)}),
+        waveformAmplitudeStored: localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)})
       };
     })()`
   );
@@ -568,7 +618,8 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = document.querySelector(".boundary-nudge-seconds-input")?.value;
       const split = Number.parseFloat(getComputedStyle(document.querySelector(".app")).getPropertyValue("--video-split"));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "5" && nudge === "0.5" && Math.abs(split - 35) < 0.01 && waveformDisplay === "rms";
+      const waveformAmplitude = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)});
+      return preview === "5" && nudge === "0.5" && Math.abs(split - 35) < 0.01 && waveformDisplay === "rms" && waveformAmplitude === "singing-mc-contrast";
     })()`,
     5000,
     "default editor settings"
@@ -590,8 +641,9 @@ async function runEditorSettingPersistenceChecks(cdp) {
       const nudge = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.boundaryNudge)});
       const split = Number(localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.videoSplit)}));
       const waveformDisplay = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformDisplay)});
-      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 35) > 0.1 && waveformDisplay === "peak-rms"
-        ? { preview, nudge, split, waveformDisplay }
+      const waveformAmplitude = localStorage.getItem(${JSON.stringify(editorSettingStorageKeys.waveformAmplitude)});
+      return preview === "7" && nudge === "1.2" && Number.isFinite(split) && Math.abs(split - 35) > 0.1 && waveformDisplay === "peak-rms" && waveformAmplitude === "singing-mc-contrast"
+        ? { preview, nudge, split, waveformDisplay, waveformAmplitude }
         : false;
     })()`,
     5000,
@@ -861,6 +913,25 @@ async function runShortcutChecks(cdp) {
   );
   log("SHORTCUT_ZOOM_OK", { zoom200, zoom400, zoomBack200, zoom100 });
 
+  await clickButtonAt(cdp, "Zoom in");
+  const actionFocus = await waitFor(
+    cdp,
+    `(() => {
+      const active = document.activeElement;
+      const zoomIn = document.querySelector('button[aria-keyshortcuts="C"]');
+      return active?.matches("[data-editor-focus-root]") && zoomIn
+        ? { activeTag: active.tagName, activeIsRoot: true, actionTabIndex: zoomIn.tabIndex }
+        : false;
+    })()`,
+    5000,
+    "Cut editor action focus restore"
+  );
+  assertPass(actionFocus.actionTabIndex === -1, "Cut editor action remained in the tab order.", actionFocus);
+  await dispatchInputKey(cdp, "x", "KeyX", 88);
+  const zoomAfterFocusedAction = await shortcutState(cdp);
+  assertPass(zoomAfterFocusedAction.zoom === "100%", "Shortcut did not resume after a Cut editor action.", zoomAfterFocusedAction);
+  log("CUT_EDITOR_ACTION_FOCUS_OK", { actionFocus, zoomAfterFocusedAction });
+
   await dispatchShortcut(cdp, "KeyA");
   const startPreview = await shortcutState(cdp);
   assertPass(
@@ -933,6 +1004,25 @@ async function runShortcutChecks(cdp) {
   await assertSuppressedShortcut(cdp, "IME keyCode 229 event", { keyCode: 229 });
   log("SHORTCUT_EVENT_GUARDS_SUPPRESSED_OK", ["defaultPrevented", "isComposing", "keyCode-229"]);
 
+  const editorInputFocused = await evaluate(
+    cdp,
+    `(() => {
+      const input = document.querySelector(".boundary-seconds-input");
+      input?.focus();
+      return document.activeElement === input;
+    })()`
+  );
+  assertPass(editorInputFocused, "Editor input could not receive focus for shortcut suppression checks.");
+  await assertSuppressedShortcut(cdp, "real editor input", { targetSelector: ".boundary-seconds-input" });
+  await dispatchInputKey(cdp, "Escape", "Escape", 27);
+  const inputExitFocus = await waitFor(
+    cdp,
+    `document.activeElement?.matches("[data-editor-focus-root]") ? { activeTag: document.activeElement.tagName } : false`,
+    5000,
+    "Escape return from editor input"
+  );
+  log("EDITOR_INPUT_ESCAPE_FOCUS_OK", inputExitFocus);
+
   const unexpectedModifiers = [
     ["Ctrl+Z", "KeyZ", { ctrlKey: true }],
     ["Ctrl+X", "KeyX", { ctrlKey: true }],
@@ -950,36 +1040,68 @@ async function runShortcutChecks(cdp) {
   }
   log("SHORTCUT_UNEXPECTED_MODIFIERS_IGNORED_OK", unexpectedModifiers.map(([label]) => label));
 
-  const interactiveTargets = [
+  const textEntryTargets = [
     ["input", "<input />"],
     ["textarea", "<textarea></textarea>"],
     ["select", "<select><option>one</option></select>"],
-    ["button", "<button type='button'>button</button>"],
-    ["link", "<a href='#'>link</a>"],
     ["contenteditable", "<div contenteditable='true' tabindex='0'></div>"],
     ["role-textbox", "<div role='textbox' tabindex='0'></div>"],
+    ["role-combobox", "<div role='combobox' tabindex='0'></div>"],
+    ["role-searchbox", "<div role='searchbox' tabindex='0'></div>"],
+    ["role-spinbutton", "<div role='spinbutton' tabindex='0'></div>"],
+    ["explicit-suppression", "<div role='slider' tabindex='0' data-editor-shortcuts='suppress'></div>"]
+  ];
+  for (const [label, markup] of textEntryTargets) {
+    await assertTemporaryInteractiveTargetSuppressed(cdp, markup, label);
+  }
+  log("SHORTCUT_TEXT_ENTRY_TARGETS_SUPPRESSED_OK", textEntryTargets.map(([label]) => label));
+
+  const actionTargets = [
+    ["button", "<button type='button'>button</button>"],
+    ["checkbox", "<input type='checkbox' />"],
+    ["link", "<a href='#'>link</a>"],
     ["role-button", "<div role='button' tabindex='0'></div>"],
     ["role-checkbox", "<div role='checkbox' tabindex='0'></div>"],
     ["role-radio", "<div role='radio' tabindex='0'></div>"],
     ["role-slider", "<div role='slider' tabindex='0'></div>"],
     ["role-menuitem", "<div role='menuitem' tabindex='0'></div>"]
   ];
-  for (const [label, markup] of interactiveTargets) {
-    await assertTemporaryInteractiveTargetSuppressed(cdp, markup, label);
+  for (const [label, markup] of actionTargets) {
+    await assertTemporaryActionTargetActive(cdp, markup, label);
   }
-  log("SHORTCUT_ALL_INTERACTIVE_TARGETS_SUPPRESSED_OK", interactiveTargets.map(([label]) => label));
+  log("SHORTCUT_ACTION_TARGETS_ACTIVE_OK", actionTargets.map(([label]) => label));
 
   await dispatchShortcut(cdp, "KeyX");
-  await clickButton(cdp, "View", 0);
+  await clickButtonAt(cdp, "View", 0);
   await waitFor(cdp, `!!document.querySelector("[role='dialog'][aria-modal='true']")`, 5000, "shortcut suppression dialog");
+  const dialogFocus = await evaluate(
+    cdp,
+    `(() => {
+      const dialog = document.querySelector("[role='dialog'][aria-modal='true']");
+      const active = document.activeElement;
+      const buttonTabIndexes = [...dialog.querySelectorAll("button")].map((button) => button.tabIndex);
+      return { activeInDialog: dialog.contains(active), activeLabel: (active?.innerText || active?.title || "").trim(), buttonTabIndexes };
+    })()`
+  );
+  assertPass(
+    dialogFocus.activeInDialog && dialogFocus.activeLabel === "Close" && dialogFocus.buttonTabIndexes.every((value) => value >= 0),
+    "Modal dialog did not retain normal focus behavior.",
+    dialogFocus
+  );
   const dialogBefore = await shortcutState(cdp);
   await dispatchShortcut(cdp, "KeyC");
   await dispatchShortcut(cdp, "Space");
   const dialogAfter = await shortcutState(cdp);
   assertShortcutStateEqual(dialogBefore, dialogAfter, "Modal dialog did not suppress editor shortcuts.");
-  await clickButton(cdp, "Close");
+  await clickButtonAt(cdp, "Close");
   await waitFor(cdp, `!document.querySelector("[role='dialog'][aria-modal='true']")`, 5000, "shortcut suppression dialog close");
-  log("SHORTCUT_MODAL_DIALOG_SUPPRESSED_OK", { dialogBefore, dialogAfter });
+  const dialogReturnFocus = await waitFor(
+    cdp,
+    `document.activeElement?.matches("[data-editor-focus-root]") ? { activeTag: document.activeElement.tagName } : false`,
+    5000,
+    "editor focus after dialog close"
+  );
+  log("SHORTCUT_MODAL_DIALOG_SUPPRESSED_OK", { dialogBefore, dialogAfter, dialogFocus, dialogReturnFocus });
 
   await clickSelector(cdp, ".segment-list tbody tr", 0);
   await dispatchShortcut(cdp, "KeyX");
@@ -1670,6 +1792,94 @@ async function runJapaneseLocaleCheck(env) {
       "Settings dialog Cut tab"
     );
     log("SETTINGS_CUT_TAB_OK", settingsDialog);
+    const cutWaveformOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelector('select');
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      cutWaveformOptions?.value === "rms" &&
+        JSON.stringify(cutWaveformOptions.options) === JSON.stringify(["rms", "peak", "peak-rms", "symmetric-peak"]),
+      "Cut waveform settings do not expose all four display modes.",
+      cutWaveformOptions
+    );
+    const cutAmplitudeOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelectorAll('select')?.[1];
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      cutAmplitudeOptions?.value === "singing-mc-contrast" &&
+        JSON.stringify(cutAmplitudeOptions.options) === JSON.stringify(["adaptive", "singing-mc-contrast"]),
+      "Cut waveform amplitude range does not expose the expected x1100 default.",
+      cutAmplitudeOptions
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelectorAll('select')?.[1];
+        if (!select) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+        setter.call(select, "adaptive");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      })()`
+    );
+    await waitFor(
+      cdp,
+      `localStorage.getItem("songcut:waveform-amplitude-profile:cut") === "adaptive"`,
+      5000,
+      "Cut waveform amplitude profile persistence"
+    );
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(3)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "Sub"`,
+      5000,
+      "Sub settings tab activation"
+    );
+    const subWaveformOptions = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        const select = section?.querySelector('select');
+        return select ? { value: select.value, options: [...select.options].map((option) => option.value) } : null;
+      })()`
+    );
+    assertPass(
+      subWaveformOptions?.value === "symmetric-peak" &&
+        JSON.stringify(subWaveformOptions.options) === JSON.stringify(["rms", "peak", "peak-rms", "symmetric-peak"]),
+      "Sub waveform settings do not expose all four display modes with the expected default.",
+      subWaveformOptions
+    );
+    const subAmplitudeSelectCount = await evaluate(
+      cdp,
+      `(() => {
+        const section = [...document.querySelectorAll('.settings-section')]
+          .find((item) => item.querySelector('h3')?.innerText === 'Display' && item.offsetParent !== null);
+        return section?.querySelectorAll('select').length ?? -1;
+      })()`
+    );
+    assertPass(subAmplitudeSelectCount === 1, "Sub settings unexpectedly expose an amplitude range.", subAmplitudeSelectCount);
+    log("WAVEFORM_SETTINGS_MODES_OK", { cut: cutWaveformOptions, sub: subWaveformOptions, amplitude: cutAmplitudeOptions });
+    await clickAt(cdp, '.dialog[aria-label="Settings"] .settings-tabs-list [role="tab"]:nth-child(2)');
+    await waitFor(
+      cdp,
+      `document.querySelector('.dialog[aria-label="Settings"] [role="tab"][data-state="active"]')?.innerText === "Cut"`,
+      5000,
+      "Cut settings tab reactivation"
+    );
     const settingsScrollArea = await evaluate(
       cdp,
       `(() => {
@@ -2799,6 +3009,24 @@ async function runJapaneseLocaleCheck(env) {
       "renderer transcription completion"
     );
 
+    const exportProgressObserverReady = await evaluate(
+      cdp,
+      `(() => {
+        window.__songcutE2eExportProgressTexts = [];
+        const capture = () => {
+          const text = [...document.querySelectorAll(".dialog")]
+            .find((node) => node.innerText.includes("Export Progress"))?.innerText || "";
+          if (text && !window.__songcutE2eExportProgressTexts.includes(text)) {
+            window.__songcutE2eExportProgressTexts.push(text);
+          }
+        };
+        new MutationObserver(capture).observe(document.body, { subtree: true, childList: true, characterData: true });
+        capture();
+        return true;
+      })()`
+    );
+    assertPass(exportProgressObserverReady, "Export progress observer was not installed.");
+
     const exportClicked = await evaluate(
       cdp,
       `(() => {
@@ -2879,6 +3107,18 @@ async function runJapaneseLocaleCheck(env) {
       "export UI completion"
     );
     log("EXPORT_UI_COMPLETE_OK", exportUiComplete);
+    const exportProgressTexts = await evaluate(cdp, `window.__songcutE2eExportProgressTexts || []`);
+    assertPass(
+      exportProgressTexts.some((text) => text.includes("Exporting Smoke Song Edited (1/1)")),
+      "Export progress did not show the user-visible title and selected item count.",
+      exportProgressTexts
+    );
+    assertPass(
+      exportProgressTexts.every((text) => !text.includes("Exporting export-")),
+      "Export progress exposed an internal export identifier.",
+      exportProgressTexts
+    );
+    log("EXPORT_PROGRESS_TITLE_COUNT_OK", exportProgressTexts);
     await clickButton(cdp, "Close");
     await waitFor(cdp, `!document.querySelector(".dialog")`, 10_000, "export progress close");
 

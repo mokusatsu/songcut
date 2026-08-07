@@ -1,75 +1,47 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
-  ArrowLeft,
-  ArrowRight,
-  CircleAlert,
-  CheckCircle2,
-  ChevronsLeft,
-  ChevronsRight,
-  Copy,
   FileVideo2,
   FolderOpen,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  Rewind,
-  Scissors,
-  Settings2,
-  SkipBack,
-  SkipForward,
-  Wand2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { clamp, formatTime } from "@/lib/time";
 import {
-  ApiError,
   cancelScratchProxy,
   checkFfmpeg,
-  getDemucsStatus,
   getExportPlan,
-  getMmsStatus,
-  getWhisperStatus,
   probeVideo,
   releaseScratchProxy,
-  startAnalysis,
-  startDemucsDownload,
-  startExport,
   startScratchProxy,
-  startMmsDownload,
-  startTranscription,
-  startWhisperDownload,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, DemucsStatus, MmsStatus, SubtitleRenderResultItem, WhisperSettings, WhisperStatus } from "@/lib/api";
+import type { AnalysisDevice, WhisperSettings } from "@/lib/api";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
-import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
-import { formatTimeInput } from "@/lib/segmentTiming";
+import { CutModePanel } from "@/components/CutModePanel";
+import { CutSegmentTimingDialog } from "@/components/CutSegmentTimingDialog";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EditorFocusProvider, useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import {
   DEFAULT_WHISPER_SETTINGS,
-  analysisFromProject,
-  composeProjectDocument,
-  createProjectDocument,
-  exportCandidatesFromProject,
-  filenameTemplateFromProject,
   normalizeInterruptedOperation,
   parseProjectOpenResult,
   parseRecoverySnapshot,
   parseSourceIdentity,
-  projectMode,
-  subtitleStateFromProject,
   transcriptSettingsAreStale,
   waveformFromProject
 } from "@/lib/project";
+import {
+  assertCutProjectOperation,
+  assertSubProjectOperation,
+  composeCutProjectDocument,
+  composeSubProjectDocument,
+  createCutProjectDocument,
+  createSubProjectDocument,
+  hydrateProjectDocument,
+} from "@/lib/projectAdapters";
 import type {
   ProjectDocumentV1,
   ProjectOpenResult,
@@ -82,13 +54,33 @@ import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLA
 import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
-import { useTimelineViewport } from "@/lib/useTimelineViewport";
+import { useModeOperations } from "@/lib/useModeOperations";
+import { useModelPreparation } from "@/lib/useModelPreparation";
 import {
-  normalizeScratchAudioProxyEnabled,
+  ExportProgressDialog,
+  FfmpegCheckDialog,
+  FFMPEG_DOWNLOAD_URL,
+  jobKindLabel,
+  ModelDownloadProgressDialog,
+  OutputDialog,
+  SegmentManagementDialog,
+  TaskStatusPanel,
+  TimestampCommentDialogs,
+  WhisperDownloadProgressDialog,
+  type ExportPlanState,
+  type OutputItem,
+  type SegmentManagementReview,
+} from "@/components/AppDialogs";
+import {
   selectScratchPreviewSource,
   shouldCreateScratchProxy
 } from "@/lib/scratchProxy";
 import { isEditorShortcutSuppressed, resolveEditorShortcut } from "@/lib/shortcuts";
+import {
+  editorActionFromMenuCommand,
+  executeEditorAction,
+  type EditorAction,
+} from "@/lib/editorCommands";
 import {
   createManualSegment,
   insertSegmentPair,
@@ -98,13 +90,43 @@ import {
   sortSegmentsByStart,
   type SegmentCollection,
 } from "@/lib/segmentManagement";
-import { boundaryNudgePlaybackRange, nearestBoundaryTarget } from "@/lib/boundaries";
+import {
+  boundaryNudgePlaybackRange,
+  createCutBoundaryPolicy,
+  nearestBoundaryTarget,
+  nudgeBoundaryTime,
+  resolveBoundaryTime,
+} from "@/lib/boundaries";
 import {
   normalizeBoundaryRefinementSettings,
   readBoundaryRefinementSettings,
   writeBoundaryRefinementSettings,
   type BoundaryRefinementSettings,
 } from "@/lib/boundaryRefinement";
+import {
+  DEFAULT_SCRATCH_PREVIEW_MILLISECONDS,
+  MAX_VIDEO_SPLIT_PERCENT,
+  MIN_VIDEO_SPLIT_PERCENT,
+  formatBoundaryNudgeSeconds,
+  formatBoundarySeconds,
+  normalizeBoundarySecondsInput,
+  normalizeScratchPreviewMilliseconds,
+  parseBoundaryNudgeSeconds,
+  parseBoundarySeconds,
+  readBoundaryNudgeSecondsInput as readStoredBoundaryNudgeSecondsInput,
+  readBoundarySecondsInput as readStoredBoundarySecondsInput,
+  readCreateSourceFolder as readStoredCreateSourceFolder,
+  readModePreferences,
+  readScratchAudioProxyEnabled as readStoredScratchAudioProxyEnabled,
+  readScratchPreviewMilliseconds as readStoredScratchPreviewMilliseconds,
+  readVideoSplitPercent as readStoredVideoSplitPercent,
+  writeBoundaryNudgeSecondsInput,
+  writeBoundarySecondsInput,
+  writeCreateSourceFolder,
+  writeScratchAudioProxyEnabled,
+  writeScratchPreviewMilliseconds,
+  writeVideoSplitPercent,
+} from "@/lib/settingsScopes";
 import {
   applyTimestampCommentToGuide,
   backToTimestampCommentSelection,
@@ -118,91 +140,48 @@ import type { TimestampCommentFlow } from "@/lib/timestampComments";
 import { buildTimestampExportText, timestampExportFormats } from "@/lib/timestampExport";
 import type { TimestampExportFormat } from "@/lib/timestampExport";
 import {
-  buildWaveformPathSpecs,
-  buildWaveformPyramid,
-  normalizeWaveformDisplayMode,
-  selectWaveformLevel
-} from "@/lib/waveform";
+  DEFAULT_WAVEFORM_DISPLAY_MODES,
+  DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE,
+  readCutWaveformAmplitudeProfile,
+  writeCutWaveformAmplitudeProfile,
+  writeWaveformDisplayMode,
+  type WaveformDisplayModes,
+} from "@/lib/waveformPreferences";
+import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
+import { createWaveformSessionCache, selectWaveformHydration } from "@/lib/waveformSessionCache";
 import type { ScratchProxyState } from "@/lib/scratchProxy";
+import type { AppMode } from "@/lib/modes";
+import { createModeSession } from "@/lib/modeSession";
 import {
   addFourBeatSegment,
   createDefaultSubtitleState,
   nudgeSegmentBoundary,
-  subtitleRenderSignature,
-  type AppMode,
+  updateSegmentBoundary,
   type LyricsSegment,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
 import type {
   AnalysisResult,
   ExportCandidate,
-  ExportRenderPlan,
   ExportRenderPlanItem,
   FfmpegCheckResult,
   JobRecord,
   ScratchProxyResult,
   Segment,
-  SmartRenderEstimate,
   Transcript,
-  TimestampCommentCandidate,
   VideoInfo,
   WaveformDisplayMode,
-  WaveformPoint
 } from "@/types";
 import { currentUiLanguage, localizeFilenameTemplateError, localizeJobMessage, localizeUiMessage, tr, type UiLanguage, type UiLanguagePreference } from "@/i18n";
 
 const zoomLevels = [1, 2, 4, 8, 16, 32];
-const MIN_SEGMENT_SECONDS = 0.1;
-const DEFAULT_BOUNDARY_SECONDS = 5;
-const DEFAULT_BOUNDARY_NUDGE_SECONDS = 0.5;
-const DEFAULT_VIDEO_SPLIT_PERCENT = 35;
-const MIN_VIDEO_SPLIT_PERCENT = 32;
-const MAX_VIDEO_SPLIT_PERCENT = 72;
-const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
-const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
-const MAX_SCRATCH_PREVIEW_MILLISECONDS = 5000;
-const SCRATCH_PREVIEW_STORAGE_KEY = "songcut:scratch-preview-milliseconds";
-const SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY = "songcut:scratch-audio-proxy-enabled";
-const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds";
-const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds";
-const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent";
-const WAVEFORM_DISPLAY_MODE_STORAGE_KEY = "songcut:waveform-display-mode";
-const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder";
-const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 const videoExtensions = new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".mpg", ".mpeg"]);
+const cutDragBoundaryPolicy = createCutBoundaryPolicy("drag");
 
-type OutputItem = {
-  id: string;
-  segmentId: string;
-  title: string;
-  filename_stem: string;
-  start: number;
-  end: number;
-  checked: boolean;
-};
-
-type ExportPlanState =
-  | { status: "idle"; plan: null; error: null }
-  | { status: "loading"; plan: ExportRenderPlan; error: null; completed: number; total: number; currentId: string | null }
-  | { status: "ready"; plan: ExportRenderPlan; error: null }
-  | { status: "error"; plan: null; error: string };
-
-type SegmentManagementReview =
-  | {
-      kind: "remove";
-      title: string;
-      message: string;
-      confirmLabel: string;
-      segmentIds: string[];
-      items: OutputItem[];
-    }
-  | {
-      kind: "sort";
-      title: string;
-      message: string;
-      before: OutputItem[];
-      after: OutputItem[];
-    };
+/** `listSystemFonts`で利用可能な候補をplatformまたは状態から列挙して返す。 */
+function listSystemFonts() {
+  return window.songcut.listSystemFonts();
+}
 
 type RelinkConflict = {
   selectedPath: string;
@@ -219,9 +198,11 @@ type SwitchSaveFailure = {
   recoverySaved: boolean;
 };
 
+/** アプリ全体の状態とmode sessionを組み立て、選択中モードの画面とdialogを描画する。 */
 export default function App(props: {
   initialLocaleSettings: { language: UiLanguage; preference: UiLanguagePreference };
 }) {
+  const editorRootRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [mode, setMode] = useState<AppMode>("cut");
   const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
@@ -246,10 +227,8 @@ export default function App(props: {
   const videoPathRef = useRef("");
   const projectReadOnlyRef = useRef(false);
   const recoveryCheckedRef = useRef(false);
-  const whisperDownloadPromiseRef = useRef<Promise<void> | null>(null);
-  const demucsDownloadPromiseRef = useRef<Promise<void> | null>(null);
-  const mmsDownloadPromiseRef = useRef<Promise<void> | null>(null);
   const taskRegistry = useTaskRegistry();
+  const [waveformSessionCache] = useState(() => createWaveformSessionCache());
   const [apiBaseUrl, setApiBaseUrl] = useState("");
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
@@ -275,7 +254,9 @@ export default function App(props: {
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
-  const [waveformDisplayMode, setWaveformDisplayMode] = useState<WaveformDisplayMode>(readWaveformDisplayMode);
+  const [waveformDisplayModes, setWaveformDisplayModes] = useState<WaveformDisplayModes>(readStoredWaveformDisplayModes);
+  const [cutWaveformAmplitudeProfile, setCutWaveformAmplitudeProfile] =
+    useState<CutWaveformAmplitudeProfile>(readStoredCutWaveformAmplitudeProfile);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
   const [subtitleFocusRequest, setSubtitleFocusRequest] = useState(0);
   const [waveformSeeking, setWaveformSeeking] = useState(false);
@@ -299,13 +280,6 @@ export default function App(props: {
     readBoundaryRefinementSettings
   );
   const [whisperSettings, setWhisperSettings] = useState<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
-  const [whisperStatus, setWhisperStatus] = useState<WhisperStatus | null>(null);
-  const [whisperPreflightOpen, setWhisperPreflightOpen] = useState(false);
-  const [whisperDownloadOpen, setWhisperDownloadOpen] = useState(false);
-  const [demucsStatus, setDemucsStatus] = useState<DemucsStatus | null>(null);
-  const [demucsDownloadOpen, setDemucsDownloadOpen] = useState(false);
-  const [mmsStatus, setMmsStatus] = useState<MmsStatus | null>(null);
-  const [mmsDownloadOpen, setMmsDownloadOpen] = useState(false);
   const [projectBase, setProjectBase] = useState<ProjectDocumentV1 | null>(null);
   const [projectPath, setProjectPath] = useState("");
   const [projectRevision, setProjectRevision] = useState(0);
@@ -319,19 +293,44 @@ export default function App(props: {
   const [filenameTemplate, setFilenameTemplate] = useState(DEFAULT_FILENAME_TEMPLATE);
   const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
 
+  const {
+    whisperStatus,
+    demucsStatus,
+    mmsStatus,
+    whisperPreflightOpen,
+    setWhisperPreflightOpen,
+    whisperDownloadOpen,
+    setWhisperDownloadOpen,
+    demucsDownloadOpen,
+    setDemucsDownloadOpen,
+    mmsDownloadOpen,
+    setMmsDownloadOpen,
+    refreshWhisperStatus,
+    ensureWhisper,
+    ensureDemucs,
+    ensureMms,
+  } = useModelPreparation({
+    apiBaseUrl,
+    whisperModel: whisperSettings.model,
+    updateTask: taskRegistry.updateTask,
+    onMessage: setMessage,
+  });
+
   projectBaseRef.current = projectBase;
   videoPathRef.current = videoPath;
   projectReadOnlyRef.current = projectReadOnly;
   const progressiveWaveform = useProgressiveWaveform(
     apiBaseUrl,
     (nextJob) => taskRegistry.updateTask("waveform", nextJob),
-    (sourcePath) => {
-      if (
-        projectBaseRef.current &&
-        !projectReadOnlyRef.current &&
-        sameWindowsPath(sourcePath, videoPathRef.current)
-      ) {
-        setProjectRevision((revision) => revision + 1);
+    (sourcePath, points, metadata) => {
+      const currentProject = projectBaseRef.current;
+      if (currentProject && sameWindowsPath(sourcePath, videoPathRef.current)) {
+        waveformSessionCache.put({
+          fingerprint: currentProject.source.fingerprint.value,
+          points,
+          metadata,
+        });
+        if (!projectReadOnlyRef.current) setProjectRevision((revision) => revision + 1);
       }
     }
   );
@@ -355,8 +354,18 @@ export default function App(props: {
   const canSelectNextSegment = selectedSegmentIndex >= 0 && selectedSegmentIndex < segments.length - 1;
   const duration = videoInfo?.duration ?? analysis?.duration ?? projectBase?.source.duration_seconds ?? videoRef.current?.duration ?? 0;
   const zoom = zoomLevels[zoomIndex];
+  const waveformDisplayMode = waveformDisplayModes[mode];
   const checkedCount = segments.filter((segment) => segment.checked !== false).length;
   const uncheckedCount = segments.length - checkedCount;
+  const activeSubtitleLane =
+    subtitleState.lanes.find((lane) => lane.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
+  const activeSubtitleSegments = [...(activeSubtitleLane?.segments ?? [])].sort(
+    (left, right) => left.start - right.start
+  );
+  const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
+    (segment) => segment.id === subtitleState.selected_segment_id
+  );
+  const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
   const visibleTranscriptSegment = useMemo(
     () => (transcriptSegment ? segments.find((segment) => segment.id === transcriptSegment.id) ?? transcriptSegment : null),
     [segments, transcriptSegment]
@@ -365,11 +374,13 @@ export default function App(props: {
     () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
     [segments, exportCandidates, filenameTemplate]
   );
+  /** `openOutputReview`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function openOutputReview() {
     setExportPlanState({ status: "idle", plan: null, error: null });
     setOutputOpen(true);
   }
 
+  /** `checkExportRenderDetails`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   async function checkExportRenderDetails() {
     if (!apiBaseUrl || !videoPath) return;
     const items = outputPlan.items.filter((item) => item.checked);
@@ -406,29 +417,38 @@ export default function App(props: {
   const subtitleExportJob = taskRegistry.tasks["subtitle-export"] ?? null;
   const runningJob = taskRegistry.blockingTask;
   const projectDocument = useMemo(
-    () =>
-      projectBase
-        ? composeProjectDocument(projectBase, {
-            revision: projectRevision,
-            videoPath,
-            duration,
-            guideText,
-            waveform: progressiveWaveform.waveform,
-            analysis,
-            segments,
-            exportCandidates,
-            analysisDevice,
-            whisper: whisperSettings,
-            filenameTemplate,
-            selectedSegmentId,
-            currentTime,
-            zoomIndex,
-            operation: projectOperation
-            ,
-            mode,
-            subtitle: mode === "sub" ? subtitleState : undefined
-          })
-        : null,
+    () => {
+      if (!projectBase) return null;
+      const commonState = {
+        revision: projectRevision,
+        videoPath,
+        duration,
+        waveform: progressiveWaveform.waveform,
+        analysisDevice,
+        whisper: whisperSettings,
+        filenameTemplate,
+        currentTime,
+        zoomIndex,
+      };
+      if (mode === "sub") {
+        assertSubProjectOperation(projectOperation);
+        return composeSubProjectDocument(projectBase, {
+          ...commonState,
+          subtitle: subtitleState,
+          operation: projectOperation,
+        });
+      }
+      assertCutProjectOperation(projectOperation);
+      return composeCutProjectDocument(projectBase, {
+          ...commonState,
+          selectedSegmentId,
+          guideText,
+        analysis,
+        segments,
+        exportCandidates,
+        operation: projectOperation,
+      });
+    },
     [
       projectBase,
       projectRevision,
@@ -445,10 +465,9 @@ export default function App(props: {
       selectedSegmentId,
       currentTime,
       zoomIndex,
-      projectOperation
-      ,
+      projectOperation,
       mode,
-      subtitleState
+      subtitleState,
     ]
   );
   const persistence = useProjectPersistence(
@@ -485,10 +504,59 @@ export default function App(props: {
 
   projectDocumentRef.current = projectDocument;
 
+  /** `markProjectChanged`の変更をrevisionへ記録し、永続化対象であることを示す。 */
   function markProjectChanged() {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
   }
 
+  const { cut: cutOperations, sub: subOperations } = useModeOperations({
+    runner: {
+      updateTask: taskRegistry.updateTask,
+      setProjectOperation,
+      markProjectChanged,
+    },
+    cut: {
+      apiBaseUrl,
+      videoPath,
+      guideText,
+      analysisDevice,
+      boundaryRefinementSettings,
+      whisperSettings,
+      segments,
+      projectOperation,
+      updateTask: taskRegistry.updateTask,
+      applyAnalysisResult: (result, nextSegments) => {
+        setAnalysis(result);
+        setSegments(nextSegments);
+        setExportCandidates(result.export_candidates);
+        setSelectedSegmentId(nextSegments[0]?.id ?? null);
+      },
+      applyTranscripts,
+      updateProjectOperation: (updater) => setProjectOperation(updater),
+      onExportStart: () => {
+        setOutputOpen(false);
+        setExportProgressOpen(true);
+      },
+      onMessage: setMessage,
+      refreshWhisperStatus,
+    },
+    sub: {
+      apiBaseUrl,
+      videoPath,
+      state: subtitleState,
+      whisperSettings,
+      analysisJob: lyricsAnalysisJob,
+      exportJob: subtitleExportJob,
+      updateTask: taskRegistry.updateTask,
+      setState: setSubtitleState,
+      markStateChanged: markProjectChanged,
+      focusSegment: focusSubtitleSegment,
+      onMessage: setMessage,
+      confirm: (message) => window.confirm(message),
+    },
+  });
+
+  /** `updateFilenameTemplate`で指定された変更を不変更新として状態へ反映する。 */
   function updateFilenameTemplate(value: string) {
     setFilenameTemplate(value);
     markProjectChanged();
@@ -499,68 +567,47 @@ export default function App(props: {
   }, [selectedSegment]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(SCRATCH_PREVIEW_STORAGE_KEY, String(scratchPreviewMilliseconds));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeScratchPreviewMilliseconds(window.localStorage, scratchPreviewMilliseconds);
   }, [scratchPreviewMilliseconds]);
 
   useEffect(() => {
     scratchAudioProxyEnabledRef.current = scratchAudioProxyEnabled;
-    try {
-      window.localStorage.setItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY, String(scratchAudioProxyEnabled));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeScratchAudioProxyEnabled(window.localStorage, scratchAudioProxyEnabled);
   }, [scratchAudioProxyEnabled]);
 
   useEffect(() => {
     if (!boundarySecondsInput.trim()) return;
-    try {
-      window.localStorage.setItem(
-        BOUNDARY_SECONDS_STORAGE_KEY,
-        formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))
-      );
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeBoundarySecondsInput(window.localStorage, boundarySecondsInput);
   }, [boundarySecondsInput]);
 
   useEffect(() => {
     if (!boundaryNudgeSecondsInput.trim()) return;
-    try {
-      window.localStorage.setItem(
-        BOUNDARY_NUDGE_SECONDS_STORAGE_KEY,
-        formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))
-      );
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeBoundaryNudgeSecondsInput(window.localStorage, boundaryNudgeSecondsInput);
   }, [boundaryNudgeSecondsInput]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(VIDEO_SPLIT_STORAGE_KEY, String(split));
-    } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
-    }
+    writeVideoSplitPercent(window.localStorage, split);
   }, [split]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY, waveformDisplayMode);
+      writeWaveformDisplayMode(window.localStorage, "cut", waveformDisplayModes.cut);
+      writeWaveformDisplayMode(window.localStorage, "sub", waveformDisplayModes.sub);
     } catch {
-      // Keep the setting for this session when persistent storage is unavailable.
+      // Keep the settings for this session when persistent storage is unavailable.
     }
-  }, [waveformDisplayMode]);
+  }, [waveformDisplayModes]);
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(CREATE_SOURCE_FOLDER_STORAGE_KEY, String(createSourceFolder));
+      writeCutWaveformAmplitudeProfile(window.localStorage, cutWaveformAmplitudeProfile);
     } catch {
-      // Keep the export-folder preference for this session when persistent storage is unavailable.
+      // Keep the setting for this session when persistent storage is unavailable.
     }
+  }, [cutWaveformAmplitudeProfile]);
+
+  useEffect(() => {
+    writeCreateSourceFolder(window.localStorage, createSourceFolder);
   }, [createSourceFolder]);
 
   useEffect(() => {
@@ -574,13 +621,6 @@ export default function App(props: {
   useEffect(() => {
     window.songcut.apiBaseUrl().then(setApiBaseUrl).catch((error) => setMessage(String(error)));
   }, []);
-
-  useEffect(() => {
-    if (!apiBaseUrl) return;
-    void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
-    void refreshDemucsStatus().catch((error) => setMessage(`Demucs status unavailable: ${String(error)}`));
-    void refreshMmsStatus().catch((error) => setMessage(`MMS status unavailable: ${String(error)}`));
-  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (!apiBaseUrl || recoveryCheckedRef.current) return;
@@ -719,48 +759,10 @@ export default function App(props: {
   useEffect(() => {
     const jobId = analysis?.transcription_job_id;
     if (!apiBaseUrl || !jobId) return;
-    let cancelled = false;
-    setMessage("Transcribing in background.");
-    const onUpdate = (nextJob: JobRecord) => {
-      if (cancelled) return;
-      taskRegistry.updateTask("transcription", nextJob);
-      applyTranscriptResult(nextJob.result);
-    };
-    waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, jobId, onUpdate)
-      .then((result) => {
-        if (cancelled) return;
-        applyTranscripts(result.transcripts ?? []);
-        setMessage("Transcription complete.");
-      })
-      .catch((error) => {
-        if (!cancelled) setMessage(`Transcription failed: ${String(error)}`);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [apiBaseUrl, analysis?.transcription_job_id, taskRegistry.updateTask]);
+    return cutModeSession.operations.watchBackgroundTranscription(jobId);
+  }, [apiBaseUrl, analysis?.transcription_job_id, cutOperations]);
 
-  async function refreshWhisperStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getWhisperStatus(apiBaseUrl);
-    setWhisperStatus(status);
-    return status;
-  }
-
-  async function refreshDemucsStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getDemucsStatus(apiBaseUrl);
-    setDemucsStatus(status);
-    return status;
-  }
-
-  async function refreshMmsStatus() {
-    if (!apiBaseUrl) return null;
-    const status = await getMmsStatus(apiBaseUrl);
-    setMmsStatus(status);
-    return status;
-  }
-
+  /** `checkRecoveryOnStartup`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   async function checkRecoveryOnStartup() {
     try {
       const raw = await window.songcut.loadRecovery();
@@ -782,10 +784,40 @@ export default function App(props: {
     }
   }
 
+  /** `showWaveformForDocument`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
+  function showWaveformForDocument(document: ProjectDocumentV1, sourcePath: string | null) {
+    const displayPath = sourcePath ?? document.source.absolute_path;
+    const snapshot = document.waveform_snapshot;
+    const documentWaveform = waveformFromProject(document);
+    const decision = selectWaveformHydration(waveformSessionCache, {
+      fingerprint: document.source.fingerprint.value,
+      duration: document.source.duration_seconds,
+      document:
+        snapshot && documentWaveform.length === snapshot.point_count && documentWaveform.length > 0
+          ? {
+              points: documentWaveform,
+              metadata: {
+                source_path: displayPath,
+                duration: snapshot.duration_seconds,
+                sample_rate: snapshot.sample_rate,
+                channels: snapshot.channels,
+                generator: snapshot.generator,
+                point_count: snapshot.point_count,
+              },
+              encoding: snapshot.encoding,
+            }
+          : null,
+    });
+    progressiveWaveform.showCached(displayPath, decision.points, decision.metadata);
+    if (decision.source === "generate" && sourcePath) void progressiveWaveform.start(sourcePath);
+  }
+
+  /** `hydrateProject`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
   async function hydrateProject(nextProjectPath: string, document: ProjectDocumentV1, preferredSource?: string) {
     if (!apiBaseUrl) return;
-    const wasRunning = document.operation?.status === "running";
-    const operation = normalizeInterruptedOperation(document.operation);
+    const hydrated = hydrateProjectDocument(document);
+    const wasRunning = hydrated.operation?.status === "running";
+    const operation = normalizeInterruptedOperation(hydrated.operation);
     let sourcePath = preferredSource ?? (await window.songcut.findProjectSource(nextProjectPath, document));
     let info: VideoInfo | null = null;
     let fileUrl = "";
@@ -818,26 +850,27 @@ export default function App(props: {
     setVideoPath(sourcePath ?? "");
     setVideoUrl(fileUrl);
     setVideoInfo(info ?? offlineVideoInfo(document));
-    setGuideText(document.guide_text);
-    setMode(projectMode(document));
-    setSubtitleState(subtitleStateFromProject(document));
-    setAnalysis(analysisFromProject(document));
-    const cachedWaveform = waveformFromProject(document);
-    progressiveWaveform.showCached(sourcePath ?? document.source.absolute_path, cachedWaveform);
-    if (sourcePath && cachedWaveform.length === 0) void progressiveWaveform.start(sourcePath);
-    setSegments(document.segments.map((segment) => ({ ...segment })));
-    setExportCandidates(exportCandidatesFromProject(document));
-    setSelectedSegmentId(document.view_state.selected_segment_id ?? document.segments[0]?.id ?? null);
-    setCurrentTime(document.view_state.current_time);
-    setZoomIndex(clamp(document.view_state.zoom_index, 0, zoomLevels.length - 1));
-    setAnalysisDevice(document.settings.analysis_device);
+    setGuideText(hydrated.mode === "cut" ? hydrated.guideText : "");
+    setMode(hydrated.mode);
+    setSubtitleState(hydrated.mode === "sub" ? hydrated.subtitle : createDefaultSubtitleState());
+    setAnalysis(hydrated.mode === "cut" ? hydrated.analysis : null);
+    showWaveformForDocument(document, sourcePath);
+    setSegments(hydrated.mode === "cut" ? hydrated.segments : []);
+    setExportCandidates(hydrated.mode === "cut" ? hydrated.exportCandidates : []);
+    setSelectedSegmentId(
+      hydrated.mode === "cut"
+        ? hydrated.selectedSegmentId ?? hydrated.segments[0]?.id ?? null
+        : null
+    );
+    setCurrentTime(hydrated.currentTime);
+    setZoomIndex(clamp(hydrated.zoomIndex, 0, zoomLevels.length - 1));
+    setAnalysisDevice(hydrated.projectSettings.analysisDevice);
     setWhisperSettings({
       ...DEFAULT_WHISPER_SETTINGS,
-      ...document.settings.whisper,
-      lyricsAlignmentAlgorithm:
-        document.settings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
+      ...hydrated.projectSettings.whisper,
+      lyricsAlignmentAlgorithm: hydrated.projectSettings.whisper.lyricsAlignmentAlgorithm ?? "songcut-standard"
     });
-    setFilenameTemplate(filenameTemplateFromProject(document));
+    setFilenameTemplate(hydrated.projectSettings.filenameTemplate);
     taskRegistry.clearTasks([
       "analysis",
       "lyrics-analysis",
@@ -858,6 +891,7 @@ export default function App(props: {
     );
   }
 
+  /** `loadVideo`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
   async function loadVideo(filePath: string, discardCurrentChanges = false) {
     if (!apiBaseUrl) return;
     if (!discardCurrentChanges) {
@@ -918,7 +952,7 @@ export default function App(props: {
       }
     }
 
-    const document = createProjectDocument(nextProjectPath, identity, info);
+    const document = createCutProjectDocument(nextProjectPath, identity, info);
     let initialSidecarError: unknown = null;
     try {
       await persistence.saveProjectNow(nextProjectPath, document);
@@ -943,8 +977,7 @@ export default function App(props: {
     setMode("cut");
     setSubtitleState(createDefaultSubtitleState());
     setAnalysis(null);
-    progressiveWaveform.showCached(filePath, []);
-    void progressiveWaveform.start(filePath);
+    showWaveformForDocument(document, filePath);
     setSegments([]);
     setExportCandidates([]);
     setSelectedSegmentId(null);
@@ -964,6 +997,7 @@ export default function App(props: {
     );
   }
 
+  /** `activateOpenedProject`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function activateOpenedProject(opened: ProjectOpenResult, discardCurrentChanges = false) {
     if (!discardCurrentChanges) {
       try {
@@ -989,11 +1023,13 @@ export default function App(props: {
     if (opened.recoveredFrom !== "target") setMessage(`Project recovered from its ${opened.recoveredFrom} copy.`);
   }
 
+  /** `loadProjectPath`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
   async function loadProjectPath(filePath: string, discardCurrentChanges = false) {
     const opened = parseProjectOpenResult(await window.songcut.loadProject(filePath));
     await activateOpenedProject(opened, discardCurrentChanges);
   }
 
+  /** `openProject`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function openProject() {
     try {
       const raw = await window.songcut.openProject();
@@ -1006,6 +1042,7 @@ export default function App(props: {
     }
   }
 
+  /** `switchMode`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function switchMode(nextMode: AppMode) {
     if (nextMode === mode) return;
     if (runningJob) {
@@ -1032,7 +1069,9 @@ export default function App(props: {
         if (!isProjectNotFoundError(error)) throw error;
       }
       const identity = parseSourceIdentity(await window.songcut.fingerprintSource(videoPath));
-      const document = createProjectDocument(nextProjectPath, identity, videoInfo, nextMode);
+      const document = nextMode === "sub"
+        ? createSubProjectDocument(nextProjectPath, identity, videoInfo)
+        : createCutProjectDocument(nextProjectPath, identity, videoInfo);
       await persistence.saveProjectNow(nextProjectPath, document);
       await hydrateProject(nextProjectPath, document, videoPath);
     } catch (error) {
@@ -1040,6 +1079,7 @@ export default function App(props: {
     }
   }
 
+  /** `recoverProject`のsnapshotから編集状態を復元し、通常の保存経路へ戻す。 */
   async function recoverProject() {
     if (!recoveryCandidate) return;
     const target = recoveryCandidate.project_path || (await window.songcut.projectPathForVideo(recoveryCandidate.document.source.absolute_path));
@@ -1056,12 +1096,14 @@ export default function App(props: {
     setMessage("Recovered edits were saved to the project sidecar.");
   }
 
+  /** `discardRecovery`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   async function discardRecovery() {
     await window.songcut.clearRecovery();
     setRecoveryOpen(false);
     setRecoveryCandidate(null);
   }
 
+  /** `relinkSource`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   async function relinkSource() {
     const current = projectDocumentRef.current;
     if (!current) return;
@@ -1078,7 +1120,7 @@ export default function App(props: {
       setMessage("The selected file has a different duration. It was not linked to this project.");
       return;
     }
-    const nextProjectPath = await window.songcut.projectPathForVideo(selected);
+    const nextProjectPath = await window.songcut.projectPathForVideo(selected, mode);
     const conflict: RelinkConflict = {
       selectedPath: selected,
       identity,
@@ -1102,6 +1144,7 @@ export default function App(props: {
     await completeRelink(conflict, false);
   }
 
+  /** `completeRelink`の進行中状態を完了させ、一時resourceと表示状態を整理する。 */
   async function completeRelink(conflict: RelinkConflict, archiveDamagedDestination: boolean) {
     const current = projectDocumentRef.current;
     if (!current) return;
@@ -1130,6 +1173,7 @@ export default function App(props: {
     setMessage("Source relinked and the project was saved beside the media.");
   }
 
+  /** `configureScratchProxy`の設定に基づいて必要なresourceを作成または解放する。 */
   async function configureScratchProxy(generation: number) {
     await disposeScratchProxy(apiBaseUrl);
     if (scratchProxyConfigurationGenerationRef.current !== generation) return;
@@ -1200,6 +1244,7 @@ export default function App(props: {
     }
   }
 
+  /** `disposeScratchProxy`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   async function disposeScratchProxy(baseUrl: string, clearTask = true) {
     const proxyAudio = scratchProxyAudioRef.current;
     if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
@@ -1220,223 +1265,14 @@ export default function App(props: {
     if (proxyId) await releaseScratchProxy(baseUrl, proxyId).catch(() => undefined);
   }
 
+  /** `selectVideo`の候補と条件から、利用すべき値または操作を決定する。 */
   async function selectVideo() {
     const filePath = await window.songcut.selectVideo();
     if (!filePath) return;
     await loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  async function ensureWhisper(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (whisperDownloadPromiseRef.current) return whisperDownloadPromiseRef.current;
-
-    const modelKey = whisperSettings.model;
-    let trackedJob = createPendingTask("download-whisper", tr("dialogs.whisperDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-whisper", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshWhisperStatus();
-        const currentModel = currentStatus?.models.find((model) => model.key === modelKey) ?? null;
-        if (currentModel?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentModel.installed_bytes;
-            trackDownload({
-              id: "already-ready",
-              kind: "download-whisper",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.whisperDownloadComplete"),
-              result: {
-                model: currentModel.key,
-                model_dir: currentModel.model_dir,
-                source: currentModel.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setWhisperDownloadOpen(true);
-            setMessage(`Whisper ${modelKey} model is ready.`);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setWhisperDownloadOpen(true);
-        trackDownload({
-          id: "starting",
-          kind: "download-whisper",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.whisperDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startWhisperDownload(apiBaseUrl, modelKey);
-        trackDownload(started);
-        await waitForJob(
-          apiBaseUrl,
-          started.id,
-          trackDownload,
-          250
-        );
-        await refreshWhisperStatus();
-        setMessage(`Whisper ${modelKey} model is ready.`);
-      } catch (error) {
-        setWhisperDownloadOpen(true);
-        const current = trackedJob;
-        trackDownload(failTask(current, error, tr("dialogs.whisperDownloadFailed")));
-        throw error;
-      } finally {
-        whisperDownloadPromiseRef.current = null;
-      }
-    })();
-    whisperDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
-  async function ensureDemucs(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (demucsDownloadPromiseRef.current) return demucsDownloadPromiseRef.current;
-
-    let trackedJob = createPendingTask("download-demucs", tr("dialogs.demucsDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-demucs", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshDemucsStatus();
-        if (currentStatus?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentStatus.installed_bytes;
-            trackDownload({
-              id: "already-ready-demucs",
-              kind: "download-demucs",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.demucsDownloadComplete"),
-              result: {
-                model: currentStatus.model,
-                model_dir: currentStatus.model_dir,
-                source: currentStatus.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setDemucsDownloadOpen(true);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setDemucsDownloadOpen(true);
-        trackDownload({
-          id: "starting-demucs",
-          kind: "download-demucs",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.demucsDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startDemucsDownload(apiBaseUrl);
-        trackDownload(started);
-        await waitForJob(
-          apiBaseUrl,
-          started.id,
-          trackDownload,
-          250
-        );
-        await refreshDemucsStatus();
-      } catch (error) {
-        setDemucsDownloadOpen(true);
-        const current = trackedJob;
-        trackDownload(failTask(current, error, tr("dialogs.demucsDownloadFailed")));
-        throw error;
-      } finally {
-        demucsDownloadPromiseRef.current = null;
-      }
-    })();
-    demucsDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
-  async function ensureMms(options: { showReadyState?: boolean } = {}) {
-    if (!apiBaseUrl) return;
-    if (mmsDownloadPromiseRef.current) return mmsDownloadPromiseRef.current;
-
-    let trackedJob = createPendingTask("download-mms", tr("dialogs.mmsDownloadPreparing"));
-    const trackDownload = (job: JobRecord) => {
-      trackedJob = job;
-      taskRegistry.updateTask("download-mms", job);
-    };
-    const operation = (async () => {
-      try {
-        const currentStatus = await refreshMmsStatus();
-        if (currentStatus?.ready) {
-          if (options.showReadyState) {
-            const now = Date.now() / 1000;
-            const installedBytes = currentStatus.installed_bytes;
-            trackDownload({
-              id: "already-ready-mms",
-              kind: "download-mms",
-              status: "completed",
-              progress: 1,
-              message: tr("dialogs.mmsDownloadComplete"),
-              result: {
-                model: currentStatus.model,
-                model_dir: currentStatus.model_dir,
-                source: currentStatus.source,
-                installed_bytes: installedBytes,
-                downloaded_bytes: installedBytes,
-                total_bytes: installedBytes,
-              },
-              created_at: now,
-              updated_at: now,
-            });
-            setMmsDownloadOpen(true);
-          }
-          return;
-        }
-
-        const now = Date.now() / 1000;
-        setMmsDownloadOpen(true);
-        trackDownload({
-          id: "starting-mms",
-          kind: "download-mms",
-          status: "queued",
-          progress: 0,
-          message: tr("dialogs.mmsDownloadPreparing"),
-          created_at: now,
-          updated_at: now,
-        });
-        const started = await startMmsDownload(apiBaseUrl);
-        trackDownload(started);
-        await waitForJob(apiBaseUrl, started.id, trackDownload, 250);
-        await refreshMmsStatus();
-      } catch (error) {
-        setMmsDownloadOpen(true);
-        trackDownload(failTask(trackedJob, error, tr("dialogs.mmsDownloadFailed")));
-        throw error;
-      } finally {
-        mmsDownloadPromiseRef.current = null;
-      }
-    })();
-    mmsDownloadPromiseRef.current = operation;
-    return operation;
-  }
-
+  /** `runFfmpegCheck`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runFfmpegCheck(showSuccess: boolean) {
     if (!apiBaseUrl) return;
     if (showSuccess) setFfmpegCheckOpen(true);
@@ -1455,6 +1291,7 @@ export default function App(props: {
     }
   }
 
+  /** `analyze`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function analyze() {
     if (whisperSettings.enabled && !selectedWhisperModel?.ready) {
       setWhisperPreflightOpen(true);
@@ -1463,174 +1300,44 @@ export default function App(props: {
     await runAnalysis(whisperSettings.enabled);
   }
 
+  /** `runAnalysis`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runAnalysis(transcribeAfter: boolean) {
-    if (!apiBaseUrl || !videoPath) return;
-    taskRegistry.updateTask("transcription", null);
-    setProjectOperation({ kind: "analysis", status: "running" });
-    markProjectChanged();
-    let trackedJob = createPendingTask("analysis", tr("messages.analysisRunning"));
-    taskRegistry.updateTask("analysis", trackedJob);
-    try {
-      const started = await startAnalysis(
-        apiBaseUrl,
-        videoPath,
-        guideText,
-        analysisDevice,
-        boundaryRefinementSettings
-      );
-      trackedJob = started;
-      taskRegistry.updateTask("analysis", started);
-      const result = await waitForJob<AnalysisResult>(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("analysis", nextJob);
-      });
-      const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
-      setAnalysis(result);
-      setSegments(nextSegments);
-      setExportCandidates(result.export_candidates);
-      setSelectedSegmentId(nextSegments[0]?.id ?? null);
-      setProjectOperation(null);
-      markProjectChanged();
-      setMessage(`Detected ${nextSegments.length} segments.`);
-      if (transcribeAfter && nextSegments.length) await runTranscription(nextSegments, false);
-    } catch (error) {
-      taskRegistry.updateTask("analysis", failTask(trackedJob, error, tr("messages.analysisFailed")));
-      setProjectOperation({ kind: "analysis", status: "interrupted" });
-      markProjectChanged();
-      throw error;
-    }
+    await cutModeSession.operations.runAnalysis(transcribeAfter);
   }
 
+  /** `runTranscription`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function runTranscription(candidateSegments = segments, resumeInterrupted = true) {
-    if (!apiBaseUrl || !videoPath || !candidateSegments.length) return;
-    const sameInterruptedSettings =
-      resumeInterrupted &&
-      projectOperation?.kind === "transcription" &&
-      projectOperation.status === "interrupted" &&
-      projectOperation.settings?.model === whisperSettings.model &&
-      projectOperation.settings?.language === whisperSettings.language;
-    const pending = sameInterruptedSettings
-      ? candidateSegments.filter((segment) => projectOperation.pending_segment_ids?.includes(segment.id))
-      : candidateSegments;
-    const targets = pending.length ? pending : candidateSegments;
-    const pendingIds = targets.map((segment) => segment.id);
-    setProjectOperation({
-      kind: "transcription",
-      status: "running",
-      settings: { ...whisperSettings },
-      pending_segment_ids: pendingIds
-    });
-    markProjectChanged();
-    let trackedJob = createPendingTask("transcription", tr("messages.transcriptionPreparing"));
-    taskRegistry.updateTask("transcription", trackedJob);
-    try {
-      const started = await startTranscription(apiBaseUrl, videoPath, targets, whisperSettings, guideText);
-      trackedJob = started;
-      taskRegistry.updateTask("transcription", started);
-      const appliedTranscripts = new Map<string, string>();
-      const result = await waitForJob<{ transcripts?: Transcript[] }>(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("transcription", nextJob);
-        const partial = (nextJob.result as { transcripts?: Transcript[] } | undefined)?.transcripts ?? [];
-        const changed = partial.filter((transcript) => {
-          const serialized = JSON.stringify(transcript);
-          if (appliedTranscripts.get(transcript.segment_id) === serialized) return false;
-          appliedTranscripts.set(transcript.segment_id, serialized);
-          return true;
-        });
-        if (changed.length) {
-          applyTranscripts(changed);
-          const completed = new Set(changed.filter((transcript) => !transcript.error).map((transcript) => transcript.segment_id));
-          setProjectOperation((operation) =>
-            operation?.kind === "transcription"
-              ? { ...operation, pending_segment_ids: operation.pending_segment_ids?.filter((id) => !completed.has(id)) }
-              : operation
-          );
-        }
-      });
-      const finalTranscripts = result.transcripts ?? [];
-      const unapplied = finalTranscripts.filter(
-        (transcript) => appliedTranscripts.get(transcript.segment_id) !== JSON.stringify(transcript)
-      );
-      applyTranscripts(unapplied);
-      const failedIds = finalTranscripts.filter((transcript) => transcript.error).map((transcript) => transcript.segment_id);
-      setProjectOperation(
-        failedIds.length
-          ? {
-              kind: "transcription",
-              status: "interrupted",
-              settings: { ...whisperSettings },
-              pending_segment_ids: failedIds
-            }
-          : null
-      );
-      markProjectChanged();
-      setMessage(failedIds.length ? `Transcription completed with ${failedIds.length} failed segment(s).` : "Transcription complete.");
-    } catch (error) {
-      taskRegistry.updateTask(
-        "transcription",
-        failTask(trackedJob, error, tr("messages.transcriptionFailed"))
-      );
-      setProjectOperation((operation) =>
-        operation?.kind === "transcription" ? { ...operation, status: "interrupted" } : operation
-      );
-      markProjectChanged();
-      if (error instanceof ApiError && error.status === 409) await refreshWhisperStatus().catch(() => undefined);
-      setMessage(`Transcription failed: ${String(error)}`);
-    }
+    await cutModeSession.operations.runTranscription(candidateSegments, resumeInterrupted);
   }
 
+  /** `exportClips`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function exportClips(outputDir: string, createVideoFolder: boolean) {
-    if (!apiBaseUrl || !videoPath) return;
-    if (outputPlan.error) {
-      setMessage(localizeFilenameTemplateError(outputPlan.error) ?? outputPlan.error);
-      return;
-    }
     const outputItems = buildOutputItems();
     const items = outputItems.filter((item) => item.checked);
-    let trackedJob = createPendingTask("export", tr("output.preparing"));
-    taskRegistry.updateTask("export", trackedJob);
-    setOutputOpen(false);
-    setExportProgressOpen(true);
-    setProjectOperation({ kind: "export", status: "running" });
-    markProjectChanged();
-    try {
-      const started = await startExport(
-        apiBaseUrl,
-        videoPath,
-        outputDir,
-        items,
-        buildTimestampExportText(items, "timestamp-comment"),
-        createVideoFolder
-      );
-      trackedJob = started;
-      taskRegistry.updateTask("export", started);
-      await waitForJob(apiBaseUrl, started.id, (nextJob) => {
-        trackedJob = nextJob;
-        taskRegistry.updateTask("export", nextJob);
-      });
-      setProjectOperation(null);
-      markProjectChanged();
-      setMessage("Export complete.");
-    } catch (error) {
-      taskRegistry.updateTask("export", failTask(trackedJob, error, tr("output.failed")));
-      setProjectOperation({ kind: "export", status: "interrupted" });
-      markProjectChanged();
-      setMessage(`Export failed: ${String(error)}`);
-    }
+    await cutModeSession.operations.exportClips({
+      outputDir,
+      createSourceFolder: createVideoFolder,
+      items: outputItems,
+      timestampCommentText: buildTimestampExportText(items, "timestamp-comment"),
+      validationError: outputPlan.error
+        ? localizeFilenameTemplateError(outputPlan.error) ?? outputPlan.error
+        : null,
+    });
   }
 
+  /** `cancelQuit`の入力が要求された条件やschemaを満たすか検証する。 */
   function cancelQuit() {
     setQuitConfirmOpen(false);
     void window.songcut.cancelClose();
   }
 
+  /** `confirmQuit`の確認済み変更を編集状態へ適用する。 */
   async function confirmQuit() {
     setQuitConfirmOpen(false);
     const current = projectDocumentRef.current;
     if (current) {
       const kind = runningJobRef.current?.kind;
-      const operationKind = kind === "analysis" || kind === "transcription" || kind === "export" ? kind : current.operation?.kind;
+      const operationKind = isProjectOperationKind(kind) ? kind : current.operation?.kind;
       const interrupted: ProjectDocumentV1 = {
         ...current,
         revision: current.revision + 1,
@@ -1650,10 +1357,12 @@ export default function App(props: {
     await window.songcut.confirmClose();
   }
 
+  /** `buildOutputItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildOutputItems(): OutputItem[] {
     return outputPlan.items;
   }
 
+  /** `buildBaseOutputItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildBaseOutputItems(): OutputItem[] {
     return segments.map((segment, index) => {
       const candidate = exportCandidates[index];
@@ -1670,6 +1379,7 @@ export default function App(props: {
     });
   }
 
+  /** `buildSegmentReviewItems`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function buildSegmentReviewItems(reviewSegments: readonly Segment[]) {
     const baseItems = new Map(buildBaseOutputItems().map((item) => [item.segmentId, item]));
     const requested = reviewSegments.flatMap((segment) => {
@@ -1680,6 +1390,7 @@ export default function App(props: {
     return templated.error ? requested : templated.items;
   }
 
+  /** `exportTimestampText`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function exportTimestampText(format: TimestampExportFormat) {
     const items = buildOutputItems().filter((item) => item.checked);
     const text = buildTimestampExportText(items, format);
@@ -1697,15 +1408,18 @@ export default function App(props: {
     setMessage(tr("messages.copiedTimestamp", { count: items.length, format: tr(`timestampExport.${format}`) }));
   }
 
+  /** `updateSegment`で指定された変更を不変更新として状態へ反映する。 */
   function updateSegment(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
     markProjectChanged();
   }
 
+  /** `previewSegmentUpdate`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function previewSegmentUpdate(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
   }
 
+  /** `addNewSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function addNewSegment() {
     if (!projectBase) return;
     const pair = createManualSegment(segments, currentTime, duration, tr("segments.newTitle"));
@@ -1719,11 +1433,13 @@ export default function App(props: {
     setMessage(tr("messages.added", { id: pair.segment.id }));
   }
 
+  /** `focusSubtitleSegment`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function focusSubtitleSegment(segment: LyricsSegment) {
     setSubtitleFocusRequest((request) => request + 1);
     seek(segment.start);
   }
 
+  /** `selectSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSubtitleSegment(laneId: string, segment: LyricsSegment) {
     setSubtitleState((current) => ({
       ...current,
@@ -1734,6 +1450,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `addNewSubtitleSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
   function addNewSubtitleSegment() {
     const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
     if (!lane) return;
@@ -1753,6 +1470,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `removeSelectedSubtitleSegment`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   function removeSelectedSubtitleSegment() {
     const id = subtitleState.selected_segment_id;
     if (!id) return;
@@ -1776,6 +1494,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `selectAdjacentSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectAdjacentSubtitleSegment(direction: -1 | 1) {
     const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
     if (!lane?.segments.length) return;
@@ -1785,6 +1504,7 @@ export default function App(props: {
     selectSubtitleSegment(lane.id, ordered[nextIndex]);
   }
 
+  /** `nudgeSelectedSubtitleBoundary`で指定された変更を不変更新として状態へ反映する。 */
   function nudgeSelectedSubtitleBoundary(direction: -1 | 1) {
     const selectedId = subtitleState.selected_segment_id;
     if (!selectedId) return;
@@ -1804,6 +1524,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `selectedSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectedSubtitleSegment() {
     for (const lane of subtitleState.lanes) {
       const segment = lane.segments.find((item) => item.id === subtitleState.selected_segment_id);
@@ -1812,6 +1533,7 @@ export default function App(props: {
     return null;
   }
 
+  /** `playSubtitleBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playSubtitleBoundary(edge: "start" | "end") {
     const segment = selectedSubtitleSegment();
     if (!segment) return;
@@ -1820,6 +1542,7 @@ export default function App(props: {
     else playFrom(Math.max(segment.start, segment.end - previewSeconds), segment.end);
   }
 
+  /** `jumpSubtitleBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function jumpSubtitleBoundary(direction: -1 | 1) {
     const boundaries = subtitleState.lanes
       .flatMap((lane) => lane.segments.flatMap((segment) => [segment.start, segment.end]))
@@ -1831,6 +1554,7 @@ export default function App(props: {
     if (target !== undefined) seek(target);
   }
 
+  /** `requestRemoveSelectedSegment`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestRemoveSelectedSegment() {
     if (!selectedSegmentId) return;
     const segment = segments.find((item) => item.id === selectedSegmentId);
@@ -1845,6 +1569,7 @@ export default function App(props: {
     });
   }
 
+  /** `requestRemoveUncheckedSegments`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestRemoveUncheckedSegments() {
     const targets = segments.filter((segment) => segment.checked === false);
     if (!targets.length) return;
@@ -1858,6 +1583,7 @@ export default function App(props: {
     });
   }
 
+  /** `requestSortSegments`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestSortSegments() {
     if (segments.length < 2) return;
     const sorted = sortSegmentsByStart({ segments, exportCandidates });
@@ -1870,6 +1596,7 @@ export default function App(props: {
     });
   }
 
+  /** `confirmSegmentManagement`の確認済み変更を編集状態へ適用する。 */
   function confirmSegmentManagement() {
     const review = segmentManagementReview;
     if (!review) return;
@@ -1885,6 +1612,7 @@ export default function App(props: {
     setSegmentManagementReview(null);
   }
 
+  /** `applySegmentCollection`で指定された変更を不変更新として状態へ反映する。 */
   function applySegmentCollection(next: SegmentCollection, removedIds = new Set<string>()) {
     const priorSelectedIndex = selectedSegmentId
       ? segments.findIndex((segment) => segment.id === selectedSegmentId)
@@ -1906,6 +1634,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `checkAllSegments`の現在値を検査し、後続処理に必要な判定結果を返す。 */
   function checkAllSegments() {
     if (!uncheckedCount) return;
     setSegments(setAllSegmentsChecked(segments, true));
@@ -1913,6 +1642,7 @@ export default function App(props: {
     setMessage(tr("messages.checkedAll"));
   }
 
+  /** `uncheckAllSegments`の選択状態を解除し、export対象を更新する。 */
   function uncheckAllSegments() {
     if (!checkedCount) return;
     setSegments(setAllSegmentsChecked(segments, false));
@@ -1920,6 +1650,7 @@ export default function App(props: {
     setMessage(tr("messages.uncheckedAll"));
   }
 
+  /** `invertExportSelection`で指定された変更を不変更新として状態へ反映する。 */
   function invertExportSelection() {
     if (!segments.length) return;
     setSegments(invertSegmentChecks(segments));
@@ -1927,12 +1658,14 @@ export default function App(props: {
     setMessage(tr("messages.inverted"));
   }
 
+  /** `selectSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSegment(segment: Segment) {
     setSelectedSegmentId(segment.id);
     setSegmentFocusRequest((request) => request + 1);
     seek(segment.start);
   }
 
+  /** `selectAdjacentSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectAdjacentSegment(direction: -1 | 1) {
     if (!selectedSegment) return;
     const index = segments.findIndex((segment) => segment.id === selectedSegment.id);
@@ -1941,11 +1674,7 @@ export default function App(props: {
     selectSegment(segments[nextIndex]);
   }
 
-  function applyTranscriptResult(result: unknown) {
-    const transcripts = (result as { transcripts?: Transcript[] } | null | undefined)?.transcripts;
-    if (Array.isArray(transcripts)) applyTranscripts(transcripts);
-  }
-
+  /** `applyTranscripts`で指定された変更を不変更新として状態へ反映する。 */
   function applyTranscripts(transcripts: Transcript[]) {
     if (!transcripts.length) return;
     const transcriptMap = new Map(
@@ -1972,6 +1701,7 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `cancelScratchPreview`の入力が要求された条件やschemaを満たすか検証する。 */
   function cancelScratchPreview(restorePosition: boolean) {
     scratchPreviewGenerationRef.current += 1;
     if (scratchPreviewTimerRef.current !== null) {
@@ -1994,10 +1724,12 @@ export default function App(props: {
     }
   }
 
+  /** `finishScratchPreview`の進行中状態を完了させ、一時resourceと表示状態を整理する。 */
   function finishScratchPreview() {
     cancelScratchPreview(true);
   }
 
+  /** `seek`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function seek(time: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -2007,6 +1739,7 @@ export default function App(props: {
     playbackStopAtRef.current = video.paused ? null : segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
   }
 
+  /** `playFrom`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playFrom(time: number, stopAt?: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -2018,11 +1751,13 @@ export default function App(props: {
     void video.play();
   }
 
+  /** `playVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playVideo() {
     finishScratchPreview();
     void videoRef.current?.play();
   }
 
+  /** `pauseVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function pauseVideo() {
     if (scratchPreviewTimeRef.current !== null) {
       finishScratchPreview();
@@ -2031,6 +1766,7 @@ export default function App(props: {
     videoRef.current?.pause();
   }
 
+  /** `scratchPreview`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function scratchPreview(time: number) {
     const video = videoRef.current;
     if (!video) return;
@@ -2080,12 +1816,14 @@ export default function App(props: {
       });
   }
 
+  /** `openSettings`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function openSettings(tab: SettingsTab = "common") {
     setSettingsInitialTab(tab);
     setSettingsOpen(true);
     if (apiBaseUrl) void refreshWhisperStatus().catch((error) => setMessage(`Whisper status unavailable: ${String(error)}`));
   }
 
+  /** `closeSettings`のflowまたはdialogを閉じ、編集中の一時状態を初期化する。 */
   function closeSettings() {
     const milliseconds = normalizeScratchPreviewMilliseconds(
       scratchPreviewMillisecondsInput,
@@ -2097,18 +1835,21 @@ export default function App(props: {
     if (milliseconds !== scratchPreviewMilliseconds) setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
   }
 
+  /** `playStartBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playStartBoundary() {
     if (!selectedSegment) return;
     const seconds = parseBoundarySeconds(boundarySecondsInput);
     playFrom(selectedSegment.start, Math.min(selectedSegment.end, selectedSegment.start + seconds));
   }
 
+  /** `playEndBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playEndBoundary() {
     if (!selectedSegment) return;
     const seconds = parseBoundarySeconds(boundarySecondsInput);
     playFrom(Math.max(selectedSegment.start, selectedSegment.end - seconds), selectedSegment.end);
   }
 
+  /** `jumpBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function jumpBoundary(direction: -1 | 1) {
     const boundaries = segments.flatMap((segment) => [segment.start, segment.end]).sort((a, b) => a - b);
     const target =
@@ -2118,6 +1859,7 @@ export default function App(props: {
     if (target !== undefined) seek(target);
   }
 
+  /** `nudgeNearestBoundary`で指定された変更を不変更新として状態へ反映する。 */
   function nudgeNearestBoundary(direction: -1 | 1) {
     const target = nearestBoundaryTarget(segments, currentTime, selectedSegment?.id);
     if (!target) return;
@@ -2126,10 +1868,14 @@ export default function App(props: {
 
     const seconds = parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput);
     const maxDuration = Math.max(duration || 0, segment.end);
-    const nextTime =
-      target.edge === "start"
-        ? clamp(segment.start + direction * seconds, 0, segment.end - MIN_SEGMENT_SECONDS)
-        : clamp(segment.end + direction * seconds, segment.start + MIN_SEGMENT_SECONDS, maxDuration);
+    const nextTime = nudgeBoundaryTime(
+      segment,
+      target.edge,
+      direction,
+      createCutBoundaryPolicy("nudge", { nudgeStep: seconds }),
+      { previousEnd: 0, nextStart: maxDuration },
+    );
+    if (nextTime === null) return;
 
     setSelectedSegmentId(segment.id);
     const patch = target.edge === "start"
@@ -2141,6 +1887,268 @@ export default function App(props: {
     playFrom(playbackRange.start, playbackRange.stopAt);
   }
 
+  const cutCapabilities = {
+    hasSegments: segments.length > 0,
+    hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+    hasMultipleSegments: segments.length > 1,
+    canAddSegment: Boolean(projectBase),
+    canDeleteSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+    canSelectPreviousSegment,
+    canSelectNextSegment,
+    canJumpBoundary: segments.length > 0,
+    canPlayBoundary: Boolean(selectedSegment && videoUrl),
+    canNudgeBoundary: Boolean(segments.length && videoUrl),
+  };
+  const subCapabilities = {
+    hasSegments: subtitleSegmentCount > 0,
+    hasSelectedSegment: selectedSubtitleIndex >= 0,
+    hasMultipleSegments: subtitleSegmentCount > 1,
+    canAddSegment: Boolean(
+      activeSubtitleLane && addFourBeatSegment(activeSubtitleLane, subtitleState.selected_segment_id, subtitleState.rhythm_grid)
+    ),
+    canDeleteSelectedSegment: Boolean(selectedSubtitleSegment()),
+    canSelectPreviousSegment: selectedSubtitleIndex > 0,
+    canSelectNextSegment:
+      selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1,
+    canJumpBoundary: subtitleSegmentCount > 0,
+    canPlayBoundary: Boolean(selectedSubtitleSegment() && videoUrl),
+    canNudgeBoundary: Boolean(selectedSubtitleSegment() && subtitleState.rhythm_grid.length),
+  };
+  const commonMedia = {
+    sourceAvailable,
+    videoInfo,
+    waveform: progressiveWaveform.waveform,
+    progressiveWaveformChunks: progressiveWaveform.chunks,
+    waveformPhase: progressiveWaveform.phase,
+    waveformProgress: progressiveWaveform.progress,
+    waveformDisplayMode,
+    duration,
+    currentTime,
+    playing,
+    zoom,
+    editing: waveformSeeking || handleEditing,
+    onSeek: seek,
+    onScrub: scratchPreview,
+    onSeekingChange: setWaveformSeeking,
+    onHandleEditingChange: setHandleEditing,
+  };
+  const saveStatus = projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status);
+  const commonTransport = {
+    saveStatus,
+    boundaryPreview: {
+      value: boundarySecondsInput,
+      onChange: (value: string) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value)),
+      onBlur: () => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput))),
+    },
+    playback: {
+      onStart: () => seek(0),
+      onPlay: playVideo,
+      onPause: pauseVideo,
+    },
+    zoom: {
+      value: zoom,
+      onIn: () => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1)),
+      onOut: () => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1)),
+      onReset: () => setZoomIndex(0),
+    },
+  };
+  const cutModeSession = createModeSession<Segment, undefined, typeof cutOperations>({
+    mode: "cut",
+    capabilities: cutCapabilities,
+    actions: {
+      select: selectSegment,
+      add: addNewSegment,
+      remove: requestRemoveSelectedSegment,
+      selectAdjacent: selectAdjacentSegment,
+      jumpBoundary,
+      playBoundary: (edge) => (edge === "start" ? playStartBoundary() : playEndBoundary()),
+      nudge: nudgeNearestBoundary,
+    },
+    operations: cutOperations,
+    media: { ...commonMedia, focusRequest: segmentFocusRequest },
+    transport: {
+      ...commonTransport,
+      saveStatusClassName: `status-${persistence.status}`,
+      boundaryPreview: {
+        ...commonTransport.boundaryPreview,
+        disabled: !cutCapabilities.canPlayBoundary,
+        onStart: playStartBoundary,
+        onEnd: playEndBoundary,
+      },
+      boundaryNudge: {
+        kind: "seconds",
+        disabled: !cutCapabilities.canNudgeBoundary,
+        value: boundaryNudgeSecondsInput,
+        onChange: setBoundaryNudgeSecondsInput,
+        onBlur: () =>
+          setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput))),
+        onLeft: () => nudgeNearestBoundary(-1),
+        onRight: () => nudgeNearestBoundary(1),
+      },
+      playback: {
+        ...commonTransport.playback,
+        onPrevious: () => jumpBoundary(-1),
+        onNext: () => jumpBoundary(1),
+      },
+    },
+  });
+  const subModeSession = createModeSession<LyricsSegment, string, typeof subOperations>({
+    mode: "sub",
+    capabilities: subCapabilities,
+    actions: {
+      select: (segment, laneId) => {
+        const targetLaneId = laneId ?? activeSubtitleLane?.id;
+        if (targetLaneId) selectSubtitleSegment(targetLaneId, segment);
+      },
+      add: addNewSubtitleSegment,
+      remove: removeSelectedSubtitleSegment,
+      selectAdjacent: selectAdjacentSubtitleSegment,
+      jumpBoundary: jumpSubtitleBoundary,
+      playBoundary: playSubtitleBoundary,
+      nudge: nudgeSelectedSubtitleBoundary,
+    },
+    operations: subOperations,
+    media: { ...commonMedia, focusRequest: subtitleFocusRequest },
+    transport: {
+      ...commonTransport,
+      boundaryPreview: {
+        ...commonTransport.boundaryPreview,
+        disabled: !subCapabilities.canPlayBoundary,
+        onStart: () => playSubtitleBoundary("start"),
+        onEnd: () => playSubtitleBoundary("end"),
+      },
+      boundaryNudge: {
+        kind: "rhythm-grid",
+        disabled: !subCapabilities.canNudgeBoundary,
+        onLeft: () => nudgeSelectedSubtitleBoundary(-1),
+        onRight: () => nudgeSelectedSubtitleBoundary(1),
+      },
+      playback: {
+        ...commonTransport.playback,
+        onPrevious: () => jumpSubtitleBoundary(-1),
+        onNext: () => jumpSubtitleBoundary(1),
+      },
+    },
+  });
+  /** `prepareSubAnalysis`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
+  async function prepareSubAnalysis() {
+    await ensureDemucs();
+    setDemucsDownloadOpen(false);
+    await ensureWhisper();
+    setWhisperDownloadOpen(false);
+    if (whisperSettings.lyricsAlignmentAlgorithm === "songcut-standard") {
+      await ensureMms();
+      setMmsDownloadOpen(false);
+    }
+  }
+
+  /** `requestSubtitleExport`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
+  async function requestSubtitleExport() {
+    if (!videoInfo) return false;
+    const outputDir = await window.songcut.selectOutputDirectory();
+    if (!outputDir) return false;
+    void subModeSession.operations.exportSubtitles(
+      outputDir,
+      videoInfo.video.width || 1920,
+      videoInfo.video.height || 1080,
+    );
+    return true;
+  }
+  const activeModeController = mode === "cut" ? cutModeSession.controller : subModeSession.controller;
+
+  /** `runEditorCommand`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
+  function runEditorCommand(action: EditorAction) {
+    executeEditorAction(action, {
+      execute(resolved) {
+        switch (resolved.type) {
+          case "nudge-boundary-left":
+            activeModeController.actions.nudge(-1);
+            break;
+          case "nudge-boundary-right":
+            activeModeController.actions.nudge(1);
+            break;
+          case "previous-segment":
+            activeModeController.actions.selectAdjacent(-1);
+            break;
+          case "next-segment":
+            activeModeController.actions.selectAdjacent(1);
+            break;
+          case "new-segment":
+            activeModeController.actions.add();
+            break;
+          case "remove-segment":
+            activeModeController.actions.remove();
+            break;
+          case "remove-unchecked-segments":
+            requestRemoveUncheckedSegments();
+            break;
+          case "sort-segments":
+            requestSortSegments();
+            break;
+          case "check-all-segments":
+            checkAllSegments();
+            break;
+          case "uncheck-all-segments":
+            uncheckAllSegments();
+            break;
+          case "invert-segment-selection":
+            invertExportSelection();
+            break;
+          case "zoom-in":
+            setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
+            break;
+          case "zoom-out":
+            setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
+            break;
+          case "reset-zoom":
+            setZoomIndex(0);
+            break;
+          case "set-zoom":
+            setZoomIndex(clamp(resolved.zoomIndex, 0, zoomLevels.length - 1));
+            break;
+          case "start":
+            seek(0);
+            break;
+          case "previous-boundary":
+            activeModeController.actions.jumpBoundary(-1);
+            break;
+          case "play":
+            playVideo();
+            break;
+          case "pause":
+            pauseVideo();
+            break;
+          case "next-boundary":
+            activeModeController.actions.jumpBoundary(1);
+            break;
+          case "play-start-boundary":
+            activeModeController.actions.playBoundary("start");
+            break;
+          case "play-end-boundary":
+            activeModeController.actions.playBoundary("end");
+            break;
+          case "toggle-playback": {
+            const video = videoRef.current;
+            if (!video) break;
+            if (video.paused) playVideo();
+            else pauseVideo();
+            break;
+          }
+          case "export-movie":
+            if (checkedCount > 0) openOutputReview();
+            break;
+          case "export-timestamp":
+            void exportTimestampText(resolved.format);
+            break;
+          case "show-boundary-refinement-details":
+            if (selectedBoundaryDiagnostic) setBoundaryDiagnosticOpen(true);
+            break;
+        }
+      },
+    });
+  }
+
+  /** `onDrop`のUI eventを受け取り、対象fileまたは編集状態へ反映する。 */
   function onDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     setDropActive(false);
@@ -2170,35 +2178,19 @@ export default function App(props: {
     loadVideo(filePath).catch((error) => setMessage(String(error)));
   }
 
-  const activeSubtitleLane =
-    subtitleState.lanes.find((lane) => lane.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
-  const activeSubtitleSegments = [...(activeSubtitleLane?.segments ?? [])].sort(
-    (left, right) => left.start - right.start
-  );
-  const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
-    (segment) => segment.id === subtitleState.selected_segment_id
-  );
-  const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
-
   useEffect(() => {
     window.songcut.updateMenuState({
       apiReady: Boolean(apiBaseUrl),
       hasProject: Boolean(projectBase),
       hasVideo: Boolean(videoUrl),
-      hasSegments: mode === "sub" ? subtitleSegmentCount > 0 : segments.length > 0,
-      hasSelectedSegment:
-        mode === "sub"
-          ? selectedSubtitleIndex >= 0
-          : Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+      hasSegments: activeModeController.capabilities.hasSegments,
+      hasSelectedSegment: activeModeController.capabilities.hasSelectedSegment,
       hasBoundaryDiagnostic: mode === "cut" && Boolean(selectedBoundaryDiagnostic),
       hasCheckedSegments: mode === "cut" && checkedCount > 0,
       hasUncheckedSegments: mode === "cut" && uncheckedCount > 0,
-      hasMultipleSegments: mode === "sub" ? subtitleSegmentCount > 1 : segments.length > 1,
-      canSelectPreviousSegment: mode === "sub" ? selectedSubtitleIndex > 0 : canSelectPreviousSegment,
-      canSelectNextSegment:
-        mode === "sub"
-          ? selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1
-          : canSelectNextSegment,
+      hasMultipleSegments: activeModeController.capabilities.hasMultipleSegments,
+      canSelectPreviousSegment: activeModeController.capabilities.canSelectPreviousSegment,
+      canSelectNextSegment: activeModeController.capabilities.canSelectNextSegment,
       playing,
       zoomIndex,
       waveformDisplayMode,
@@ -2235,6 +2227,11 @@ export default function App(props: {
 
   useEffect(() => {
     return window.songcut.onMenuCommand((command) => {
+      const editorAction = editorActionFromMenuCommand(command, mode);
+      if (editorAction) {
+        runEditorCommand(editorAction);
+        return;
+      }
       switch (command.type) {
         case "load-movie":
           void selectVideo();
@@ -2248,90 +2245,8 @@ export default function App(props: {
         case "relink-source":
           void relinkSource().catch((error) => setMessage(String(error)));
           break;
-        case "nudge-boundary-left":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
-          else nudgeNearestBoundary(-1);
-          break;
-        case "nudge-boundary-right":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
-          else nudgeNearestBoundary(1);
-          break;
-        case "previous-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
-          else selectAdjacentSegment(-1);
-          break;
-        case "next-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(1);
-          else selectAdjacentSegment(1);
-          break;
-        case "new-segment":
-          if (mode === "sub") addNewSubtitleSegment();
-          else addNewSegment();
-          break;
-        case "remove-segment":
-          if (mode === "sub") removeSelectedSubtitleSegment();
-          else requestRemoveSelectedSegment();
-          break;
-        case "remove-unchecked-segments":
-          requestRemoveUncheckedSegments();
-          break;
-        case "sort-segments":
-          requestSortSegments();
-          break;
-        case "check-all-segments":
-          checkAllSegments();
-          break;
-        case "uncheck-all-segments":
-          uncheckAllSegments();
-          break;
-        case "invert-segment-selection":
-          invertExportSelection();
-          break;
-        case "zoom-in":
-          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
-          break;
-        case "zoom-out":
-          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
-          break;
-        case "set-zoom":
-          setZoomIndex(clamp(command.zoomIndex, 0, zoomLevels.length - 1));
-          break;
-        case "start":
-          seek(0);
-          break;
-        case "previous-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(-1);
-          else jumpBoundary(-1);
-          break;
-        case "play":
-          playVideo();
-          break;
-        case "pause":
-          pauseVideo();
-          break;
-        case "next-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(1);
-          else jumpBoundary(1);
-          break;
-        case "play-start-boundary":
-          if (mode === "sub") playSubtitleBoundary("start");
-          else playStartBoundary();
-          break;
-        case "play-end-boundary":
-          if (mode === "sub") playSubtitleBoundary("end");
-          else playEndBoundary();
-          break;
-        case "export-movie":
-          if (checkedCount > 0) openOutputReview();
-          break;
-        case "export-timestamp":
-          void exportTimestampText(command.format);
-          break;
         case "open-settings":
           openSettings();
-          break;
-        case "show-boundary-refinement-details":
-          if (selectedBoundaryDiagnostic) setBoundaryDiagnosticOpen(true);
           break;
       }
     });
@@ -2366,57 +2281,8 @@ export default function App(props: {
       const action = resolveEditorShortcut(event);
       if (!action || isEditorShortcutSuppressed(event)) return;
       event.preventDefault();
-
-      switch (action) {
-        case "play-start-boundary":
-          if (mode === "sub") playSubtitleBoundary("start");
-          else playStartBoundary();
-          break;
-        case "play-end-boundary":
-          if (mode === "sub") playSubtitleBoundary("end");
-          else playEndBoundary();
-          break;
-        case "previous-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(-1);
-          else selectAdjacentSegment(-1);
-          break;
-        case "next-segment":
-          if (mode === "sub") selectAdjacentSubtitleSegment(1);
-          else selectAdjacentSegment(1);
-          break;
-        case "nudge-boundary-left":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(-1);
-          else nudgeNearestBoundary(-1);
-          break;
-        case "nudge-boundary-right":
-          if (mode === "sub") nudgeSelectedSubtitleBoundary(1);
-          else nudgeNearestBoundary(1);
-          break;
-        case "toggle-playback": {
-          const video = videoRef.current;
-          if (!video) break;
-          if (video.paused) playVideo();
-          else pauseVideo();
-          break;
-        }
-        case "previous-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(-1);
-          else jumpBoundary(-1);
-          break;
-        case "next-boundary":
-          if (mode === "sub") jumpSubtitleBoundary(1);
-          else jumpBoundary(1);
-          break;
-        case "zoom-out":
-          setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1));
-          break;
-        case "reset-zoom":
-          setZoomIndex(0);
-          break;
-        case "zoom-in":
-          setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1));
-          break;
-      }
+      const editorAction = editorActionFromMenuCommand(action, mode);
+      if (editorAction) runEditorCommand(editorAction);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -2433,21 +2299,25 @@ export default function App(props: {
   ]);
 
   return (
-    <main
-      className={dropActive ? "app drop-active" : "app"}
-      style={{ "--video-split": `${split}%` } as React.CSSProperties}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setDropActive(true);
-      }}
-      onDragLeave={() => setDropActive(false)}
-      onDrop={onDrop}
-    >
+    <EditorFocusProvider rootRef={editorRootRef}>
+      <main
+        ref={editorRootRef}
+        tabIndex={-1}
+        data-editor-focus-root
+        className={dropActive ? "app drop-active" : "app"}
+        style={{ "--video-split": `${split}%` } as React.CSSProperties}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDropActive(true);
+        }}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={onDrop}
+      >
       <audio ref={scratchProxyAudioRef} preload="auto" hidden data-scratch-proxy-state={scratchProxyState} />
       <section className="video-pane">
         <Tabs
           value={mode}
-          onValueChange={(value) => void switchMode(value as AppMode)}
+          onValueChange={(value) => switchMode(value as AppMode)}
           className="mode-tabs"
         >
           <TabsList>
@@ -2502,198 +2372,110 @@ export default function App(props: {
           </div>
         ) : null}
         {mode === "cut" ? (
-          <>
-        <header className="toolbar">
-          <Button onClick={selectVideo}>
-            <FolderOpen size={16} />
-            {tr("common.load")}
-          </Button>
-          <Button onClick={() => void analyze().catch((error) => setMessage(String(error)))} disabled={!sourceAvailable || !apiBaseUrl}>
-            <Wand2 size={16} />
-            {tr("common.analyze")}
-          </Button>
-          <Button variant="secondary" onClick={openOutputReview} disabled={checkedCount === 0 || !sourceAvailable}>
-            <Scissors size={16} />
-            {tr("common.export")}
-          </Button>
-          <Button variant="secondary" onClick={() => setTimestampExportOpen(true)} disabled={checkedCount === 0}>
-            <Copy size={16} />
-            {tr("common.exportTs")}
-          </Button>
-          <Button variant="secondary" onClick={() => openSettings("cut")}>
-            <Settings2 size={16} />
-            {tr("common.settings")}
-          </Button>
-          <div className="spacer" />
-          <span className={`project-save-status status-${persistence.status}`}>
-            {projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
-          </span>
-          <BoundaryControls
-            value={boundarySecondsInput}
-            disabled={!selectedSegment || !videoUrl}
-            onChange={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
-            onBlur={() => setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))}
-            onStart={playStartBoundary}
-            onEnd={playEndBoundary}
-          />
-          <BoundaryNudgeControls
-            value={boundaryNudgeSecondsInput}
-            disabled={!segments.length || !videoUrl}
-            onChange={setBoundaryNudgeSecondsInput}
-            onBlur={() =>
-              setBoundaryNudgeSecondsInput(formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(boundaryNudgeSecondsInput)))
-            }
-            onLeft={() => nudgeNearestBoundary(-1)}
-            onRight={() => nudgeNearestBoundary(1)}
-          />
-          <PlaybackControls
-            onPlay={playVideo}
-            onPause={pauseVideo}
-            onStart={() => seek(0)}
-            onPrev={() => jumpBoundary(-1)}
-            onNext={() => jumpBoundary(1)}
-          />
-          <ZoomControls
-            zoom={zoom}
-            onIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
-            onOut={() => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1))}
-            onReset={() => setZoomIndex(0)}
-          />
-        </header>
-        <div className="guide-row">
-          <Textarea
-            value={guideText}
-            onChange={(event) => {
-              setGuideText(event.target.value);
+          <CutModePanel
+            view={cutModeSession.view}
+            apiReady={Boolean(apiBaseUrl)}
+            checkedCount={checkedCount}
+            onLoad={selectVideo}
+            onAnalyze={() => void analyze().catch((error) => setMessage(String(error)))}
+            onExport={openOutputReview}
+            onExportTimestamp={() => setTimestampExportOpen(true)}
+            onSettings={() => openSettings("cut")}
+            guideText={guideText}
+            onGuideTextChange={(value) => {
+              setGuideText(value);
               markProjectChanged();
             }}
-            placeholder={tr("app.guidePlaceholder")}
+            taskStatus={taskStatus}
+            timeline={{
+              segments,
+              selectedSegment,
+              waveformAmplitudeProfile: cutWaveformAmplitudeProfile,
+              onBoundaryPreview: (edge, time) => {
+                if (!selectedSegment) return;
+                const resolved = resolveBoundaryTime(
+                  selectedSegment,
+                  edge,
+                  time,
+                  cutDragBoundaryPolicy,
+                  { previousEnd: 0, nextStart: Math.max(0.001, duration) },
+                );
+                if (resolved !== null) {
+                  previewSegmentUpdate(selectedSegment.id, { [edge]: resolved, user_edited: true });
+                }
+              },
+              onChangeCommitted: markProjectChanged,
+              onEditTiming: () => selectedSegment && setCutTimingSegmentId(selectedSegment.id),
+            }}
+            segments={{
+              segments,
+              selectedId: selectedSegment?.id ?? null,
+              onSelect: cutModeSession.controller.actions.select,
+              onToggle: (segment, checked) => updateSegment(segment.id, { checked }),
+              onTitleChange: (segment, title) => updateSegment(segment.id, { title }),
+              onTranscript: setTranscriptSegment,
+              titleForSegment: segmentTitle,
+            }}
           />
-          {taskStatus}
-        </div>
-        <TimelineStack
-          duration={duration}
-          waveform={progressiveWaveform.waveform}
-          progressiveWaveformChunks={progressiveWaveform.chunks}
-          waveformPhase={progressiveWaveform.phase}
-          waveformProgress={progressiveWaveform.progress}
-          segments={segments}
-          selectedSegment={selectedSegment}
-          currentTime={currentTime}
-          playing={playing}
-          zoom={zoom}
-          waveformDisplayMode={waveformDisplayMode}
-          focusRequest={segmentFocusRequest}
-          editing={waveformSeeking || handleEditing}
-          onSeek={seek}
-          onScrub={scratchPreview}
-          onSeekingChange={setWaveformSeeking}
-          onHandleEditingChange={setHandleEditing}
-          onChange={(patch) => selectedSegment && previewSegmentUpdate(selectedSegment.id, patch)}
-          onChangeCommitted={markProjectChanged}
-          onEditTiming={() => selectedSegment && setCutTimingSegmentId(selectedSegment.id)}
-        />
-        <SegmentList
-          segments={segments}
-          selectedId={selectedSegment?.id ?? null}
-          onSelect={selectSegment}
-          onToggle={(segment, checked) => updateSegment(segment.id, { checked })}
-          onTitleChange={(segment, title) => updateSegment(segment.id, { title })}
-          onTranscript={setTranscriptSegment}
-        />
-          </>
         ) : (
           <SubModePanel
-            apiBaseUrl={apiBaseUrl}
-            videoPath={videoPath}
-            sourceAvailable={sourceAvailable}
-            videoInfo={videoInfo}
-            waveform={progressiveWaveform.waveform}
-            duration={duration}
-            currentTime={currentTime}
-            playing={playing}
-            zoom={zoom}
-            focusRequest={subtitleFocusRequest}
-            editing={waveformSeeking || handleEditing}
+            view={subModeSession.view}
             state={subtitleState}
-            whisperSettings={whisperSettings}
-            onPrepareWhisperModel={async () => {
-              await ensureWhisper();
-              setWhisperDownloadOpen(false);
+            capabilities={{
+              canAddSegment: subModeSession.controller.capabilities.canAddSegment,
+              canDeleteSelectedSegment: subModeSession.controller.capabilities.canDeleteSelectedSegment,
             }}
-            onPrepareDemucsModel={async () => {
-              await ensureDemucs();
-              setDemucsDownloadOpen(false);
+            operation={{
+              analysisJob: subModeSession.operations.analysisJob,
+              exportJob: subModeSession.operations.exportJob,
+              busy: subModeSession.operations.busy,
             }}
-            onPrepareMmsModel={async () => {
-              await ensureMms();
-              setMmsDownloadOpen(false);
+            actions={{
+              load: selectVideo,
+              openSettings: () => openSettings("sub"),
+              prepareAnalysis: prepareSubAnalysis,
+              analyzeLyrics: subModeSession.operations.analyzeLyrics,
+              exportSubtitles: requestSubtitleExport,
+              renderSubtitles: subModeSession.operations.renderSubtitles,
+              invalidateSubtitleRender: subModeSession.operations.invalidateSubtitleRender,
+              listSystemFonts,
+              confirmRemoveLane: () => window.confirm(tr("sub.removeLaneConfirm")),
+              selectSegment: (laneId, segment) => subModeSession.controller.actions.select(segment, laneId),
+              addSegment: subModeSession.controller.actions.add,
+              removeSelectedSegment: subModeSession.controller.actions.remove,
+              showMessage: setMessage,
             }}
-            saveStatus={projectReadOnly ? tr("app.readOnly") : projectSaveStatusLabel(persistence.status)}
             taskStatus={taskStatus}
-            analysisJob={lyricsAnalysisJob}
-            exportJob={subtitleExportJob}
             onStateChange={(state) => {
               setSubtitleState(state);
               markProjectChanged();
             }}
-            onSeek={seek}
-            onPlay={playVideo}
-            onPause={pauseVideo}
-            onScrub={scratchPreview}
-            onSeekingChange={setWaveformSeeking}
-            onHandleEditingChange={setHandleEditing}
-            onSelectSegment={selectSubtitleSegment}
-            onFocusSegment={focusSubtitleSegment}
-            onAddSegment={addNewSubtitleSegment}
-            onDeleteSelectedSegment={removeSelectedSubtitleSegment}
-            onPreviewRange={(start, end) => playFrom(start, end)}
-            boundarySecondsInput={boundarySecondsInput}
-            boundaryPreviewSeconds={parseBoundarySeconds(boundarySecondsInput)}
-            onBoundarySecondsInput={(value) => setBoundarySecondsInput(normalizeBoundarySecondsInput(value))}
-            onBoundarySecondsBlur={() =>
-              setBoundarySecondsInput(formatBoundarySeconds(parseBoundarySeconds(boundarySecondsInput)))
-            }
-            onNudge={nudgeSelectedSubtitleBoundary}
-            onPreviousBoundary={() => jumpSubtitleBoundary(-1)}
-            onNextBoundary={() => jumpSubtitleBoundary(1)}
-            onLoad={selectVideo}
-            onSettings={() => openSettings("sub")}
-            onZoomIn={() => setZoomIndex((value) => clamp(value + 1, 0, zoomLevels.length - 1))}
-            onZoomOut={() => setZoomIndex((value) => clamp(value - 1, 0, zoomLevels.length - 1))}
-            onZoomReset={() => setZoomIndex(0)}
-            onMessage={setMessage}
-            onJob={(slot, job) => taskRegistry.updateTask(slot, job)}
-            onRenderCaches={(items: SubtitleRenderResultItem[]) => {
-              const bySegmentId = new Map(items.map((item) => [item.segment_id, item]));
+            onBoundaryPreview={(laneId, segmentId, edge, time) => {
               setSubtitleState((current) => ({
                 ...current,
-                lanes: current.lanes.map((lane) => ({
-                  ...lane,
-                  segments: lane.segments.map((segment) => {
-                    const rendered = bySegmentId.get(segment.id);
-                    if (!rendered) return segment;
-                    const expected = subtitleRenderSignature(
-                      segment.text,
-                      lane.style,
-                      rendered.width,
-                      rendered.height
-                    );
-                    if (rendered.signature !== expected) return segment;
-                    return {
-                      ...segment,
-                      render_cache: {
-                        signature: rendered.signature,
-                        png_base64: rendered.png_base64,
-                        width: rendered.width,
-                        height: rendered.height,
-                      },
-                    };
-                  }),
-                })),
+                lanes: current.lanes.map((lane) =>
+                  lane.id === laneId
+                    ? updateSegmentBoundary(lane, segmentId, edge, time, current.rhythm_grid)
+                    : lane
+                ),
               }));
-              markProjectChanged();
             }}
+            onBoundaryCancel={(laneId, segmentId, startSegment) => {
+              setSubtitleState((current) => ({
+                ...current,
+                lanes: current.lanes.map((lane) =>
+                  lane.id === laneId
+                    ? {
+                        ...lane,
+                        segments: lane.segments.map((segment) =>
+                          segment.id === segmentId ? startSegment : segment
+                        ),
+                      }
+                    : lane
+                ),
+              }));
+            }}
+            onBoundaryCommit={markProjectChanged}
           />
         )}
       </section>
@@ -2787,22 +2569,12 @@ export default function App(props: {
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
       />
-      <SegmentTimingDialog
-        open={Boolean(cutTimingSegment)}
-        mode="cut"
+      <CutSegmentTimingDialog
         segment={cutTimingSegment}
         mediaDuration={duration}
         onClose={() => setCutTimingSegmentId(null)}
-        onApply={(start, end) => {
-          if (!cutTimingSegment) return;
-          updateSegment(cutTimingSegment.id, {
-            start,
-            end,
-            duration: end - start,
-            start_timecode: formatTimeInput(start),
-            end_timecode: formatTimeInput(end),
-            user_edited: true,
-          });
+        onApply={(segmentId, patch, start) => {
+          updateSegment(segmentId, patch);
           setCutTimingSegmentId(null);
           seek(start);
         }}
@@ -2813,7 +2585,8 @@ export default function App(props: {
         apiReady={Boolean(apiBaseUrl)}
         scratchPreviewMillisecondsInput={scratchPreviewMillisecondsInput}
         scratchAudioProxyEnabled={scratchAudioProxyEnabled}
-        waveformDisplayMode={waveformDisplayMode}
+        waveformDisplayModes={waveformDisplayModes}
+        cutWaveformAmplitudeProfile={cutWaveformAmplitudeProfile}
         analysisDevice={analysisDevice}
         boundaryRefinementSettings={boundaryRefinementSettings}
         filenameTemplate={filenameTemplate}
@@ -2836,9 +2609,26 @@ export default function App(props: {
           setScratchAudioProxyEnabled(enabled);
           setMessage(tr(enabled ? "app.proxyEnabled" : "app.proxyDisabled"));
         }}
-        onWaveformDisplayMode={(mode) => {
-          setWaveformDisplayMode(mode);
-          setMessage(tr("app.waveformSet", { mode: waveformDisplayModeLabel(mode) }));
+        onWaveformDisplayMode={(appMode, displayMode) => {
+          setWaveformDisplayModes((current) => ({ ...current, [appMode]: displayMode }));
+          setMessage(
+            tr("app.waveformSet", {
+              appMode: appMode === "sub" ? "Sub" : "Cut",
+              mode: waveformDisplayModeLabel(displayMode),
+            })
+          );
+        }}
+        onCutWaveformAmplitudeProfile={(profile) => {
+          setCutWaveformAmplitudeProfile(profile);
+          setMessage(
+            tr("app.waveformAmplitudeSet", {
+              profile: tr(
+                profile === "singing-mc-contrast"
+                  ? "settings.waveformAmplitudeSingingMc"
+                  : "settings.waveformAmplitudeStandard"
+              ),
+            })
+          );
         }}
         onAnalysisDevice={(device) => {
           setAnalysisDevice(device);
@@ -3061,10 +2851,26 @@ export default function App(props: {
           <Button onClick={() => void confirmQuit()}>{tr("dialogs.quitAnyway")}</Button>
         </div>
       </Dialog>
-    </main>
+      </main>
+    </EditorFocusProvider>
   );
 }
 
+/** `isProjectOperationKind`の入力が要求された条件やschemaを満たすか検証する。 */
+function isProjectOperationKind(kind: string | undefined): kind is NonNullable<ProjectOperation>["kind"] {
+  switch (kind) {
+    case "analysis":
+    case "transcription":
+    case "export":
+    case "lyrics-analysis":
+    case "subtitle-export":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** `offlineVideoInfo`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
   return {
     path: document.source.absolute_path,
@@ -3080,18 +2886,22 @@ function offlineVideoInfo(document: ProjectDocumentV1): VideoInfo {
   };
 }
 
+/** `isProjectNotFoundError`の入力が要求された条件やschemaを満たすか検証する。 */
 function isProjectNotFoundError(error: unknown) {
   return String(error).includes("Project not found:");
 }
 
+/** `sameWindowsPath`の入力が要求された条件やschemaを満たすか検証する。 */
 function sameWindowsPath(left: string, right: string) {
   return left.replaceAll("/", "\\").toLowerCase() === right.replaceAll("/", "\\").toLowerCase();
 }
 
+/** `sourceDurationMatches`の二つの入力が同一対象または重複範囲を表すか判定する。 */
 function sourceDurationMatches(expected: number, actual: number) {
   return Math.abs(expected - actual) <= Math.max(0.05, expected * 0.00001);
 }
 
+/** `projectSaveStatusLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>["status"]) {
   switch (status) {
     case "idle":
@@ -3109,1457 +2919,12 @@ function projectSaveStatusLabel(status: ReturnType<typeof useProjectPersistence>
   }
 }
 
-function jobKindLabel(kind: string) {
-  if (kind === "analysis") return tr("tasks.analysis");
-  if (kind === "lyrics-analysis") return tr("tasks.lyricsAnalysis");
-  if (kind === "transcription") return tr("tasks.transcription");
-  if (kind === "export") return tr("tasks.export");
-  if (kind === "subtitle-export") return tr("tasks.subtitleExport");
-  if (kind === "subtitle-render") return tr("tasks.subtitleRender");
-  if (kind === "download-whisper") return tr("tasks.download");
-  if (kind === "download-demucs") return tr("tasks.demucsDownload");
-  if (kind === "download-mms") return tr("tasks.mmsDownload");
-  if (kind === "waveform") return tr("tasks.waveform");
-  if (kind === "scratch-proxy") return tr("tasks.proxy");
-  return tr("tasks.generic");
-}
-
-function waveformStatusLabel(phase: ReturnType<typeof useProgressiveWaveform>["phase"], progress: number) {
-  switch (phase) {
-    case "streaming":
-      return tr("app.waveformProgress", { progress: Math.round(clamp(progress, 0, 1) * 100) });
-    case "finalizing":
-      return tr("app.waveformFinalizing");
-    case "ready":
-      return tr("app.waveformReady");
-    case "failed":
-      return tr("app.waveformUnavailable");
-    case "idle":
-      return tr("app.waveformWaiting");
-  }
-}
-
-function localizedScratchProxyStatusLabel(state: ScratchProxyState) {
-  switch (state) {
-    case "disabled": return tr("app.scratchDisabled");
-    case "preparing":
-    case "loading": return tr("app.scratchPreparing");
-    case "ready": return tr("app.scratchReady");
-    case "failed": return tr("app.scratchFailed");
-    case "idle":
-    case "original": return tr("app.scratchOriginal");
-  }
-}
-
+/** `localizedError`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 function localizedError(error: unknown) {
   return localizeUiMessage(String(error));
 }
 
-function BoundaryControls(props: {
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  onStart: () => void;
-  onEnd: () => void;
-}) {
-  return (
-    <div className="icon-group boundary-controls">
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onStart}
-        disabled={props.disabled}
-        title={tr("controls.playStart")}
-        aria-keyshortcuts="A"
-      >
-        <SkipBack size={17} />
-      </Button>
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onEnd}
-        disabled={props.disabled}
-        title={tr("controls.playEnd")}
-        aria-keyshortcuts="D"
-      >
-        <SkipForward size={17} />
-      </Button>
-      <Input
-        className="boundary-seconds-input"
-        type="number"
-        min="1"
-        max="60"
-        step="1"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        aria-label={tr("controls.boundarySeconds")}
-        value={props.value}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        onBlur={props.onBlur}
-      />
-    </div>
-  );
-}
-
-function BoundaryNudgeControls(props: {
-  value: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onBlur: () => void;
-  onLeft: () => void;
-  onRight: () => void;
-}) {
-  return (
-    <div className="icon-group boundary-nudge-controls">
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onLeft}
-        disabled={props.disabled}
-        title={tr("controls.nudgeLeft")}
-        aria-keyshortcuts="Q"
-      >
-        <ArrowLeft size={17} />
-      </Button>
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={props.onRight}
-        disabled={props.disabled}
-        title={tr("controls.nudgeRight")}
-        aria-keyshortcuts="E"
-      >
-        <ArrowRight size={17} />
-      </Button>
-      <Input
-        className="boundary-nudge-seconds-input"
-        type="number"
-        min="0.1"
-        max="60"
-        step="0.1"
-        inputMode="decimal"
-        aria-label={tr("controls.nudgeSeconds")}
-        value={props.value}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        onBlur={props.onBlur}
-      />
-    </div>
-  );
-}
-
-function PlaybackControls(props: { onPlay: () => void; onPause: () => void; onStart: () => void; onPrev: () => void; onNext: () => void }) {
-  return (
-    <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onStart} title={tr("controls.start")}>
-        <Rewind size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPrev} title={tr("controls.previous")} aria-keyshortcuts="Control+A">
-        <ChevronsLeft size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPlay} title={tr("controls.play")} aria-keyshortcuts="Space">
-        <Play size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onPause} title={tr("controls.pause")} aria-keyshortcuts="Space">
-        <Pause size={17} />
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onNext} title={tr("controls.next")} aria-keyshortcuts="Control+D">
-        <ChevronsRight size={17} />
-      </Button>
-    </div>
-  );
-}
-
-function ZoomControls(props: { zoom: number; onIn: () => void; onOut: () => void; onReset: () => void }) {
-  return (
-    <div className="icon-group">
-      <Button size="icon" variant="ghost" onClick={props.onOut} title={tr("controls.zoomOut")} aria-keyshortcuts="Z">
-        <Minus size={17} />
-      </Button>
-      <Button variant="ghost" size="sm" onClick={props.onReset} title={tr("controls.zoomReset")} aria-keyshortcuts="X">
-        {props.zoom * 100}%
-      </Button>
-      <Button size="icon" variant="ghost" onClick={props.onIn} title={tr("controls.zoomIn")} aria-keyshortcuts="C">
-        <Plus size={17} />
-      </Button>
-    </div>
-  );
-}
-
-function TaskStatusPanel({
-  runningTasks,
-  failedTasks,
-  latestTerminalTask,
-  message,
-  videoInfo,
-  scratchProxyState,
-  waveformPhase,
-  waveformProgress,
-  onDismiss,
-  onWaveformRetry
-}: {
-  runningTasks: TaskRegistryEntry[];
-  failedTasks: TaskRegistryEntry[];
-  latestTerminalTask: JobRecord | null;
-  message: string;
-  videoInfo: VideoInfo | null;
-  scratchProxyState: ScratchProxyState;
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  onDismiss: (slot: TaskSlot) => void;
-  onWaveformRetry: (() => void) | null;
-}) {
-  const idleJob = runningTasks.length === 0 && failedTasks.length === 0 ? latestTerminalTask : null;
-  const idleJobMessage = localizeJobMessage(idleJob);
-  const uiMessage = localizeUiMessage(message);
-  return (
-    <aside className="status-panel" aria-live="polite">
-      {runningTasks.length ? (
-        <div className="task-status-list">
-          {runningTasks.map((entry) => (
-            <TaskStatusRow key={entry.slot} entry={entry} />
-          ))}
-        </div>
-      ) : null}
-      {failedTasks.length ? (
-        <div className="task-status-list task-status-failures">
-          {failedTasks.map((entry) => (
-            <TaskStatusRow key={entry.slot} entry={entry} onDismiss={() => onDismiss(entry.slot)} />
-          ))}
-        </div>
-      ) : null}
-      {runningTasks.length === 0 && failedTasks.length === 0 ? (
-        <>
-          <div className="status-main">
-            {idleJob?.status === "completed" ? <CheckCircle2 size={16} /> : null}
-            {idleJob ? <strong>{jobKindLabel(idleJob.kind)}</strong> : null}
-            <span>{idleJobMessage || uiMessage || tr("app.idle")}</span>
-          </div>
-          {idleJobMessage && uiMessage && idleJobMessage !== uiMessage ? (
-            <div className="status-secondary-message">{uiMessage}</div>
-          ) : null}
-        </>
-      ) : null}
-      {videoInfo ? (
-        <div className="status-meta">
-          <div className="meta-line">
-            {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
-          </div>
-          <div className="meta-line" data-scratch-proxy-status={scratchProxyState}>
-            {localizedScratchProxyStatusLabel(scratchProxyState)}
-          </div>
-          <div className="meta-line waveform-status-line" data-waveform-status={waveformPhase}>
-            <span>{waveformStatusLabel(waveformPhase, waveformProgress)}</span>
-            {onWaveformRetry ? (
-              <button type="button" className="waveform-retry" onClick={onWaveformRetry}>{tr("controls.retryWaveform")}</button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </aside>
-  );
-}
-
-function TaskStatusRow({
-  entry,
-  onDismiss,
-}: {
-  entry: TaskRegistryEntry;
-  onDismiss?: () => void;
-}) {
-  const { job } = entry;
-  const failed = job.status === "failed" || job.status === "cancelled";
-  return (
-    <div className={`task-status-row task-status-${job.status}`}>
-      <div className="task-status-heading">
-        {failed ? <CircleAlert size={15} /> : null}
-        <strong>{jobKindLabel(job.kind)}</strong>
-        <span>{localizeJobMessage(job)}</span>
-      </div>
-      <span className="task-status-percent">{Math.round(clamp(job.progress, 0, 1) * 100)}%</span>
-      {onDismiss ? (
-        <button type="button" className="task-status-dismiss" onClick={onDismiss}>
-          {tr("common.close")}
-        </button>
-      ) : null}
-      <progress value={clamp(job.progress, 0, 1)} max={1} />
-      {job.error ? <div className="task-status-error">{job.error}</div> : null}
-    </div>
-  );
-}
-
-function TimelineStack(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  segments: Segment[];
-  selectedSegment: Segment | null;
-  currentTime: number;
-  playing: boolean;
-  zoom: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  focusRequest: number;
-  editing: boolean;
-  onSeek: (time: number) => void;
-  onScrub: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-  onHandleEditingChange: (editing: boolean) => void;
-  onChange: (patch: Partial<Segment>) => void;
-  onChangeCommitted: () => void;
-  onEditTiming: () => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const timelineViewport = useTimelineViewport({
-    duration: props.duration,
-    currentTime: props.currentTime,
-    playing: props.playing,
-    editing: props.editing,
-    zoom: props.zoom,
-    focusRequest: props.focusRequest,
-    focusRange: props.selectedSegment,
-    onScrub: props.onScrub,
-    minimumWidth: 400,
-  });
-  const width = timelineViewport.contentWidth;
-
-  return (
-    <ScrollArea
-      className="timeline-scroll-area"
-      viewportRef={timelineViewport.viewportRef}
-      scrollbars={["horizontal"]}
-      onWheel={timelineViewport.scrollByWheel}
-    >
-      <div className="timeline-content" style={{ width }}>
-        <div className="timeline-playhead" style={{ left: (props.currentTime / safeDuration) * width }} />
-        <WaveformTimeline
-          duration={props.duration}
-          waveform={props.waveform}
-          progressiveWaveformChunks={props.progressiveWaveformChunks}
-          waveformPhase={props.waveformPhase}
-          waveformProgress={props.waveformProgress}
-          waveformDisplayMode={props.waveformDisplayMode}
-          segments={props.segments}
-          selectedSegmentId={props.selectedSegment?.id ?? null}
-          width={width}
-          timeFromClientX={timelineViewport.timeFromClientX}
-          scrubFromClientX={timelineViewport.scrubFromClientX}
-          stopScrubAutoScroll={timelineViewport.stopScrubAutoScroll}
-          onSeek={props.onSeek}
-          onSeekingChange={props.onSeekingChange}
-        />
-        <SegmentTimeline
-          duration={props.duration}
-          segment={props.selectedSegment}
-          currentTime={props.currentTime}
-          width={width}
-          viewportRef={timelineViewport.viewportRef}
-          onChange={props.onChange}
-          onChangeCommitted={props.onChangeCommitted}
-          onEditingChange={props.onHandleEditingChange}
-          onEditTiming={props.onEditTiming}
-        />
-      </div>
-    </ScrollArea>
-  );
-}
-
-function WaveformTimeline(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  progressiveWaveformChunks: WaveformPoint[][];
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  waveformDisplayMode: WaveformDisplayMode;
-  segments: Segment[];
-  selectedSegmentId: string | null;
-  width: number;
-  timeFromClientX: (clientX: number) => number;
-  scrubFromClientX: (clientX: number) => void;
-  stopScrubAutoScroll: () => void;
-  onSeek: (time: number) => void;
-  onSeekingChange: (seeking: boolean) => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const suppressClickRef = useRef(false);
-  const pointerSeekingRef = useRef(false);
-  const mouseSeekingRef = useRef(false);
-  const seekFromClientX = (clientX: number) => {
-    props.onSeek(props.timeFromClientX(clientX));
-  };
-  return (
-    <div
-      className="waveform-timeline timeline-row"
-      style={{ width: props.width }}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
-        suppressClickRef.current = true;
-        pointerSeekingRef.current = true;
-        props.onSeekingChange(true);
-        event.currentTarget.setPointerCapture(event.pointerId);
-        props.scrubFromClientX(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if ((event.buttons & 1) !== 1 || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        props.scrubFromClientX(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-        pointerSeekingRef.current = false;
-        props.stopScrubAutoScroll();
-        props.onSeekingChange(false);
-        window.setTimeout(() => {
-          suppressClickRef.current = false;
-        }, 0);
-      }}
-      onPointerCancel={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-        }
-        pointerSeekingRef.current = false;
-        props.stopScrubAutoScroll();
-        props.onSeekingChange(false);
-        window.setTimeout(() => {
-          suppressClickRef.current = false;
-        }, 0);
-      }}
-      onClick={(event) => {
-        if (suppressClickRef.current) {
-          event.preventDefault();
-          return;
-        }
-        seekFromClientX(event.clientX);
-      }}
-      onMouseDown={(event) => {
-        if (event.button !== 0 || pointerSeekingRef.current) return;
-        event.preventDefault();
-        suppressClickRef.current = true;
-        mouseSeekingRef.current = true;
-        props.onSeekingChange(true);
-        props.scrubFromClientX(event.clientX);
-        const move = (moveEvent: MouseEvent) => {
-          if (!mouseSeekingRef.current) return;
-          props.scrubFromClientX(moveEvent.clientX);
-        };
-        const up = () => {
-          mouseSeekingRef.current = false;
-          props.stopScrubAutoScroll();
-          props.onSeekingChange(false);
-          window.setTimeout(() => {
-            suppressClickRef.current = false;
-          }, 0);
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      }}
-    >
-      <svg width={props.width} height="86" viewBox={`0 0 ${props.width} 86`} preserveAspectRatio="none">
-        <rect width={props.width} height="86" fill="#101820" />
-        {[
-          ...props.segments.filter((segment) => segment.id !== props.selectedSegmentId),
-          ...props.segments.filter((segment) => segment.id === props.selectedSegmentId),
-        ].map((segment) => (
-          <rect
-            key={segment.id}
-            x={(segment.start / safeDuration) * props.width}
-            y="10"
-            width={Math.max(1, ((segment.end - segment.start) / safeDuration) * props.width)}
-            height="66"
-            fill={segment.id === props.selectedSegmentId ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
-          />
-        ))}
-        {props.waveformPhase === "streaming" || props.waveformPhase === "finalizing" ? (
-          <ProgressiveWaveformLayer
-            duration={props.duration}
-            chunks={props.progressiveWaveformChunks}
-            width={props.width}
-            mode={props.waveformDisplayMode}
-            finalizing={props.waveformPhase === "finalizing"}
-          />
-        ) : null}
-        {props.waveformPhase === "ready" || props.waveformPhase === "finalizing" ? (
-          <StaticWaveformLayer
-            duration={props.duration}
-            waveform={props.waveform}
-            width={props.width}
-            mode={props.waveformDisplayMode}
-            finalizing={props.waveformPhase === "finalizing"}
-          />
-        ) : null}
-        {props.waveformPhase === "streaming" ? (
-          <line
-            className="waveform-progress-frontier"
-            x1={clamp(props.waveformProgress, 0, 1) * props.width}
-            x2={clamp(props.waveformProgress, 0, 1) * props.width}
-            y1="4"
-            y2="82"
-            pointerEvents="none"
-          />
-        ) : null}
-      </svg>
-    </div>
-  );
-}
-
-const StaticWaveformLayer = memo(function StaticWaveformLayer(props: {
-  duration: number;
-  waveform: WaveformPoint[];
-  width: number;
-  mode: WaveformDisplayMode;
-  finalizing?: boolean;
-}) {
-  const pyramid = useMemo(() => buildWaveformPyramid(props.waveform), [props.waveform]);
-  const selectedLevel = useMemo(
-    () => selectWaveformLevel(pyramid, props.duration, props.width),
-    [pyramid, props.duration, props.width]
-  );
-  const points = pyramid[selectedLevel] ?? [];
-  const paths = useMemo(
-    () => buildWaveformPathSpecs(points, props.duration, props.width, props.mode),
-    [points, props.duration, props.width, props.mode]
-  );
-
-  return (
-    <g
-      className={props.finalizing ? "waveform-static-layer is-finalizing" : "waveform-static-layer"}
-      data-waveform-level={selectedLevel}
-      data-waveform-points={points.length}
-    >
-      {paths.map((path) => (
-        <path
-          key={path.kind}
-          className={`waveform-path waveform-path-${path.kind}`}
-          data-waveform-path={path.kind}
-          d={path.d}
-          fill="none"
-          stroke="#f2cf63"
-          strokeWidth="1"
-          opacity={path.opacity}
-          pointerEvents="none"
-        />
-      ))}
-    </g>
-  );
-});
-
-const ProgressiveWaveformLayer = memo(function ProgressiveWaveformLayer(props: {
-  duration: number;
-  chunks: WaveformPoint[][];
-  width: number;
-  mode: WaveformDisplayMode;
-  finalizing: boolean;
-}) {
-  return (
-    <g
-      className={props.finalizing ? "waveform-progressive-layer is-finalizing" : "waveform-progressive-layer"}
-      data-waveform-chunks={props.chunks.length}
-    >
-      {props.chunks.map((chunk, index) => (
-        <ProgressiveWaveformChunk
-          key={index}
-          points={chunk}
-          duration={props.duration}
-          width={props.width}
-          mode={props.mode}
-        />
-      ))}
-    </g>
-  );
-});
-
-const ProgressiveWaveformChunk = memo(function ProgressiveWaveformChunk(props: {
-  points: WaveformPoint[];
-  duration: number;
-  width: number;
-  mode: WaveformDisplayMode;
-}) {
-  const paths = useMemo(
-    () => buildWaveformPathSpecs(props.points, props.duration, props.width, props.mode),
-    [props.points, props.duration, props.width, props.mode]
-  );
-  return paths.map((path) => (
-    <path
-      key={path.kind}
-      className={`waveform-path waveform-path-${path.kind}`}
-      data-waveform-path={`progressive-${path.kind}`}
-      d={path.d}
-      fill="none"
-      stroke="#f2cf63"
-      strokeWidth="1"
-      opacity={path.opacity}
-      pointerEvents="none"
-    />
-  ));
-});
-
-function SegmentTimeline(props: {
-  duration: number;
-  segment: Segment | null;
-  currentTime: number;
-  width: number;
-  viewportRef: React.RefObject<HTMLDivElement>;
-  onChange: (patch: Partial<Segment>) => void;
-  onChangeCommitted: () => void;
-  onEditingChange: (editing: boolean) => void;
-  onEditTiming: () => void;
-}) {
-  const safeDuration = Math.max(0.001, props.duration);
-  const segment = props.segment;
-  const [draggingEdge, setDraggingEdge] = useState<"start" | "end" | null>(null);
-  const startX = segment ? (segment.start / safeDuration) * props.width : 0;
-  const endX = segment ? (segment.end / safeDuration) * props.width : 0;
-  const draggingX = draggingEdge === "start" ? startX : draggingEdge === "end" ? endX : null;
-  const setHandleEditing = (edge: "start" | "end", editing: boolean) => {
-    setDraggingEdge(editing ? edge : null);
-    props.onEditingChange(editing);
-  };
-  return (
-    <div className="segment-timeline timeline-row" style={{ width: props.width }}>
-      <div className="segment-track" style={{ width: props.width }}>
-        {segment ? (
-          <>
-            {draggingX !== null ? (
-              <div className="cut-boundary-drag-guide" style={{ left: draggingX }} />
-            ) : null}
-            <button
-              type="button"
-              className="segment-range"
-              style={{ left: startX, width: Math.max(2, endX - startX) }}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                props.onEditTiming();
-              }}
-              aria-label={tr("segmentTiming.title")}
-            />
-            <DragHandle
-              left={startX}
-              label="start"
-              width={props.width}
-              duration={safeDuration}
-              viewportRef={props.viewportRef}
-              onEditingChange={(editing) => setHandleEditing("start", editing)}
-              onChange={(time) => props.onChange({ start: clamp(time, 0, segment.end - MIN_SEGMENT_SECONDS), user_edited: true })}
-              onChangeCommitted={props.onChangeCommitted}
-            />
-            <DragHandle
-              left={endX}
-              label="end"
-              width={props.width}
-              duration={safeDuration}
-              viewportRef={props.viewportRef}
-              onEditingChange={(editing) => setHandleEditing("end", editing)}
-              onChange={(time) => props.onChange({ end: clamp(time, segment.start + MIN_SEGMENT_SECONDS, safeDuration), user_edited: true })}
-              onChangeCommitted={props.onChangeCommitted}
-            />
-          </>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function DragHandle(props: {
-  left: number;
-  label: string;
-  width: number;
-  duration: number;
-  viewportRef: React.RefObject<HTMLDivElement>;
-  onEditingChange: (editing: boolean) => void;
-  onChange: (time: number) => void;
-  onChangeCommitted: () => void;
-}) {
-  const pointerIdRef = useRef<number | null>(null);
-  const mouseDraggingRef = useRef(false);
-  const updateFromClientX = (clientX: number) => {
-    const viewport = props.viewportRef.current;
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
-    const x = clientX - rect.left + viewport.scrollLeft;
-    props.onChange((x / props.width) * props.duration);
-  };
-  const finishDrag = (target: HTMLButtonElement, pointerId: number) => {
-    if (target.hasPointerCapture(pointerId)) {
-      target.releasePointerCapture(pointerId);
-    }
-    pointerIdRef.current = null;
-    props.onEditingChange(false);
-    props.onChangeCommitted();
-  };
-
-  return (
-    <button
-      className="drag-handle"
-      style={{ left: props.left }}
-      aria-label={props.label}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        pointerIdRef.current = event.pointerId;
-        props.onEditingChange(true);
-        event.currentTarget.setPointerCapture(event.pointerId);
-        updateFromClientX(event.clientX);
-      }}
-      onPointerMove={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        event.preventDefault();
-        updateFromClientX(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        finishDrag(event.currentTarget, event.pointerId);
-      }}
-      onPointerCancel={(event) => {
-        if (pointerIdRef.current !== event.pointerId) return;
-        finishDrag(event.currentTarget, event.pointerId);
-      }}
-      onMouseDown={(event) => {
-        if (pointerIdRef.current !== null) return;
-        event.preventDefault();
-        event.stopPropagation();
-        mouseDraggingRef.current = true;
-        props.onEditingChange(true);
-        updateFromClientX(event.clientX);
-        const move = (moveEvent: MouseEvent) => {
-          if (!mouseDraggingRef.current) return;
-          updateFromClientX(moveEvent.clientX);
-        };
-        const up = () => {
-          mouseDraggingRef.current = false;
-          props.onEditingChange(false);
-          props.onChangeCommitted();
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
-      }}
-    />
-  );
-}
-
-function SegmentList(props: {
-  segments: Segment[];
-  selectedId: string | null;
-  onSelect: (segment: Segment) => void;
-  onToggle: (segment: Segment, checked: boolean) => void;
-  onTitleChange: (segment: Segment, title: string) => void;
-  onTranscript: (segment: Segment) => void;
-}) {
-  const selectedRowRef = useRef<HTMLTableRowElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    const selectedRow = selectedRowRef.current;
-    if (!viewport || !selectedRow) return;
-
-    const viewportRect = viewport.getBoundingClientRect();
-    const rowRect = selectedRow.getBoundingClientRect();
-    if (rowRect.top < viewportRect.top) {
-      viewport.scrollTop -= viewportRect.top - rowRect.top;
-    } else if (rowRect.bottom > viewportRect.bottom) {
-      viewport.scrollTop += rowRect.bottom - viewportRect.bottom;
-    }
-  }, [props.selectedId]);
-
-  return (
-    <div className="segment-list">
-      <table className="segment-list-table segment-list-header-table">
-        <SegmentColumnGroup />
-        <thead>
-          <tr>
-            <th>{tr("segments.export")}</th>
-            <th>{tr("segments.title")}</th>
-            <th>ID</th>
-            <th>{tr("segments.start")}</th>
-            <th>{tr("segments.end")}</th>
-            <th>{tr("segments.duration")}</th>
-            <th>{tr("segments.confidence")}</th>
-            <th>{tr("segments.text")}</th>
-          </tr>
-        </thead>
-      </table>
-      <ScrollArea className="segment-list-body" viewportRef={viewportRef} scrollbars={["vertical"]}>
-        <table className="segment-list-table segment-list-body-table">
-          <SegmentColumnGroup />
-          <tbody>
-            {props.segments.map((segment) => (
-              <tr
-                key={segment.id}
-                ref={segment.id === props.selectedId ? selectedRowRef : undefined}
-                className={segment.id === props.selectedId ? "selected" : ""}
-                onClick={() => props.onSelect(segment)}
-              >
-                <td>
-                  <Checkbox
-                    checked={segment.checked !== false}
-                    onChange={(event) => props.onToggle(segment, event.currentTarget.checked)}
-                    onClick={(event) => event.stopPropagation()}
-                  />
-                </td>
-                <td>
-                  <EditableTitleCell segment={segment} onChange={(title) => props.onTitleChange(segment, title)} />
-                </td>
-                <td>{segment.id}</td>
-                <td>{formatTime(segment.start)}</td>
-                <td>{formatTime(segment.end)}</td>
-                <td>{formatTime(segment.end - segment.start)}</td>
-                <td>{Math.round(segment.confidence * 100)}%</td>
-                <td>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onTranscript(segment);
-                    }}
-                  >
-                    {tr("common.view")}
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function SegmentColumnGroup() {
-  return (
-    <colgroup>
-      <col className="segment-col-export" />
-      <col className="segment-col-title" />
-      <col className="segment-col-id" />
-      <col className="segment-col-time" />
-      <col className="segment-col-time" />
-      <col className="segment-col-duration" />
-      <col className="segment-col-confidence" />
-      <col className="segment-col-text" />
-    </colgroup>
-  );
-}
-
-function EditableTitleCell(props: { segment: Segment; onChange: (title: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(props.segment.title?.trim() ?? "");
-  const displayTitle = segmentTitle(props.segment);
-
-  useEffect(() => {
-    if (!editing) setDraft(props.segment.title?.trim() ?? "");
-  }, [editing, props.segment.title]);
-
-  const commit = (value = draft) => {
-    props.onChange(value.trim());
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <input
-        className="title-edit-input"
-        value={draft}
-        autoFocus
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        onClick={(event) => event.stopPropagation()}
-        onFocus={(event) => event.currentTarget.select()}
-        onBlur={(event) => commit(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit(event.currentTarget.value);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            setDraft(props.segment.title?.trim() ?? "");
-            setEditing(false);
-          }
-        }}
-      />
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      className="title-edit-button"
-      title={tr("segments.editTitle")}
-      onClick={(event) => {
-        event.stopPropagation();
-        setDraft(props.segment.title?.trim() ?? "");
-        setEditing(true);
-      }}
-    >
-      {displayTitle}
-    </button>
-  );
-}
-
-function TimestampCommentDialogs(props: {
-  flow: TimestampCommentFlow;
-  onClose: () => void;
-  onSelect: (id: string) => void;
-  onEditSelected: () => void;
-  onDraftChange: (draft: string) => void;
-  onBack: () => void;
-  onApply: () => void;
-}) {
-  if (props.flow.mode === "closed") return null;
-
-  if (props.flow.mode === "select") {
-    const selectionFlow = props.flow;
-    return (
-      <Dialog open title={tr("timestamp.choose")} onClose={props.onClose}>
-        <p className="dialog-message">
-          {tr("timestamp.found")}
-        </p>
-        <div className="timestamp-comment-candidates" role="radiogroup" aria-label={tr("timestamp.candidates")}>
-          {selectionFlow.candidates.map((candidate) => {
-            const selected = candidate.id === selectionFlow.selectedId;
-            return (
-              <label
-                className={selected ? "timestamp-comment-candidate selected" : "timestamp-comment-candidate"}
-                key={`${candidate.source}:${candidate.id}`}
-              >
-                <input
-                  type="radio"
-                  name="timestamp-comment-candidate"
-                  value={candidate.id}
-                  checked={selected}
-                  onChange={() => props.onSelect(candidate.id)}
-                />
-                <div className="timestamp-comment-candidate-content">
-                  <div className="timestamp-comment-candidate-header">
-                    <strong>{timestampCommentSourceLabel(candidate)}</strong>
-                    <span>{candidate.author}</span>
-                    <span>{tr("timestamp.timestamps", { count: candidate.timestamp_count })}</span>
-                    {candidate.like_count !== null ? <span>{tr("timestamp.likes", { count: candidate.like_count })}</span> : null}
-                  </div>
-                  <ScrollArea
-                    className="timestamp-comment-preview"
-                    viewportClassName="timestamp-comment-preview-viewport"
-                    scrollbars={["vertical"]}
-                  >
-                    <div className="timestamp-comment-preview-content">{candidate.text}</div>
-                  </ScrollArea>
-                </div>
-              </label>
-            );
-          })}
-        </div>
-        <div className="dialog-actions">
-          <Button variant="secondary" onClick={props.onClose}>
-            {tr("common.skip")}
-          </Button>
-          <Button onClick={props.onEditSelected}>{tr("timestamp.editSelected")}</Button>
-        </div>
-      </Dialog>
-    );
-  }
-
-  const editFlow = props.flow;
-  const candidate = editFlow.candidates.find((item) => item.id === editFlow.candidateId);
-  if (!candidate) return null;
-  return (
-    <Dialog open title={tr("timestamp.edit", { source: timestampCommentSourceLabel(candidate) })} onClose={props.onClose}>
-      <form
-        className="timestamp-comment-edit-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          props.onApply();
-        }}
-      >
-        <p className="dialog-message">
-          {tr("timestamp.removeNonSongs")}
-        </p>
-        <Textarea
-          className="timestamp-comment-editor"
-          value={editFlow.draft}
-          autoFocus
-          onChange={(event) => props.onDraftChange(event.currentTarget.value)}
-        />
-        <div className="dialog-actions">
-          <div>
-            {editFlow.canGoBack ? (
-              <Button type="button" variant="secondary" onClick={props.onBack}>
-                {tr("common.back")}
-              </Button>
-            ) : null}
-          </div>
-          <div className="dialog-action-group">
-            <Button type="button" variant="secondary" onClick={props.onClose}>
-              {tr("common.cancel")}
-            </Button>
-            <Button type="submit">{tr("timestamp.apply")}</Button>
-          </div>
-        </div>
-      </form>
-    </Dialog>
-  );
-}
-
-function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
-  return tr(candidate.source === "description" ? "timestamp.description" : "timestamp.comment");
-}
-
-function OutputDialog(props: {
-  open: boolean;
-  items: OutputItem[];
-  estimate: SmartRenderEstimate | null;
-  renderPlanState: ExportPlanState;
-  error: string | null;
-  filenameTemplate: string;
-  createSourceFolder: boolean;
-  sourceFolderName: string;
-  onClose: () => void;
-  onPreview: (item: OutputItem) => void;
-  onFilenameTemplate: (value: string) => void;
-  onCreateSourceFolder: (value: boolean) => void;
-  onCheckRenderDetails: () => Promise<void>;
-  onExport: () => Promise<void>;
-}) {
-  const renderPlans = new Map(props.renderPlanState.plan?.items.map((item) => [item.id, item]));
-  return (
-    <Dialog open={props.open} title={tr("output.review")} onClose={props.onClose}>
-      <ExportCompatibilitySummary estimate={props.estimate} />
-      <div className="output-options">
-        <label className="output-template-field">
-          <span>{tr("settings.filenameTemplate")}</span>
-          <Input
-            value={props.filenameTemplate}
-            onChange={(event) => props.onFilenameTemplate(event.currentTarget.value)}
-            aria-invalid={Boolean(props.error)}
-            placeholder={DEFAULT_FILENAME_TEMPLATE}
-          />
-        </label>
-        <div className="output-template-help">
-          {tr("output.placeholders", { placeholders: FILENAME_TEMPLATE_PLACEHOLDERS.map((name) => `{${name}}`).join(", ") })}
-        </div>
-        {props.error ? <div className="output-template-error">{props.error}</div> : null}
-        <label className="output-folder-option">
-          <Checkbox
-            checked={props.createSourceFolder}
-            onChange={(event) => props.onCreateSourceFolder(event.currentTarget.checked)}
-          />
-          <span>{tr("output.createFolder", { name: props.sourceFolderName })}</span>
-        </label>
-      </div>
-      <ScrollArea className="output-list" scrollbars={["vertical"]}>
-        <SegmentReviewRows
-          items={props.items.filter((item) => item.checked)}
-          onPreview={props.onPreview}
-          renderPlans={renderPlans}
-          renderPlanStatus={props.renderPlanState.status}
-          checkingItemId={props.renderPlanState.status === "loading" ? props.renderPlanState.currentId : null}
-          defaultSuffix={props.estimate?.output_suffix ?? ".mp4"}
-        />
-      </ScrollArea>
-      <div className="dialog-actions">
-        <Button variant="secondary" onClick={props.onClose}>
-          {tr("common.back")}
-        </Button>
-        <div className="dialog-action-group">
-          <Button
-            variant="secondary"
-            onClick={props.onCheckRenderDetails}
-            disabled={props.renderPlanState.status === "loading"}
-          >
-            {props.renderPlanState.status === "loading"
-              ? tr("output.checkingProgress", {
-                  completed: props.renderPlanState.completed,
-                  total: props.renderPlanState.total
-                })
-              : tr("output.checkDetails")}
-          </Button>
-          <Button
-            onClick={props.onExport}
-            disabled={Boolean(props.error) || props.items.length === 0 || props.renderPlanState.status === "loading"}
-          >
-            {tr("common.export")}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
-  );
-}
-
-function SegmentManagementDialog(props: {
-  review: SegmentManagementReview | null;
-  canPreview: boolean;
-  onClose: () => void;
-  onPreview: (item: OutputItem) => void;
-  onConfirm: () => void;
-}) {
-  const review = props.review;
-  return (
-    <Dialog open={Boolean(review)} title={review?.title ?? tr("segments.management")} onClose={props.onClose}>
-      {review ? (
-        <>
-          <p className="dialog-message">{review.message}</p>
-          {review.kind === "sort" ? (
-            <div className="segment-sort-comparison">
-              <SegmentReviewPane label={tr("common.before")} items={review.before} canPreview={props.canPreview} onPreview={props.onPreview} />
-              <SegmentReviewPane label={tr("common.after")} items={review.after} canPreview={props.canPreview} onPreview={props.onPreview} />
-            </div>
-          ) : (
-            <ScrollArea className="output-list segment-management-list" scrollbars={["vertical"]}>
-              <SegmentReviewRows items={review.items} onPreview={props.canPreview ? props.onPreview : undefined} />
-            </ScrollArea>
-          )}
-          <div className="dialog-actions">
-            <Button variant="secondary" onClick={props.onClose}>{tr("common.cancel")}</Button>
-            <Button variant={review.kind === "remove" ? "danger" : "default"} onClick={props.onConfirm}>
-              {review.kind === "remove" ? review.confirmLabel : tr("segments.sort")}
-            </Button>
-          </div>
-        </>
-      ) : null}
-    </Dialog>
-  );
-}
-
-function SegmentReviewPane(props: {
-  label: string;
-  items: OutputItem[];
-  canPreview: boolean;
-  onPreview: (item: OutputItem) => void;
-}) {
-  return (
-    <section className="segment-review-pane" aria-label={props.label}>
-      <h3>{props.label}</h3>
-      <ScrollArea className="segment-review-list" scrollbars={["vertical"]}>
-        <SegmentReviewRows items={props.items} onPreview={props.canPreview ? props.onPreview : undefined} />
-      </ScrollArea>
-    </section>
-  );
-}
-
-function SegmentReviewRows(props: {
-  items: OutputItem[];
-  onPreview?: (item: OutputItem) => void;
-  renderPlans?: Map<string, ExportRenderPlanItem>;
-  renderPlanStatus?: ExportPlanState["status"];
-  checkingItemId?: string | null;
-  defaultSuffix?: string;
-}) {
-  return (
-    <div className="output-list-content">
-      {props.items.map((item) => {
-        const renderPlan = props.renderPlans?.get(item.id);
-        const renderStatus: ExportPlanState["status"] = renderPlan
-          ? "ready"
-          : props.renderPlanStatus === "loading" && props.checkingItemId !== item.id
-            ? "idle"
-            : props.renderPlanStatus ?? "idle";
-        const suffix = renderPlan?.output_suffix ?? props.defaultSuffix ?? ".mp4";
-        return (
-          <button
-            key={item.id}
-            className="output-row"
-            onClick={() => props.onPreview?.(item)}
-            disabled={!props.onPreview}
-          >
-            <span className="output-main">
-              <span className="output-title-line">
-                <span className="output-title">{item.title.trim() || item.segmentId || item.id}</span>
-                {props.renderPlans || props.renderPlanStatus ? (
-                  <ExportRenderBadge plan={renderPlan} status={renderStatus} />
-                ) : null}
-              </span>
-              <span className="output-meta">
-                ID: {item.segmentId || item.id} / {tr("output.file")}: {item.filename_stem}{suffix}
-              </span>
-              {renderPlan ? <span className="output-render-detail">{exportRenderDetail(renderPlan)}</span> : null}
-            </span>
-            <span className="output-time">
-              {formatTime(item.start)} - {formatTime(item.end)}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function ExportRenderBadge(props: { plan?: ExportRenderPlanItem; status: ExportPlanState["status"] }) {
-  if (props.status === "loading" && !props.plan) return <span className="render-badge render-badge-checking">{tr("output.checking")}</span>;
-  if (props.status === "error") return <span className="render-badge render-badge-error">{tr("output.checkFailedBadge")}</span>;
-  if (!props.plan) return <span className="render-badge render-badge-unchecked">{tr("output.notChecked")}</span>;
-  return (
-    <span className={`render-badge ${props.plan.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
-      {tr(props.plan.smart_render ? "output.smart" : "output.full")}
-    </span>
-  );
-}
-
-function ExportCompatibilitySummary(props: { estimate: SmartRenderEstimate | null }) {
-  const estimate = props.estimate;
-  if (!estimate) {
-    return <div className="export-render-summary"><span className="render-badge render-badge-unknown">{tr("common.unknownTitle")}</span></div>;
-  }
-  return (
-    <div className="export-render-summary">
-      <span className={`render-badge ${estimate.smart_render ? "render-badge-smart" : "render-badge-reencode"}`}>
-        {tr(estimate.smart_render ? "output.smartEstimate" : "output.fullEstimate")}
-      </span>
-      <span>
-        {tr("output.estimateSummary", {
-          container: estimate.source_container.toUpperCase(),
-          codec: estimate.video_codec.toUpperCase() || tr("common.unknownTitle")
-        })}
-      </span>
-    </div>
-  );
-}
-
-function ExportRenderSummary(props: { state: ExportPlanState }) {
-  const state = props.state;
-  if (state.status === "loading") {
-    return <div className="export-render-summary"><ExportRenderBadge status="loading" /><span>{tr("output.checkingSummary")}</span></div>;
-  }
-  if (state.status === "idle") return null;
-  if (state.status === "error") {
-    return (
-      <div className="export-render-summary export-render-summary-error">
-        <ExportRenderBadge status="error" />
-        <span>{tr("output.checkFailed", { error: state.error })}</span>
-      </div>
-    );
-  }
-  if (!state.plan) return null;
-  const smartCount = state.plan.items.filter((item) => item.smart_render).length;
-  const reencodeCount = state.plan.items.length - smartCount;
-  return (
-    <div className="export-render-summary">
-      {smartCount > 0 ? <span className="render-badge render-badge-smart">{tr("output.smartCount", { count: smartCount })}</span> : null}
-      {reencodeCount > 0 ? <span className="render-badge render-badge-reencode">{tr("output.fullCount", { count: reencodeCount })}</span> : null}
-      <span>{tr(reencodeCount === 0 ? "output.allSmart" : "output.mixed")}</span>
-    </div>
-  );
-}
-
-function exportRenderDetail(plan: ExportRenderPlanItem) {
-  if (plan.smart_render) {
-    return tr("output.smartDetail", { codec: plan.video_codec.toUpperCase(), copied: formatDuration(plan.copied_seconds), encoded: formatDuration(plan.encoded_seconds) });
-  }
-  if (plan.fallback_reason?.startsWith("no keyframe-aligned GOP")) {
-    return tr("output.noGop");
-  }
-  if (plan.fallback_reason?.startsWith("unsupported smart-render codec/container")) {
-    return tr("output.unsupported", { codec: plan.video_codec.toUpperCase() || tr("common.unknownTitle"), container: plan.container_family.toUpperCase() });
-  }
-  return plan.fallback_reason || tr("output.fullDetail");
-}
-
-function formatDuration(seconds: number) {
-  return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
-}
-
-function WhisperDownloadProgressDialog(props: {
-  open: boolean;
-  job: JobRecord | null;
-  onClose: () => void;
-}) {
-  return (
-    <ModelDownloadProgressDialog
-      {...props}
-      title={tr("dialogs.whisperDownloadTitle")}
-      description={tr("dialogs.whisperDownloadDescription")}
-      preparing={tr("dialogs.whisperDownloadPreparing")}
-      failed={tr("dialogs.whisperDownloadFailed")}
-      complete={tr("dialogs.whisperDownloadComplete")}
-    />
-  );
-}
-
-function ModelDownloadProgressDialog(props: {
-  open: boolean;
-  job: JobRecord | null;
-  title: string;
-  description: string;
-  preparing: string;
-  failed: string;
-  complete: string;
-  onClose: () => void;
-}) {
-  const status = props.job?.status ?? "queued";
-  const result =
-    props.job?.result && typeof props.job.result === "object"
-      ? props.job.result as {
-          downloaded_bytes?: number;
-          total_bytes?: number;
-          installed_bytes?: number | null;
-        }
-      : null;
-  const downloadedBytes = result?.downloaded_bytes ?? (status === "completed" ? result?.installed_bytes : null);
-  const totalBytes = result?.total_bytes ?? (status === "completed" ? result?.installed_bytes : null);
-  const progress =
-    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
-      ? clamp(downloadedBytes / totalBytes, 0, 1)
-      : clamp(props.job?.progress ?? 0, 0, 1);
-  const transferLabel =
-    typeof downloadedBytes === "number" && typeof totalBytes === "number" && totalBytes > 0
-      ? `${formatDownloadBytes(downloadedBytes)} / ${formatDownloadBytes(totalBytes)}`
-      : null;
-  return (
-    <Dialog open={props.open} title={props.title} onClose={props.onClose}>
-      <div className="export-progress">
-        <p className="dialog-message">{props.description}</p>
-        <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>
-            {status === "completed"
-              ? props.complete
-              : status === "failed"
-                ? props.failed
-                : props.preparing}
-          </span>
-          <strong>{Math.round(progress * 100)}%</strong>
-        </div>
-        <progress value={progress} max={1} />
-        {transferLabel ? <div className="export-progress-note">{transferLabel}</div> : null}
-        {props.job?.error ? <div className="warning-text">{props.job.error}</div> : null}
-      </div>
-      {status === "completed" || status === "failed" ? (
-        <div className="dialog-actions">
-          <Button variant="secondary" onClick={props.onClose}>
-            {tr("common.close")}
-          </Button>
-        </div>
-      ) : null}
-    </Dialog>
-  );
-}
-
-function formatDownloadBytes(value: number) {
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(2)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${Math.max(0, Math.round(value))} B`;
-}
-
-function ExportProgressDialog(props: {
-  open: boolean;
-  job: JobRecord | null;
-  estimate: SmartRenderEstimate | null;
-  renderPlanState: ExportPlanState;
-  onClose: () => void;
-}) {
-  const progress = clamp(props.job?.progress ?? 0, 0, 1);
-  const status = props.job?.status ?? "queued";
-  const complete = status === "completed";
-  const failed = status === "failed";
-  const actualRenderPlanState = actualExportPlanState(props.job);
-  const checkedRenderPlanState = props.renderPlanState.status === "ready" ? props.renderPlanState : null;
-  const progressRenderPlanState = actualRenderPlanState ?? checkedRenderPlanState;
-  return (
-    <Dialog open={props.open} title={tr("output.progress")} onClose={props.onClose}>
-      <div className="export-progress">
-        {progressRenderPlanState
-          ? <ExportRenderSummary state={progressRenderPlanState} />
-          : <ExportCompatibilitySummary estimate={props.estimate} />}
-        <div className={`export-progress-status export-progress-status-${status}`}>
-          <span>{localizeJobMessage(props.job) || tr("output.preparing")}</span>
-          <strong>{Math.round(progress * 100)}%</strong>
-        </div>
-        <progress value={progress} max={1} />
-        <div className="export-progress-note">
-          {failed
-            ? props.job?.error || tr("output.failed")
-            : complete
-              ? tr("output.complete")
-              : tr("output.progressNote")}
-        </div>
-      </div>
-      <div className="dialog-actions">
-        <Button variant="secondary" onClick={props.onClose}>
-          {tr(complete || failed ? "common.close" : "common.hide")}
-        </Button>
-      </div>
-    </Dialog>
-  );
-}
-
-function actualExportPlanState(job: JobRecord | null): ExportPlanState | null {
-  if (job?.status !== "completed" || !job.result || typeof job.result !== "object") return null;
-  const exported = (job.result as { exported?: unknown }).exported;
-  if (!Array.isArray(exported)) return null;
-  const items: ExportRenderPlanItem[] = [];
-  for (const result of exported) {
-    if (!result || typeof result !== "object") return null;
-    const row = result as { id?: unknown; smart_render_plan?: unknown };
-    if (typeof row.id !== "string" || !row.smart_render_plan || typeof row.smart_render_plan !== "object") return null;
-    const plan = row.smart_render_plan as Record<string, unknown>;
-    const spans = Array.isArray(plan.spans) ? plan.spans : [];
-    const copiedSeconds = spans.reduce((total, span) => {
-      if (!span || typeof span !== "object") return total;
-      const value = span as Record<string, unknown>;
-      return value.mode === "copy" && typeof value.start === "number" && typeof value.end === "number"
-        ? total + Math.max(0, value.end - value.start)
-        : total;
-    }, 0);
-    const start = typeof plan.start === "number" ? plan.start : 0;
-    const end = typeof plan.end === "number" ? plan.end : start;
-    const fallbackReason = typeof plan.fallback_reason === "string" ? plan.fallback_reason : null;
-    items.push({
-      id: row.id,
-      smart_render: fallbackReason === null,
-      output_suffix: typeof plan.output_suffix === "string" ? plan.output_suffix : ".mp4",
-      video_codec: typeof plan.video_codec === "string" ? plan.video_codec : "",
-      container_family: typeof plan.container_family === "string" ? plan.container_family : "",
-      copied_seconds: copiedSeconds,
-      encoded_seconds: Math.max(0, end - start - copiedSeconds),
-      fallback_reason: fallbackReason
-    });
-  }
-  return { status: "ready", plan: { items }, error: null };
-}
-
-function FfmpegCheckDialog(props: {
-  open: boolean;
-  pending: boolean;
-  result: FfmpegCheckResult | null;
-  onClose: () => void;
-}) {
-  const downloadUrl = props.result?.download_url || FFMPEG_DOWNLOAD_URL;
-  return (
-    <Dialog open={props.open} title={tr("ffmpeg.title")} onClose={props.onClose}>
-      <div className="ffmpeg-check">
-        {props.pending ? (
-          <p className="dialog-message">{tr("ffmpeg.checking")}</p>
-        ) : props.result?.ok ? (
-          <>
-            <p className="dialog-message">{tr("ffmpeg.available")}</p>
-            <div className="ffmpeg-check-paths">
-              <span>ffmpeg</span>
-              <code>{props.result.ffmpeg}</code>
-              <span>ffprobe</span>
-              <code>{props.result.ffprobe}</code>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="dialog-message">{tr("ffmpeg.missing")}</p>
-            <pre className="ffmpeg-check-error">{props.result?.error || tr("ffmpeg.failed")}</pre>
-            <a className="external-link" href={downloadUrl} target="_blank" rel="noreferrer">
-              {tr("ffmpeg.download")}
-            </a>
-          </>
-        )}
-      </div>
-      <div className="dialog-actions">
-        <Button onClick={props.onClose}>{tr("common.ok")}</Button>
-      </div>
-    </Dialog>
-  );
-}
-
+/** `previewRange`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
 function previewRange(video: HTMLVideoElement | null, start: number, end: number) {
   if (!video) return;
   const duration = Math.max(0, end - start);
@@ -4577,40 +2942,29 @@ function previewRange(video: HTMLVideoElement | null, start: number, end: number
   }, 5000);
 }
 
+/** `segmentStopAtForTime`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentStopAtForTime(segment: Segment | null, time: number) {
   if (!segment || segment.end <= segment.start) return null;
   return time >= segment.start - 0.03 && time < segment.end - 0.03 ? segment.end : null;
 }
 
-function normalizeScratchPreviewMilliseconds(value: unknown, fallback = DEFAULT_SCRATCH_PREVIEW_MILLISECONDS) {
-  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(Math.round(parsed), MIN_SCRATCH_PREVIEW_MILLISECONDS, MAX_SCRATCH_PREVIEW_MILLISECONDS)
-    : fallback;
-}
-
+/** `readScratchPreviewMilliseconds`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readScratchPreviewMilliseconds() {
-  try {
-    return normalizeScratchPreviewMilliseconds(window.localStorage.getItem(SCRATCH_PREVIEW_STORAGE_KEY));
-  } catch {
-    return DEFAULT_SCRATCH_PREVIEW_MILLISECONDS;
-  }
+  return readStoredScratchPreviewMilliseconds(window.localStorage);
 }
 
+/** `readScratchAudioProxyEnabled`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readScratchAudioProxyEnabled() {
-  try {
-    return normalizeScratchAudioProxyEnabled(window.localStorage.getItem(SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY));
-  } catch {
-    return true;
-  }
+  return readStoredScratchAudioProxyEnabled(window.localStorage);
 }
 
+/** `clampMediaTime`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function clampMediaTime(media: HTMLMediaElement, time: number) {
   const maximum = Number.isFinite(media.duration) && media.duration > 0 ? Math.max(0, media.duration - 0.001) : time;
   return clamp(time, 0, maximum);
 }
 
+/** `loadScratchProxyAudio`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 async function loadScratchProxyAudio(audio: HTMLAudioElement, url: string) {
   audio.pause();
   audio.preload = "auto";
@@ -4630,11 +2984,13 @@ async function loadScratchProxyAudio(audio: HTMLAudioElement, url: string) {
   }
 }
 
+/** `waitForMediaReady`の完了条件まで待機し、成功時の結果または失敗を返す。 */
 function waitForMediaReady(media: HTMLMediaElement, timeoutMilliseconds: number) {
   if (media.readyState >= HTMLMediaElement.HAVE_METADATA) return Promise.resolve();
   return waitForMediaEvent(media, "loadedmetadata", timeoutMilliseconds);
 }
 
+/** `waitForMediaEvent`の完了条件まで待機し、成功時の結果または失敗を返す。 */
 function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" | "seeked", timeoutMilliseconds: number) {
   return new Promise<void>((resolve, reject) => {
     const cleanup = () => {
@@ -4659,53 +3015,49 @@ function waitForMediaEvent(media: HTMLMediaElement, eventName: "loadedmetadata" 
   });
 }
 
+/** `readBoundarySecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readBoundarySecondsInput() {
-  try {
-    const stored = window.localStorage.getItem(BOUNDARY_SECONDS_STORAGE_KEY);
-    return stored?.trim()
-      ? formatBoundarySeconds(parseBoundarySeconds(stored))
-      : formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
-  } catch {
-    return formatBoundarySeconds(DEFAULT_BOUNDARY_SECONDS);
-  }
+  return readStoredBoundarySecondsInput(window.localStorage);
 }
 
+/** `readBoundaryNudgeSecondsInput`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readBoundaryNudgeSecondsInput() {
-  try {
-    const stored = window.localStorage.getItem(BOUNDARY_NUDGE_SECONDS_STORAGE_KEY);
-    return stored?.trim()
-      ? formatBoundaryNudgeSeconds(parseBoundaryNudgeSeconds(stored))
-      : formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
-  } catch {
-    return formatBoundaryNudgeSeconds(DEFAULT_BOUNDARY_NUDGE_SECONDS);
-  }
+  return readStoredBoundaryNudgeSecondsInput(window.localStorage);
 }
 
+/** `readVideoSplitPercent`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readVideoSplitPercent() {
+  return readStoredVideoSplitPercent(window.localStorage);
+}
+
+/** `readStoredWaveformDisplayModes`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
+function readStoredWaveformDisplayModes(): WaveformDisplayModes {
   try {
-    const stored = window.localStorage.getItem(VIDEO_SPLIT_STORAGE_KEY);
-    return normalizeVideoSplitPercent(stored);
+    const preferences = readModePreferences(window.localStorage);
+    return {
+      cut: preferences.cut.waveformDisplayMode,
+      sub: preferences.sub.waveformDisplayMode,
+    };
   } catch {
-    return DEFAULT_VIDEO_SPLIT_PERCENT;
+    return { ...DEFAULT_WAVEFORM_DISPLAY_MODES };
   }
 }
 
-function readWaveformDisplayMode(): WaveformDisplayMode {
+/** `readStoredCutWaveformAmplitudeProfile`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
+function readStoredCutWaveformAmplitudeProfile(): CutWaveformAmplitudeProfile {
   try {
-    return normalizeWaveformDisplayMode(window.localStorage.getItem(WAVEFORM_DISPLAY_MODE_STORAGE_KEY));
+    return readCutWaveformAmplitudeProfile(window.localStorage);
   } catch {
-    return "rms";
+    return DEFAULT_CUT_WAVEFORM_AMPLITUDE_PROFILE;
   }
 }
 
+/** `readCreateSourceFolder`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 function readCreateSourceFolder() {
-  try {
-    return window.localStorage.getItem(CREATE_SOURCE_FOLDER_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
+  return readStoredCreateSourceFolder(window.localStorage);
 }
 
+/** `waveformDisplayModeLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
   switch (mode) {
     case "rms":
@@ -4714,56 +3066,23 @@ function waveformDisplayModeLabel(mode: WaveformDisplayMode) {
       return tr("settings.peak");
     case "peak-rms":
       return tr("settings.peakRms");
+    case "symmetric-peak":
+      return tr("settings.symmetricPeak");
   }
 }
 
-function normalizeVideoSplitPercent(value: unknown) {
-  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
-    return DEFAULT_VIDEO_SPLIT_PERCENT;
-  }
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(parsed, MIN_VIDEO_SPLIT_PERCENT, MAX_VIDEO_SPLIT_PERCENT)
-    : DEFAULT_VIDEO_SPLIT_PERCENT;
-}
-
-function parseBoundarySeconds(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? clamp(Math.round(parsed), 1, 60) : DEFAULT_BOUNDARY_SECONDS;
-}
-
-function formatBoundarySeconds(value: number) {
-  return String(Math.round(value));
-}
-
-function normalizeBoundarySecondsInput(value: string) {
-  if (value.trim() === "") return "";
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) return formatBoundarySeconds(parseBoundarySeconds(value));
-  const digits = value.replace(/\D/g, "");
-  return digits ? formatBoundarySeconds(parseBoundarySeconds(digits)) : "";
-}
-
-function parseBoundaryNudgeSeconds(value: string) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed)
-    ? clamp(Math.round(parsed * 10) / 10, MIN_SEGMENT_SECONDS, 60)
-    : DEFAULT_BOUNDARY_NUDGE_SECONDS;
-}
-
-function formatBoundaryNudgeSeconds(value: number) {
-  return parseBoundaryNudgeSeconds(String(value)).toFixed(1);
-}
-
+/** `segmentTitle`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentTitle(segment: Segment) {
   return segment.title?.trim() || segment.id;
 }
 
+/** `segmentDialogTitle`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function segmentDialogTitle(segment: Segment) {
   const title = segment.title?.trim();
   return title ? `${title} / ${segment.id}` : segment.id;
 }
 
+/** `safeFilenameStem`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function safeFilenameStem(title: string, fallback: string) {
   const value = title
     .replaceAll("/", " - ")
@@ -4775,6 +3094,7 @@ function safeFilenameStem(title: string, fallback: string) {
   return value || fallback;
 }
 
+/** `filenameStemForSegment`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
   const explicitTitle = segment.title?.trim();
   const fallback =
@@ -4791,16 +3111,19 @@ function filenameStemForSegment(segment: Segment, candidate?: ExportCandidate) {
   return base;
 }
 
+/** `extensionOf`のfilenameから小文字化した拡張子を取り出す。 */
 function extensionOf(name: string) {
   const dot = name.lastIndexOf(".");
   return dot >= 0 ? name.slice(dot).toLowerCase() : "";
 }
 
+/** `filenameWithoutExtension`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function filenameWithoutExtension(name: string) {
   const dot = name.lastIndexOf(".");
   return (dot > 0 ? name.slice(0, dot) : name).trim() || "video";
 }
 
+/** `deviceLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 function deviceLabel(device: AnalysisDevice | WhisperDevice) {
   switch (device) {
     case "auto":

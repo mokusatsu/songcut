@@ -2,6 +2,7 @@ from pathlib import Path
 from contextlib import redirect_stdout
 import io
 import json
+from math import isfinite
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,46 @@ import unittest
 from unittest import mock
 
 from songcut.cli import build_parser, main
+from songcut.ffmpeg_tools import find_ffmpeg, probe_duration
 from songcut.io import read_segments_json
+from songcut.metadata import metadata_segments
+from songcut.review import format_hms
+from songcut.timestamps import Segment
+
+
+def _test_videos() -> list[Path]:
+    return sorted(Path("testdata").glob("*.mp4"), key=lambda path: path.name)
+
+
+def _analysis_fixture() -> Path | None:
+    videos = _test_videos()
+    if not videos:
+        return None
+    candidates: list[tuple[int, str, Path]] = []
+    for video in videos:
+        try:
+            candidates.append((video.stat().st_size, video.name, video))
+        except OSError:
+            continue
+    return min(candidates)[2] if candidates else None
+
+
+def _metadata_fixture() -> tuple[Path, list[Segment]] | None:
+    videos = _test_videos()
+    if not videos:
+        return None
+    try:
+        ffprobe = find_ffmpeg().ffprobe
+    except (FileNotFoundError, OSError):
+        return None
+    for video in videos:
+        try:
+            segments = metadata_segments(ffprobe, video)
+        except (OSError, subprocess.CalledProcessError, ValueError):
+            continue
+        if segments:
+            return video, segments
+    return None
 
 
 class CliIntegrationTests(unittest.TestCase):
@@ -23,52 +63,77 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertTrue(disabled.no_boundary_refinement)
 
     def test_metadata_analyze_on_fixture_if_present(self) -> None:
-        videos = list(Path("testdata").glob("*.mp4"))
-        truth_files = list(Path("testdata").glob("*.txt"))
-        if not videos or not truth_files:
-            self.skipTest("testdata fixture is not present")
+        fixture = _metadata_fixture()
+        if fixture is None:
+            self.skipTest("No testdata MP4 with parseable timestamp metadata is present")
+        video, expected_segments = fixture
 
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             with redirect_stdout(io.StringIO()):
-                analyze_code = main(["analyze", str(videos[0]), "--out", str(out_dir)])
+                analyze_code = main(["analyze", str(video), "--out", str(out_dir)])
             self.assertEqual(analyze_code, 0)
 
             payload = read_segments_json(out_dir / "segments.json")
             self.assertEqual(payload["timestamp_source"], "video-metadata")
-            self.assertGreaterEqual(len(payload["segments"]), 10)
+            actual_segments = payload["segments"]
+            self.assertEqual(len(actual_segments), len(expected_segments))
+            self.assertTrue(actual_segments)
+            for actual, expected in zip(actual_segments, expected_segments):
+                self.assertEqual(actual["source"], "video-metadata")
+                self.assertAlmostEqual(actual["start"], expected.start, places=3)
+                self.assertAlmostEqual(actual["end"], expected.end, places=3)
 
     def test_analyze_can_write_review_html(self) -> None:
-        videos = list(Path("testdata").glob("*.mp4"))
-        if not videos:
+        video = _analysis_fixture()
+        if video is None:
             self.skipTest("testdata fixture is not present")
 
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
             with redirect_stdout(io.StringIO()):
-                analyze_code = main(["analyze", str(videos[0]), "--out", str(out_dir), "--review"])
+                analyze_code = main(["analyze", str(video), "--out", str(out_dir), "--review"])
             self.assertEqual(analyze_code, 0)
 
+            payload = read_segments_json(out_dir / "segments.json")
             review_html = out_dir / "review.html"
             self.assertTrue(review_html.exists())
-            self.assertIn('value="0:09:47"', review_html.read_text(encoding="utf-8"))
+            review_text = review_html.read_text(encoding="utf-8")
+            segments = payload.get("segments", [])
+            self.assertEqual(review_text.count('<input data-field="start"'), len(segments))
+            self.assertEqual(review_text.count('<input data-field="end"'), len(segments))
+            for segment in segments:
+                row_start = review_text.find(f"<td>{segment['id']}</td>")
+                self.assertGreaterEqual(row_start, 0)
+                row_end = review_text.find("</tr>", row_start)
+                self.assertGreater(row_end, row_start)
+                row = review_text[row_start:row_end]
+                self.assertIn(f'value="{format_hms(segment["start"])}"', row)
+                self.assertIn(f'value="{format_hms(segment["end"])}"', row)
 
     def test_analyze_accepts_guide_and_reviews_guided_segments(self) -> None:
-        videos = list(Path("testdata").glob("*.mp4"))
-        if not videos:
+        video = _analysis_fixture()
+        if video is None:
             self.skipTest("testdata fixture is not present")
+        try:
+            duration = probe_duration(find_ffmpeg().ffprobe, video)
+        except (FileNotFoundError, OSError, subprocess.CalledProcessError, ValueError):
+            self.skipTest("ffprobe is unavailable for the testdata fixture")
+        if not isfinite(duration) or duration <= 2.0:
+            self.skipTest("testdata fixture is too short for a derived guide timestamp")
+        guide_start = max(1, min(int(duration) - 1, int(round(duration * 0.25))))
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             guide = root / "guide.txt"
-            guide.write_text("0:09:59 Song / Artist\n", encoding="utf-8")
+            guide.write_text(f"{format_hms(guide_start)} Song / Artist\n", encoding="utf-8")
             out_dir = root / "out"
 
             with redirect_stdout(io.StringIO()) as stdout:
                 analyze_code = main(
                     [
                         "analyze",
-                        str(videos[0]),
+                        str(video),
                         "--out",
                         str(out_dir),
                         "--guide",
@@ -86,10 +151,20 @@ class CliIntegrationTests(unittest.TestCase):
             self.assertTrue(review_html.exists())
 
             guided_payload = read_segments_json(guided_segments_json)
-            self.assertEqual(guided_payload["segments"][0]["start"], 599.0)
-            self.assertEqual(guided_payload["segments"][0]["title"], "Song / Artist")
+            self.assertEqual(len(guided_payload["segments"]), 1)
+            guided = guided_payload["segments"][0]
+            self.assertAlmostEqual(guided["start"], guide_start, places=3)
+            self.assertEqual(guided["title"], "Song / Artist")
+            self.assertGreater(guided["end"], guided["start"])
+            self.assertLessEqual(guided["end"], duration + 0.001)
+            self.assertIn("guide", guided["flags"])
+            self.assertIn(
+                guided["match_source"],
+                {"guide-range", "guide-nearby-segment", "guide-timestamp-fallback"},
+            )
             review_text = review_html.read_text(encoding="utf-8")
-            self.assertIn('value="0:09:59"', review_text)
+            self.assertIn(f'value="{format_hms(guided["start"])}"', review_text)
+            self.assertIn(f'value="{format_hms(guided["end"])}"', review_text)
             self.assertIn('value="Song / Artist"', review_text)
 
     def test_export_can_use_guide_file(self) -> None:

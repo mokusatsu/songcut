@@ -1,5 +1,7 @@
 import base64
+import io
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -12,6 +14,8 @@ from songcut.subtitle_export import (
     SubtitleStyle,
     _ffmpeg_progress_seconds,
     _fit_effect_durations,
+    _run_ffmpeg_with_progress,
+    export_subtitle_bundle,
     render_ass_document,
     render_lane_srt,
     render_subtitle_png_base64,
@@ -167,6 +171,59 @@ def test_ffmpeg_progress_parser_accepts_machine_progress_fields() -> None:
     assert _ffmpeg_progress_seconds("out_time=00:01:02.500000") == 62.5
     assert _ffmpeg_progress_seconds("progress=continue") is None
     assert _ffmpeg_progress_seconds("out_time_us=N/A") is None
+
+
+def test_ffmpeg_runner_maps_progress_protocol_to_subtitle_range() -> None:
+    process = mock.Mock()
+    process.stdout = io.StringIO("out_time_us=5000000\nout_time_us=10000000\n")
+    process.wait.return_value = 0
+    progress: list[tuple[float, str]] = []
+
+    with mock.patch("songcut.subtitle_export.subprocess.Popen", return_value=process):
+        _run_ffmpeg_with_progress(
+            ["ffmpeg", "-progress", "pipe:1"],
+            duration=10.0,
+            on_progress=lambda value, message: progress.append((value, message)),
+            progress_start=0.15,
+            progress_end=0.96,
+        )
+
+    assert [value for value, _message in progress] == pytest.approx([0.555, 0.96])
+    assert all(message == "Burning subtitles into video." for _value, message in progress)
+
+
+def test_subtitle_export_validates_created_video_and_duration(tmp_path: Path) -> None:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    output_dir = tmp_path / "exports"
+    lane = SubtitleLane(
+        id="lyrics",
+        name="Lyrics",
+        style=SubtitleStyle(),
+        segments=[SubtitleSegment(id="line", text="歌詞", start=0.0, end=1.0)],
+    )
+
+    def fake_runner(command: list[str], **_kwargs: object) -> None:
+        Path(command[-1]).write_bytes(b"video")
+
+    with (
+        mock.patch("songcut.subtitle_export._require_ass_filter"),
+        mock.patch("songcut.subtitle_export.probe_duration", side_effect=[10.0, 10.0]),
+        mock.patch("songcut.subtitle_export.run_ffmpeg_stream", side_effect=fake_runner),
+    ):
+        result = export_subtitle_bundle(
+            source,
+            output_dir,
+            [lane],
+            play_res_x=320,
+            play_res_y=180,
+            ffmpeg_paths=FfmpegPaths(Path("ffmpeg"), Path("ffprobe")),
+        )
+
+    video = Path(result["video"])
+    assert video.exists()
+    assert video.stat().st_size > 0
+
 
 
 def test_bundled_ffmpeg_renders_static_ass_frame_as_rgba_png() -> None:

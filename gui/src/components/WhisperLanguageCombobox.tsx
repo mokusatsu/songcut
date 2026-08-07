@@ -16,6 +16,7 @@ export const PRIMARY_WHISPER_LANGUAGES: readonly WhisperLanguageOption[] = [
 
 const primaryCodes = new Set(PRIMARY_WHISPER_LANGUAGES.map((language) => language.code));
 
+/** `localizeWhisperLanguages`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeWhisperLanguages(
   languages: readonly WhisperLanguageOption[],
   locale: UiLanguage,
@@ -26,6 +27,7 @@ export function localizeWhisperLanguages(
     label: language.code === "auto" ? (locale === "ja" ? "自動検出" : "Auto detect") : displayNames.of(language.code) ?? language.label,
   }));
 }
+/** `rankWhisperLanguages`の候補と条件から、利用すべき値または操作を決定する。 */
 export function rankWhisperLanguages(
   languages: readonly WhisperLanguageOption[],
   query: string,
@@ -67,6 +69,7 @@ export function rankWhisperLanguages(
     .map((item) => item.language);
 }
 
+/** `moveLanguageOptionIndex`の候補と条件から、利用すべき値または操作を決定する。 */
 export function moveLanguageOptionIndex(current: number, optionCount: number, direction: 1 | -1) {
   if (optionCount <= 0) return -1;
   if (current < 0) return direction > 0 ? 0 : optionCount - 1;
@@ -83,6 +86,7 @@ function languageSearchRank(language: WhisperLanguageOption, query: string): num
   return null;
 }
 
+/** `WhisperLanguageCombobox`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function WhisperLanguageCombobox(props: {
   value: string;
   languages: readonly WhisperLanguageOption[];

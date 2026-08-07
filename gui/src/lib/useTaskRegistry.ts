@@ -44,10 +44,12 @@ const BLOCKS_QUIT = new Set<TaskSlot>([
 ]);
 const BACKGROUND_TASKS = new Set<TaskSlot>(["waveform", "scratch-proxy", "subtitle-render"]);
 
+/** `isTaskRunning`の入力が要求された条件やschemaを満たすか検証する。 */
 export function isTaskRunning(job: JobRecord | null | undefined) {
   return job?.status === "queued" || job?.status === "running";
 }
 
+/** `createPendingTask`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createPendingTask(kind: string, message: string): JobRecord {
   const now = Date.now() / 1000;
   return {
@@ -61,6 +63,7 @@ export function createPendingTask(kind: string, message: string): JobRecord {
   };
 }
 
+/** `failTask`でtaskを失敗状態へ遷移させ、診断messageと時刻を保持する。 */
 export function failTask(job: JobRecord, error: unknown, message: string): JobRecord {
   if (job.status === "failed" || job.status === "cancelled") return job;
   return {
@@ -89,28 +92,33 @@ function byMostRecentlyUpdated(left: TaskRegistryEntry, right: TaskRegistryEntry
   return right.job.updated_at - left.job.updated_at;
 }
 
+/** `selectRunningTaskEntries`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectRunningTaskEntries(tasks: TaskRegistryState): TaskRegistryEntry[] {
   return taskEntries(tasks)
     .filter(({ job }) => isTaskRunning(job))
     .sort(byRunningPriority);
 }
 
+/** `selectFailedTaskEntries`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectFailedTaskEntries(tasks: TaskRegistryState): TaskRegistryEntry[] {
   return taskEntries(tasks)
     .filter(({ job }) => job.status === "failed" || job.status === "cancelled")
     .sort(byMostRecentlyUpdated);
 }
 
+/** `selectLatestTerminalTask`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectLatestTerminalTask(tasks: TaskRegistryState): JobRecord | null {
   const terminal = taskEntries(tasks).filter(({ job }) => !isTaskRunning(job));
   const foreground = terminal.filter(({ slot }) => !BACKGROUND_TASKS.has(slot));
   return (foreground.length ? foreground : terminal).sort(byMostRecentlyUpdated)[0]?.job ?? null;
 }
 
+/** `selectActiveTask`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectActiveTask(tasks: TaskRegistryState): JobRecord | null {
   return selectRunningTaskEntries(tasks)[0]?.job ?? selectLatestTerminalTask(tasks);
 }
 
+/** `selectBlockingTask`の候補と条件から、利用すべき値または操作を決定する。 */
 export function selectBlockingTask(tasks: TaskRegistryState): JobRecord | null {
   return (
     taskEntries(tasks)
@@ -119,6 +127,7 @@ export function selectBlockingTask(tasks: TaskRegistryState): JobRecord | null {
   );
 }
 
+/** `useTaskRegistry`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useTaskRegistry() {
   const [tasks, setTasks] = useState<TaskRegistryState>({});
   const updateTask = useCallback((slot: TaskSlot, job: JobRecord | null) => {

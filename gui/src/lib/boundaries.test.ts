@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { boundaryNudgePlaybackRange, nearestBoundaryTarget } from "./boundaries";
+import {
+  CUT_BOUNDARY_POLICY,
+  boundaryNudgePlaybackRange,
+  createCutBoundaryPolicy,
+  nearestBoundaryTarget,
+  nudgeBoundaryTime,
+  resolveBoundaryRange,
+  resolveBoundaryTime,
+} from "./boundaries";
+import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "./subtitles";
 import type { Segment } from "../types";
 
 const segments: Segment[] = [
@@ -84,5 +93,111 @@ describe("boundaryNudgePlaybackRange", () => {
       start: 9.8,
       stopAt: 10,
     });
+  });
+
+  it("treats fractional Cut nudge widths as seconds", () => {
+    expect(boundaryNudgePlaybackRange({ start: 1, end: 3 }, "end", 0.125)).toEqual({
+      start: 2.75,
+      stopAt: 3,
+    });
+  });
+});
+
+describe("BoundaryPolicy", () => {
+  it("keeps Cut boundaries in free decimal seconds", () => {
+    expect(resolveBoundaryTime(
+      { start: 1, end: 3 },
+      "start",
+      1.125,
+      CUT_BOUNDARY_POLICY,
+    )).toBe(1.125);
+    expect(resolveBoundaryTime(
+      { start: 1, end: 3 },
+      "start",
+      3,
+      CUT_BOUNDARY_POLICY,
+    )).toBe(2.9);
+    expect(nudgeBoundaryTime(
+      { start: 1, end: 3 },
+      "end",
+      -1,
+      { ...CUT_BOUNDARY_POLICY, nudgeStep: 0.125 },
+    )).toBe(2.875);
+  });
+
+  it("preserves Cut's intentional timeline and dialog minimum-duration difference", () => {
+    const range = { start: 1, end: 3 };
+    expect(resolveBoundaryTime(
+      range,
+      "end",
+      1.001,
+      createCutBoundaryPolicy("drag"),
+      { nextStart: 10 },
+    )).toBe(1.1);
+    expect(resolveBoundaryTime(
+      range,
+      "end",
+      1.001,
+      createCutBoundaryPolicy("dialog"),
+      { nextStart: 10 },
+    )).toBe(1.001);
+    expect(nudgeBoundaryTime(
+      { start: 1, end: 1.1 },
+      "end",
+      -1,
+      createCutBoundaryPolicy("nudge", { nudgeStep: 0.1 }),
+      { previousEnd: 0, nextStart: 10 },
+    )).toBe(1.1);
+  });
+
+  it("resolves both dialog edges through one policy and media bounds", () => {
+    expect(resolveBoundaryRange(
+      { start: 1.234, end: 1.235 },
+      createCutBoundaryPolicy("dialog"),
+      { previousEnd: 0, nextStart: 10 },
+    )).toEqual({ start: 1.234, end: 1.235 });
+    expect(resolveBoundaryRange(
+      { start: 1, end: 10.001 },
+      createCutBoundaryPolicy("dialog"),
+      { previousEnd: 0, nextStart: 10 },
+    )).toBeNull();
+  });
+
+  it("applies minimum-duration and neighbor constraints after a policy snap", () => {
+    const policy = {
+      minimumDuration: 0.1,
+      strict: true,
+      snap: (value: number, context: { minimum: number; maximum: number }) => {
+        const candidate = Math.round(value * 4) / 4;
+        return candidate > context.minimum && candidate < context.maximum ? candidate : null;
+      },
+    };
+    expect(resolveBoundaryTime(
+      { start: 2, end: 4 },
+      "start",
+      1.64,
+      policy,
+      { previousEnd: 1 },
+    )).toBe(1.75);
+    expect(resolveBoundaryTime(
+      { start: 2, end: 4 },
+      "end",
+      5.2,
+      policy,
+      { nextStart: 5 },
+    )).toBeNull();
+  });
+
+  it("keeps the existing single-epsilon Sub edge predicate for snap and nudge", () => {
+    const nearEnd = 1 - 1.5e-6;
+    const grid: RhythmGridPoint[] = [0, nearEnd, 1].map((time) => ({
+      time,
+      grid: "quarter-beat" as const,
+      attraction_radius: 0,
+      grid_penalty: 0,
+    }));
+    const policy = createSubtitleBoundaryPolicy(grid);
+    expect(resolveBoundaryTime({ start: 0, end: 1 }, "start", nearEnd, policy)).toBe(nearEnd);
+    expect(nudgeBoundaryTime({ start: 0, end: 1 }, "start", 1, policy)).toBe(nearEnd);
   });
 });

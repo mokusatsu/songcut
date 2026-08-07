@@ -283,6 +283,53 @@ function cleanup(processHandle, cdp) {
       )
     );
     await waitFor(cdp, `!!document.querySelector(".sub-toolbar")`, 120_000, "Sub mode");
+    const subTabFocusState = await evaluate(
+      cdp,
+      `(() => {
+        const active = document.activeElement;
+        const root = document.querySelector("[data-editor-focus-root]");
+        const tab = [...document.querySelectorAll('[role="tab"]')].find((item) => item.textContent.trim() === "Sub");
+        return {
+          activeTag: active?.tagName || null,
+          activeClass: active?.className || null,
+          activeText: active?.textContent?.trim().slice(0, 80) || null,
+          activeIsRoot: active === root,
+          rootTag: root?.tagName || null,
+          rootTabIndex: root?.tabIndex ?? null,
+          tabIndex: tab?.tabIndex ?? null,
+        };
+      })()`
+    );
+    log("SUB_MODE_TAB_FOCUS_STATE", subTabFocusState);
+    const subTabFocus = await waitFor(
+      cdp,
+      `(() => {
+        const active = document.activeElement;
+        const tab = [...document.querySelectorAll('[role="tab"]')].find((item) => item.textContent.trim() === "Sub");
+        return active?.matches("[data-editor-focus-root]") && tab
+          ? { activeTag: active.tagName, activeIsRoot: true, tabIndex: tab.tabIndex }
+          : false;
+      })()`,
+      5000,
+      "Sub mode tab focus restore"
+    );
+    assertPass(subTabFocus.tabIndex === -1, "Sub mode tab remained in the editor tab order.", subTabFocus);
+    log("SUB_MODE_TAB_FOCUS_OK", subTabFocus);
+    const subWaveformDefault = await waitFor(
+      cdp,
+      `(() => {
+        const waveform = document.querySelector(".sub-waveform");
+        const stored = localStorage.getItem("songcut:waveform-display-mode:sub");
+        return waveform?.dataset.waveformMode === "symmetric-peak" &&
+          waveform?.dataset.waveformAmplitudeProfile === "adaptive" &&
+          stored === "symmetric-peak"
+          ? { mode: waveform.dataset.waveformMode, amplitudeProfile: waveform.dataset.waveformAmplitudeProfile, phase: waveform.dataset.waveformPhase, stored }
+          : false;
+      })()`,
+      10_000,
+      "Sub symmetric-peak waveform default"
+    );
+    log("SUB_WAVEFORM_DEFAULT_OK", subWaveformDefault);
     const proxyAfterModeSwitch = await waitFor(
       cdp,
       `(() => {
@@ -571,17 +618,41 @@ function cleanup(processHandle, cdp) {
       projectBytes: fs.statSync(subProjectPath).size,
     });
 
-    const zoomClicked = await evaluate(
+    const zoomButtonPoint = await evaluate(
       cdp,
       `(() => {
         const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
         const zoomGroup = groups[groups.length - 1];
         const buttons = zoomGroup?.querySelectorAll("button");
-        buttons?.[buttons.length - 1]?.click();
-        return !!buttons?.length;
+        const button = buttons?.[buttons.length - 1];
+        if (!button || button.disabled) return null;
+        const rect = button.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       })()`
     );
-    assertPass(zoomClicked, "Sub timeline zoom-in button could not be clicked.");
+    assertPass(zoomButtonPoint, "Sub timeline zoom-in button could not be clicked.");
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: zoomButtonPoint.x, y: zoomButtonPoint.y });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: zoomButtonPoint.x, y: zoomButtonPoint.y, button: "left", clickCount: 1 });
+    await sleep(60);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: zoomButtonPoint.x, y: zoomButtonPoint.y, button: "left", clickCount: 1 });
+    await sleep(300);
+    const subActionFocus = await waitFor(
+      cdp,
+      `(() => {
+        const active = document.activeElement;
+        const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
+        const zoomGroup = groups[groups.length - 1];
+        const buttons = zoomGroup?.querySelectorAll("button");
+        const button = buttons?.[buttons.length - 1];
+        return active?.matches("[data-editor-focus-root]") && button
+          ? { activeTag: active.tagName, activeIsRoot: true, actionTabIndex: button.tabIndex }
+          : false;
+      })()`,
+      5000,
+      "Sub editor action focus restore"
+    );
+    assertPass(subActionFocus.actionTabIndex === -1, "Sub editor action remained in the tab order.", subActionFocus);
+    log("SUB_EDITOR_ACTION_FOCUS_OK", subActionFocus);
     await waitFor(
       cdp,
       `document.querySelector(".sub-timeline-content")?.getBoundingClientRect().width >
@@ -1099,14 +1170,14 @@ function cleanup(processHandle, cdp) {
     assertPass(effectDialogOpened, "Subtitle style dialog could not be reopened.");
     await waitFor(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] select[aria-label="エフェクト種類"]') !== null`,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-section select') !== null`,
       10_000,
       "subtitle effect selector"
     );
     const effectConfigured = await evaluate(
       cdp,
       `(() => {
-        const select = document.querySelector('[role="dialog"][aria-label="字幕スタイル"] select[aria-label="エフェクト種類"]');
+        const select = document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-section select');
         if (!select) return false;
         const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
         setter.call(select, "fad");
@@ -1332,7 +1403,7 @@ function cleanup(processHandle, cdp) {
       `(() => {
         const label = [...document.querySelectorAll(".lyrics-label")].find((item) => item.textContent.trim() === ${JSON.stringify(firstLyrics.text)});
         label?.click();
-        const button = [...document.querySelectorAll("button")].find((item) => item.title === "終点を再生");
+        const button = document.querySelector('.sub-toolbar .boundary-controls button[aria-keyshortcuts="D"]');
         button?.click();
         return {
           clicked: !!label && !!button,

@@ -9,19 +9,52 @@ import { HelpTooltip } from "@/components/HelpTooltip";
 import type { AnalysisDevice, DemucsStatus, MmsStatus, WhisperSettings, WhisperStatus } from "@/lib/api";
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
+import type { AppMode } from "@/lib/modes";
+import type { WaveformDisplayModes } from "@/lib/waveformPreferences";
+import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
 import type { WaveformDisplayMode } from "@/types";
 import { currentUiLanguage, tr, type UiLanguagePreference } from "@/i18n";
+import type { SettingsScope } from "@/lib/settingsScopes";
 
 const inferenceDevices = ["auto", "npu", "gpu", "cpu"] as const;
 export type SettingsTab = "common" | "cut" | "sub" | "ai-models";
 
+/** Ownership labels for every persisted control rendered by this dialog. */
+export const SETTINGS_CONTROL_SCOPES = {
+  scratchPreviewMilliseconds: "app",
+  scratchAudioProxyEnabled: "app",
+  localePreference: "app",
+  waveformDisplayModeCut: "mode",
+  waveformDisplayModeSub: "mode",
+  cutWaveformAmplitudeProfile: "mode",
+  boundaryRefinementSettings: "mode",
+  analysisDevice: "project",
+  whisperSettings: "project",
+  lyricsAlignmentAlgorithm: "project",
+  filenameTemplate: "project",
+} as const satisfies Record<string, SettingsScope>;
+
+export const SETTINGS_DIALOG_SCOPE_BY_TAB: Record<SettingsTab, readonly SettingsScope[]> = {
+  common: ["app"],
+  cut: ["mode", "project"],
+  sub: ["mode", "project"],
+  "ai-models": ["project"],
+};
+
+/** `settingsScopesForTab`で指定された変更を不変更新として状態へ反映する。 */
+export function settingsScopesForTab(tab: SettingsTab): readonly SettingsScope[] {
+  return SETTINGS_DIALOG_SCOPE_BY_TAB[tab];
+}
+
+/** `SettingsDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SettingsDialog(props: {
   open: boolean;
   initialTab: SettingsTab;
   apiReady: boolean;
   scratchPreviewMillisecondsInput: string;
   scratchAudioProxyEnabled: boolean;
-  waveformDisplayMode: WaveformDisplayMode;
+  waveformDisplayModes: WaveformDisplayModes;
+  cutWaveformAmplitudeProfile: CutWaveformAmplitudeProfile;
   analysisDevice: AnalysisDevice;
   boundaryRefinementSettings: BoundaryRefinementSettings;
   filenameTemplate: string;
@@ -41,7 +74,8 @@ export function SettingsDialog(props: {
   onClose: () => void;
   onScratchPreviewMillisecondsInput: (value: string) => void;
   onScratchAudioProxyEnabled: (enabled: boolean) => void;
-  onWaveformDisplayMode: (mode: WaveformDisplayMode) => void;
+  onWaveformDisplayMode: (appMode: AppMode, displayMode: WaveformDisplayMode) => void;
+  onCutWaveformAmplitudeProfile: (profile: CutWaveformAmplitudeProfile) => void;
   onAnalysisDevice: (device: AnalysisDevice) => void;
   onBoundaryRefinementSettings: (settings: BoundaryRefinementSettings) => void;
   onFilenameTemplate: (value: string) => void;
@@ -135,20 +169,13 @@ export function SettingsDialog(props: {
             </TabsContent>
 
             <TabsContent value="cut">
-              <section className="settings-section">
-                <h3>{tr("settings.display")}</h3>
-                <label className="settings-field">
-                  <span>{tr("settings.waveform")}</span>
-                  <select
-                    value={props.waveformDisplayMode}
-                    onChange={(event) => props.onWaveformDisplayMode(event.currentTarget.value as WaveformDisplayMode)}
-                  >
-                    <option value="rms">RMS</option>
-                    <option value="peak">{tr("settings.peak")}</option>
-                    <option value="peak-rms">{tr("settings.peakRms")}</option>
-                  </select>
-                </label>
-              </section>
+              <WaveformDisplaySettings
+                appMode="cut"
+                value={props.waveformDisplayModes.cut}
+                onChange={props.onWaveformDisplayMode}
+                amplitudeProfile={props.cutWaveformAmplitudeProfile}
+                onAmplitudeProfile={props.onCutWaveformAmplitudeProfile}
+              />
               <section className="settings-section">
                 <h3>{tr("settings.analysis")}</h3>
                 <label className="settings-field">
@@ -219,6 +246,11 @@ export function SettingsDialog(props: {
             </TabsContent>
 
             <TabsContent value="sub">
+              <WaveformDisplaySettings
+                appMode="sub"
+                value={props.waveformDisplayModes.sub}
+                onChange={props.onWaveformDisplayMode}
+              />
               <section className="settings-section">
                 <h3>{tr("whisper.lyricsAlignmentAlgorithm")}</h3>
                 <label className="settings-field">
@@ -361,6 +393,49 @@ export function SettingsDialog(props: {
         <Button onClick={props.onClose}>{tr("common.done")}</Button>
       </div>
     </Dialog>
+  );
+}
+
+function WaveformDisplaySettings(props: {
+  appMode: AppMode;
+  value: WaveformDisplayMode;
+  onChange: (appMode: AppMode, displayMode: WaveformDisplayMode) => void;
+  amplitudeProfile?: CutWaveformAmplitudeProfile;
+  onAmplitudeProfile?: (profile: CutWaveformAmplitudeProfile) => void;
+}) {
+  return (
+    <section className="settings-section">
+      <h3>{tr("settings.display")}</h3>
+      <label className="settings-field">
+        <span>{tr("settings.waveform")}</span>
+        <select
+          value={props.value}
+          onChange={(event) => props.onChange(props.appMode, event.currentTarget.value as WaveformDisplayMode)}
+        >
+          <option value="rms">RMS</option>
+          <option value="peak">{tr("settings.peak")}</option>
+          <option value="peak-rms">{tr("settings.peakRms")}</option>
+          <option value="symmetric-peak">{tr("settings.symmetricPeak")}</option>
+        </select>
+      </label>
+      {props.appMode === "cut" && props.amplitudeProfile && props.onAmplitudeProfile ? (
+        <>
+          <label className="settings-field">
+            <span>{tr("settings.waveformAmplitudeRange")}</span>
+            <select
+              value={props.amplitudeProfile}
+              onChange={(event) =>
+                props.onAmplitudeProfile?.(event.currentTarget.value as CutWaveformAmplitudeProfile)
+              }
+            >
+              <option value="adaptive">{tr("settings.waveformAmplitudeStandard")}</option>
+              <option value="singing-mc-contrast">{tr("settings.waveformAmplitudeSingingMc")}</option>
+            </select>
+          </label>
+          <span className="settings-field-help">{tr("settings.waveformAmplitudeSingingMcHelp")}</span>
+        </>
+      ) : null}
+    </section>
   );
 }
 

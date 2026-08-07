@@ -12,6 +12,7 @@ export type TimestampExportItem = {
   end: number;
 };
 
+/** `buildTimestampExportText`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function buildTimestampExportText(items: readonly TimestampExportItem[], format: TimestampExportFormat) {
   if (items.length === 0) return "";
   const rows = items.map((item) => formatTimestampExportItem(item, format));

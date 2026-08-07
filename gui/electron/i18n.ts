@@ -159,6 +159,7 @@ export const mainTranslations = { en, ja } as const;
 
 export const mainI18n = createInstance();
 
+/** `initializeMainI18n`で翻訳resourceとlocaleを初期化し、i18n instanceを利用可能にする。 */
 export async function initializeMainI18n(language: UiLanguage) {
   await mainI18n.init({
     lng: language,

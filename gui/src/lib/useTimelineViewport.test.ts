@@ -6,6 +6,21 @@ import {
 } from "@/lib/useTimelineViewport";
 
 describe("timelineFollowScrollLeft", () => {
+  it("keeps the shared follow policy identical for Cut and Sub timelines", () => {
+    const input = {
+      scrollLeft: 200,
+      viewportWidth: 100,
+      contentWidth: 1000,
+      playheadX: 295,
+      playing: true,
+      editing: false,
+    };
+
+    for (const mode of ["cut", "sub"] as const) {
+      expect({ mode, scrollLeft: timelineFollowScrollLeft(input) }).toEqual({ mode, scrollLeft: 225 });
+    }
+  });
+
   it("keeps a playing cursor inside the 10-90% safe region", () => {
     expect(
       timelineFollowScrollLeft({

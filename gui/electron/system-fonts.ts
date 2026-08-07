@@ -8,6 +8,7 @@ const FONT_QUERY =
 
 let cachedFonts: string[] | null = null;
 
+/** `listSystemFonts`で利用可能な候補をplatformまたは状態から列挙して返す。 */
 export async function listSystemFonts(): Promise<string[]> {
   if (cachedFonts) return cachedFonts;
   const output = await runPowerShell(FONT_QUERY);

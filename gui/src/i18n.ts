@@ -13,7 +13,9 @@ const en = {
   },
   settings: {
     title: "Settings", commonTab: "Common", aiModelsTab: "AI Models", playback: "Playback", scratchDuration: "Scratch preview duration",
-    useProxy: "Use scratch audio proxy", waveform: "Waveform display", peak: "Peak Envelope", peakRms: "Peak + RMS",
+    useProxy: "Use scratch audio proxy", waveform: "Waveform display", peak: "Peak Envelope", peakRms: "Peak + RMS", symmetricPeak: "Symmetric Peak",
+    waveformAmplitudeRange: "Amplitude range", waveformAmplitudeStandard: "Standard", waveformAmplitudeSingingMc: "Singing / MC Contrast",
+    waveformAmplitudeSingingMcHelp: "Shows sustained music and singing more boldly while keeping MC and quieter sections thinner. Useful for spotting where songs and talk segments begin and end.",
     display: "Display", analysis: "Analysis", transcription: "Transcription",
     analysisDevice: "Singing analysis device", whisper: "Speech transcription (Whisper)", demucs: "Vocal separation (Demucs)", mms: "Local onset recognition (MMS)", export: "Export",
     filenameTemplate: "Filename template", placeholders: "Available placeholders: {{placeholders}}",
@@ -64,7 +66,7 @@ const en = {
     copiedLines_one: "Copied {{count}} timestamp line to the clipboard.",
     copiedLines_other: "Copied {{count}} timestamp lines to the clipboard.",
     proxyEnabled: "Scratch audio proxy enabled.", proxyDisabled: "Scratch audio proxy disabled.",
-    waveformSet: "Waveform display set to {{mode}}.", analysisDeviceSet: "Singing analysis device set to {{device}}.",
+    waveformSet: "{{appMode}} waveform display set to {{mode}}.", waveformAmplitudeSet: "Cut waveform amplitude range set to {{profile}}.", analysisDeviceSet: "Singing analysis device set to {{device}}.",
     sourceMissing: "Source media is missing.", projectNotFound: "Project not found: {{path}}",
     saving: "Saving…", saved: "Saved", recoveryOnly: "Recovery only", saveFailed: "Save failed", unsaved: "Unsaved changes", saveError: "Save error", noProject: "No project", idle: "Idle",
     waveformFinalizing: "Waveform: Finalizing", waveformReady: "Waveform: Ready", waveformUnavailable: "Waveform: Unavailable",
@@ -75,6 +77,7 @@ const en = {
   controls: {
     playStart: "Play start boundary (A)", playEnd: "Play end boundary (D)", boundarySeconds: "Boundary seconds",
     nudgeLeft: "Nudge nearest boundary left (Q)", nudgeRight: "Nudge nearest boundary right (E)",
+    nudgeRhythmLeft: "Snap the selected boundary to the previous quarter beat (Q)", nudgeRhythmRight: "Snap the selected boundary to the next quarter beat (E)",
     nudgeSeconds: "Boundary nudge seconds", start: "Start", previous: "Previous boundary (Ctrl+A)",
     play: "Play (Space)", pause: "Pause (Space)", next: "Next boundary (Ctrl+D)", zoomOut: "Zoom out (Z)",
     zoomReset: "100% zoom (X)", zoomIn: "Zoom in (C)", retryWaveform: "Retry",
@@ -162,7 +165,7 @@ const en = {
     whisperDownloading: "Downloading Whisper {{model}}.", whisperReady: "Whisper {{model}} model ready.",
     demucsDownloading: "Downloading OpenVINO Demucs.", demucsReady: "OpenVINO Demucs model ready.",
     mmsDownloading: "Downloading the MMS forced aligner.", mmsReady: "MMS forced aligner ready.",
-    exportingItem: "Exporting {{id}}.", proxyPreparing: "Preparing AAC scratch proxy.", proxyCreating: "Creating AAC scratch proxy.", proxyReady: "Scratch proxy ready.", proxyCancelled: "Scratch proxy generation cancelled.",
+    exportingItem: "Exporting {{id}}.", exportingItemProgress: "Exporting {{title}} ({{current}}/{{total}})", proxyPreparing: "Preparing AAC scratch proxy.", proxyCreating: "Creating AAC scratch proxy.", proxyReady: "Scratch proxy ready.", proxyCancelled: "Scratch proxy generation cancelled.",
     lyricsSeparatingVocals: "Separating vocals with Demucs.", lyricsTranscribingVocals: "Transcribing isolated vocals.",
     lyricsAligning: "Aligning lyrics.", lyricsRefiningOnset: "Refining missed lyric onsets with MMS.", lyricsDetectingRhythm: "Detecting rhythm grid.", lyricsComplete: "Lyrics analysis complete.",
     loadingVideo: "Loading video.", videoLoaded: "Video loaded and project created.", projectLoaded: "Project loaded.",
@@ -182,6 +185,52 @@ const en = {
     droppedProjectPath: "Could not read the dropped project path.", droppedFilePath: "Could not read the dropped file path.",
     unexpectedError: "The operation failed. Technical details: {{detail}}",
   },
+  sub: {
+    timeline: "Timeline", segment: "Segment",
+    lyricsPasteTitle: "Paste lyrics", lyricsPlaceholder: "Song title (optional)\n\nFirst lyric line\nSecond lyric line",
+    lyricsAnalyzeTitle: "Analyze lyrics", subtitleExportTitle: "Export subtitles",
+    subtitlePositionTitle: "Choose subtitle position", subtitleStyleTitle: "Subtitle style",
+    removeLaneConfirm: "Remove this timeline and its subtitles?",
+    subtitleRenderPreparing: "Preparing subtitle preview images…",
+    subtitleRenderFailed: "Subtitle preview image generation failed",
+    lyricsAnalysisPreparing: "Preparing lyrics analysis…", lyricsAnalysisFailed: "Lyrics analysis failed",
+    lyricsAnalysisCompleteWithBeatWarning: "Lyrics analysis complete. Beat detection unavailable: {{warning}}",
+    lyricsAnalysisComplete: "Lyrics analysis complete. {{lines}} lines, BPM {{bpm}}",
+    modelDownloadFailed: "Analysis model download failed: {{detail}}",
+    subtitleExportPreparing: "Preparing subtitle export…", subtitleExportFailed: "Subtitle export failed",
+    subtitleExportComplete: "Subtitle video exported: {{video}}",
+    laneReplaceConfirm: "Replace subtitles in {{lane}} with the analysis result?",
+    titleReplaceConfirm: "Replace {{lane}} for the title?",
+    closeHidden: "Hide", closeTerminal: "Close", cancel: "Cancel", analyzeAction: "Analyze",
+    presetSaved: "Saved “{{name}}”.", presetSaveFailed: "Could not save style: {{detail}}", presetApplied: "Applied “{{name}}”.",
+    savedStyles: "Saved styles", savedStyleLabel: "Saved styles", styleSelectPlaceholder: "Select a style",
+    applyStyle: "Apply", styleNameLabel: "Style name", styleNamePlaceholder: "Style name", save: "Save",
+    fontAndColor: "Font and color", font: "Font", textColor: "Text", backgroundColor: "Background", outlineColor: "Outline",
+    bold: "Bold", italic: "Italic", fontsLoading: "Loading OS fonts…", fontsFailed: "Could not load the font list.",
+    displayPosition: "Display position", size: "Size", outlineWidth: "Outline width", shadow: "Shadow",
+    horizontalMargin: "Horizontal margin", verticalMargin: "Vertical margin",
+    outputEffects: "Output effects", outputEffectsHelp: "Applied only during export; not shown in the editing preview.",
+    effectType: "Type", effectStartDuration: "Start duration (ms)", effectEndDuration: "End duration (ms)",
+    shortSubtitleHelp: "For short subtitles, durations are shortened to fit while preserving their ratio.",
+    effect: {
+      cut: "None (cut)", fad: "Standard fade", fade: "Multi-stage fade", alpha: "Opacity animation", zoom: "Zoom",
+      pop: "Pop", bounce: "Bounce", slide: "Slide", wipe: "Wipe", blur: "Blur", rotate: "Rotate", flip: "3D flip",
+      spacing: "Character spacing", stretch: "Stretch", outline: "Outline", glow: "Glow", flicker: "Flicker",
+      typewriter: "Typewriter", karaoke: "Karaoke sweep", scanline: "Scanline", distort: "Distortion", glitch: "Glitch", dissolve: "Dissolve",
+      param: {
+        min_scale: "Minimum scale (%)", overshoot: "Maximum scale (%)", peak: "Peak scale (%)", valley: "Valley scale (%)",
+        rebound: "Rebound scale (%)", radius: "Blur radius", direction: "Direction", degrees: "Rotation angle",
+        spacing: "Character spacing", border: "Outline width", color: "Glow color", interval_ms: "Flicker interval (ms)",
+        seed: "Random seed", steps: "Number of divisions", softness_ms: "Softness (ms)", amount: "Distortion amount",
+        slices: "Number of slices", intensity: "Intensity", columns: "Columns", rows: "Rows", blur: "Blur",
+      },
+      option: {
+        clockwise: "Clockwise", counterclockwise: "Counterclockwise", left_to_right: "Left to right",
+        right_to_left: "Right to left", top_to_bottom: "Top to bottom", bottom_to_top: "Bottom to top",
+        horizontal: "Horizontal", vertical: "Vertical",
+      },
+    },
+  },
   filename: {
     empty: "Filename template cannot be empty.", unsupported: "Unsupported placeholder: {{placeholders}}",
     unmatched: "Filename template contains an unmatched brace.",
@@ -199,7 +248,9 @@ const ja: TranslationShape<typeof en> = {
   },
   settings: {
     title: "設定", commonTab: "共通", aiModelsTab: "AIモデル", playback: "再生", scratchDuration: "スクラッチ試聴時間",
-    useProxy: "スクラッチ音声プロキシを使用", waveform: "波形表示", peak: "ピーク包絡", peakRms: "ピーク + RMS",
+    useProxy: "スクラッチ音声プロキシを使用", waveform: "波形表示", peak: "ピーク包絡", peakRms: "ピーク + RMS", symmetricPeak: "対称ピーク",
+    waveformAmplitudeRange: "振幅レンジ", waveformAmplitudeStandard: "標準", waveformAmplitudeSingingMc: "歌唱・MC強調",
+    waveformAmplitudeSingingMcHelp: "歌や伴奏が続く部分を太く、MCや静かな部分を細く表示します。曲中の歌唱区間とトーク区間を見分けたいときに適しています。",
     display: "表示", analysis: "解析", transcription: "文字起こし",
     analysisDevice: "歌唱解析デバイス", whisper: "音声文字起こし（Whisper）", demucs: "ボーカル分離（Demucs）", mms: "歌い出し局所音声認識（MMS）", export: "書き出し",
     filenameTemplate: "ファイル名テンプレート", placeholders: "使用可能なプレースホルダー: {{placeholders}}",
@@ -250,7 +301,7 @@ const ja: TranslationShape<typeof en> = {
     copiedLines_one: "タイムスタンプ {{count}} 行をクリップボードへコピーしました。",
     copiedLines_other: "タイムスタンプ {{count}} 行をクリップボードへコピーしました。",
     proxyEnabled: "スクラッチ音声プロキシを有効にしました。", proxyDisabled: "スクラッチ音声プロキシを無効にしました。",
-    waveformSet: "波形表示を {{mode}} に設定しました。", analysisDeviceSet: "歌唱解析デバイスを {{device}} に設定しました。",
+    waveformSet: "{{appMode}} の波形表示を {{mode}} に設定しました。", waveformAmplitudeSet: "Cut の振幅レンジを {{profile}} に設定しました。", analysisDeviceSet: "歌唱解析デバイスを {{device}} に設定しました。",
     sourceMissing: "ソースメディアがありません。", projectNotFound: "プロジェクトが見つかりません: {{path}}",
     saving: "保存中…", saved: "保存済み", recoveryOnly: "復元データのみ", saveFailed: "保存失敗", unsaved: "未保存の変更", saveError: "保存エラー", noProject: "プロジェクトなし", idle: "待機中",
     waveformFinalizing: "波形: 仕上げ中", waveformReady: "波形: 準備完了", waveformUnavailable: "波形: 利用不可",
@@ -261,6 +312,7 @@ const ja: TranslationShape<typeof en> = {
   controls: {
     playStart: "開始境界を再生 (A)", playEnd: "終了境界を再生 (D)", boundarySeconds: "境界の試聴秒数",
     nudgeLeft: "最寄りの境界を左へ微調整 (Q)", nudgeRight: "最寄りの境界を右へ微調整 (E)",
+    nudgeRhythmLeft: "選択境界を前の1/4拍へ移動 (Q)", nudgeRhythmRight: "選択境界を次の1/4拍へ移動 (E)",
     nudgeSeconds: "境界の微調整秒数", start: "先頭へ", previous: "前の境界 (Ctrl+A)",
     play: "再生 (Space)", pause: "一時停止 (Space)", next: "次の境界 (Ctrl+D)", zoomOut: "縮小 (Z)",
     zoomReset: "100% に戻す (X)", zoomIn: "拡大 (C)", retryWaveform: "再試行",
@@ -348,7 +400,7 @@ const ja: TranslationShape<typeof en> = {
     whisperDownloading: "Whisper {{model}} をダウンロードしています。", whisperReady: "Whisper {{model}} モデルの準備ができました。",
     demucsDownloading: "OpenVINO Demucs をダウンロードしています。", demucsReady: "OpenVINO Demucs モデルの準備ができました。",
     mmsDownloading: "MMS 強制アラインメントモデルをダウンロードしています。", mmsReady: "MMS 強制アラインメントモデルの準備ができました。",
-    exportingItem: "{{id}} を書き出しています。", proxyPreparing: "AAC スクラッチプロキシを準備しています。", proxyCreating: "AAC スクラッチプロキシを作成しています。", proxyReady: "スクラッチプロキシの準備ができました。", proxyCancelled: "スクラッチプロキシ生成をキャンセルしました。",
+    exportingItem: "{{id}} を書き出しています。", exportingItemProgress: "{{title}} を書き出しています ({{current}}/{{total}})", proxyPreparing: "AAC スクラッチプロキシを準備しています。", proxyCreating: "AAC スクラッチプロキシを作成しています。", proxyReady: "スクラッチプロキシの準備ができました。", proxyCancelled: "スクラッチプロキシ生成をキャンセルしました。",
     lyricsSeparatingVocals: "Demucs でボーカルを分離しています。", lyricsTranscribingVocals: "分離したボーカルを文字起こししています。",
     lyricsAligning: "歌詞のタイミングを調整しています。", lyricsRefiningOnset: "MMSで取り逃した歌い出しを補正しています。", lyricsDetectingRhythm: "拍グリッドを検出しています。", lyricsComplete: "歌詞解析が完了しました。",
     loadingVideo: "動画を読み込んでいます。", videoLoaded: "動画を読み込み、プロジェクトを作成しました。", projectLoaded: "プロジェクトを読み込みました。",
@@ -368,6 +420,52 @@ const ja: TranslationShape<typeof en> = {
     droppedProjectPath: "ドロップされたプロジェクトのパスを取得できませんでした。", droppedFilePath: "ドロップされたファイルのパスを取得できませんでした。",
     unexpectedError: "操作に失敗しました。技術情報: {{detail}}",
   },
+  sub: {
+    timeline: "タイムライン", segment: "セグメント",
+    lyricsPasteTitle: "歌詞を貼り付け", lyricsPlaceholder: "曲名（任意）\n\n歌詞1行目\n歌詞2行目",
+    lyricsAnalyzeTitle: "歌詞を解析", subtitleExportTitle: "字幕を書き出し",
+    subtitlePositionTitle: "字幕位置を選択", subtitleStyleTitle: "字幕スタイル",
+    removeLaneConfirm: "このタイムラインと字幕を削除しますか？",
+    subtitleRenderPreparing: "字幕プレビュー画像を準備しています…",
+    subtitleRenderFailed: "字幕プレビュー画像の生成に失敗しました",
+    lyricsAnalysisPreparing: "歌詞解析を準備しています…", lyricsAnalysisFailed: "歌詞解析に失敗しました",
+    lyricsAnalysisCompleteWithBeatWarning: "歌詞解析が完了しました。拍検出を利用できません: {{warning}}",
+    lyricsAnalysisComplete: "歌詞解析が完了しました。{{lines}}行、BPM {{bpm}}",
+    modelDownloadFailed: "解析モデルのダウンロードに失敗しました: {{detail}}",
+    subtitleExportPreparing: "字幕書き出しを準備しています…", subtitleExportFailed: "字幕書き出しに失敗しました",
+    subtitleExportComplete: "字幕動画を書き出しました: {{video}}",
+    laneReplaceConfirm: "{{lane}} の字幕を解析結果で置換しますか？",
+    titleReplaceConfirm: "{{lane}} をタイトル用に置換しますか？",
+    closeHidden: "隠す", closeTerminal: "閉じる", cancel: "キャンセル", analyzeAction: "解析",
+    presetSaved: "「{{name}}」を保存しました。", presetSaveFailed: "スタイルを保存できませんでした: {{detail}}", presetApplied: "「{{name}}」を反映しました。",
+    savedStyles: "保存スタイル", savedStyleLabel: "保存スタイル", styleSelectPlaceholder: "スタイルを選択",
+    applyStyle: "反映", styleNameLabel: "スタイル名", styleNamePlaceholder: "スタイル名", save: "保存",
+    fontAndColor: "書体と色", font: "フォント", textColor: "文字", backgroundColor: "背景", outlineColor: "縁",
+    bold: "太字", italic: "斜体", fontsLoading: "OSのフォント一覧を読み込んでいます…", fontsFailed: "フォント一覧を取得できませんでした。",
+    displayPosition: "表示位置", size: "サイズ", outlineWidth: "縁幅", shadow: "影",
+    horizontalMargin: "左右余白", verticalMargin: "上下余白",
+    outputEffects: "出力エフェクト", outputEffectsHelp: "書き出し時だけ適用され、編集中のプレビューには表示されません。",
+    effectType: "種類", effectStartDuration: "開始長さ（ms）", effectEndDuration: "終了長さ（ms）",
+    shortSubtitleHelp: "短い字幕では、開始長さと終了長さの比率を保ったまま区間内へ自動短縮します。",
+    effect: {
+      cut: "なし（カット）", fad: "通常フェード", fade: "多段階フェード", alpha: "透明度アニメーション", zoom: "ズーム",
+      pop: "ポップ", bounce: "バウンス", slide: "スライド", wipe: "ワイプ", blur: "ブラー", rotate: "回転", flip: "3Dフリップ",
+      spacing: "文字間隔", stretch: "ストレッチ", outline: "輪郭", glow: "グロー", flicker: "フリッカー",
+      typewriter: "タイプライター", karaoke: "カラオケ・スイープ", scanline: "スキャンライン", distort: "ディストーション", glitch: "グリッチ", dissolve: "ディゾルブ",
+      param: {
+        min_scale: "最小倍率（%）", overshoot: "最大倍率（%）", peak: "ピーク倍率（%）", valley: "谷倍率（%）",
+        rebound: "反発倍率（%）", radius: "ブラー半径", direction: "方向", degrees: "回転角度",
+        spacing: "文字間隔", border: "輪郭幅", color: "発光色", interval_ms: "点滅間隔（ms）",
+        seed: "乱数シード", steps: "分割数", softness_ms: "柔らかさ（ms）", amount: "歪み量",
+        slices: "スライス数", intensity: "強度", columns: "列数", rows: "行数", blur: "ブラー",
+      },
+      option: {
+        clockwise: "時計回り", counterclockwise: "反時計回り", left_to_right: "左から右",
+        right_to_left: "右から左", top_to_bottom: "上から下", bottom_to_top: "下から上",
+        horizontal: "水平", vertical: "垂直",
+      },
+    },
+  },
   filename: {
     empty: "ファイル名テンプレートを空にはできません。", unsupported: "未対応のプレースホルダー: {{placeholders}}",
     unmatched: "ファイル名テンプレートの波括弧が対応していません。",
@@ -376,6 +474,7 @@ const ja: TranslationShape<typeof en> = {
 
 export const rendererTranslations = { en, ja } as const;
 
+/** `initializeRendererI18n`で翻訳resourceとlocaleを初期化し、i18n instanceを利用可能にする。 */
 export async function initializeRendererI18n(language: UiLanguage) {
   await i18next.use(initReactI18next).init({
     lng: language,
@@ -387,14 +486,17 @@ export async function initializeRendererI18n(language: UiLanguage) {
   if (typeof document !== "undefined") document.documentElement.lang = language;
 }
 
+/** 翻訳keyと置換値から、現在のrenderer localeに対応する表示文言を返す。 */
 export function tr(key: string, options?: TOptions) {
   return String(i18next.t(key, options));
 }
 
+/** `currentUiLanguage`の候補と条件から、利用すべき値または操作を決定する。 */
 export function currentUiLanguage(): UiLanguage {
   return i18next.resolvedLanguage === "ja" ? "ja" : "en";
 }
 
+/** `localizeJobMessage`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeJobMessage(job: { message?: string; message_code?: string; message_args?: Record<string, string | number> } | null | undefined) {
   if (!job) return "";
   if (job.message_code && i18next.exists(`messages.${job.message_code}`)) {
@@ -403,6 +505,7 @@ export function localizeJobMessage(job: { message?: string; message_code?: strin
   return job.message ?? "";
 }
 
+/** `localizeFilenameTemplateError`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeFilenameTemplateError(error: string | null) {
   if (!error) return null;
   if (error === "Filename template cannot be empty.") return tr("filename.empty");
@@ -439,6 +542,7 @@ const knownUiMessages: Record<string, string> = {
   "Could not read the dropped file path.": "messages.droppedFilePath",
 };
 
+/** `localizeUiMessage`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function localizeUiMessage(message: string) {
   if (!message || currentUiLanguage() === "en" || /[\u3040-\u30ff\u3400-\u9fff]/.test(message)) return message;
   const key = knownUiMessages[message];

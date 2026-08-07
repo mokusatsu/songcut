@@ -1,0 +1,23 @@
+# SCUT-015 共通部品contract testと配布版回帰確認
+
+- 目的: P0〜P3全体を自動テストと実アプリ経路で検証し、残る未確認事項を明示する。
+- 変更範囲: component tests、E2E scriptsは必要最小限、task list証拠。
+- 禁止事項: テストを通すための機能弱体化、既存E2E成功条件の削除。
+- 完了条件:
+  - `pnpm run typecheck`、`pnpm test`、`pnpm run build`が成功する。
+  - Python `pytest`が利用可能な環境で成功する。
+  - 再ビルド済み配布物でCut `E2E_OK`、Sub `SUB_E2E_OK`を確認するか、実行不能理由を記録して`実環境検証待ち`とする。
+  - 最終差分と対象外の利用者変更を記録する。
+- 停止条件: model/fixture/対話desktopなど外部実環境が不足する場合は、ローカル検証済みとして停止し未確認を明示する。
+- 完了証拠 (2026-08-05):
+  - mode controller、editor commands、boundary policy／drag、TimelineSurface、operation runner、project schema、waveform cache、settings scope、JobProgressDialog、i18nのbehavior contractを35 test files / 229 testsで棚卸しし、網羅を確認した。
+  - `tests/test_cli_integration.py`の任意の未追跡fixture列挙順と固定時刻への依存を除き、parse可能metadata、生成segmentとreview HTML、実動画長内guide反映を決定的に検証するよう修正した。
+  - system `python -m pytest`: 366 passed / 2 skipped、exit 0。同梱Pythonはpytest非搭載のため、既存system Python 3.12.10を利用し追加installは行っていない。
+  - `cd gui; pnpm run typecheck`: exit 0。
+  - `cd gui; pnpm test -- --run`: 35 files / 229 tests passed。
+  - `cd gui; pnpm run build`: exit 0（chunk size warningのみ）。
+  - system Pythonの既存PyInstaller 6.21.0を明示して`packaging/build_dist.ps1`を実行し、version 1.1.57の`dist/songcut-win-x64`を再buildした。
+  - 再build済み配布物でCut通常E2Eを完走し、`out/e2e-dist-smoke.log`の`E2E_OK`を確認した。
+  - Sub E2E初回でローカライズ前のeffect aria selectorがstaleと判明し、成功条件を変えず`.subtitle-effect-section select`へ2箇所を修正した。再実行で実解析39行、2 lanes、confidence、PNG cache、style/effect、overlay、scratch、9象限lane、394.378秒の字幕動画とSRT／style各2本を検証し、`out/e2e-sub-mode/e2e-sub-mode.log`の`SUB_E2E_OK`を確認した。
+  - E2E script 3件の`node --check`: exit 0。`git diff --check`: exit 0。
+  - 既存のドキュメント、画像、`CODEX.md`等の利用者変更は変更対象外として保持し、commitは作成していない。

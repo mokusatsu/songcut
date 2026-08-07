@@ -60,7 +60,7 @@ export type WaveformUpdate = {
   metadata: WaveformMetadata | null;
 };
 
-export type WaveformDisplayMode = "rms" | "peak" | "peak-rms";
+export type WaveformDisplayMode = "rms" | "peak" | "peak-rms" | "symmetric-peak";
 
 export type Transcript = {
   segment_id: string;

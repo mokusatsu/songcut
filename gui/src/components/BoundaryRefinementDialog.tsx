@@ -4,6 +4,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { BoundaryRefinementSummary, BoundarySegmentDiagnostic, Segment } from "@/types";
 import { currentUiLanguage, tr } from "@/i18n";
 
+/** `BoundaryRefinementDialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function BoundaryRefinementDialog(props: {
   open: boolean;
   segment: Segment | null;

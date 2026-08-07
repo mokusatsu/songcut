@@ -3,6 +3,7 @@ import {
   buildWaveformPath,
   buildWaveformPathSpecs,
   buildWaveformPyramid,
+  calculateWaveformAmplitudeScale,
   mergeWaveformPoints,
   normalizeWaveformDisplayMode,
   selectWaveformLevel
@@ -68,12 +69,23 @@ describe("waveform LOD", () => {
     const pathStarted = performance.now();
     const paths = buildWaveformPathSpecs(pyramid[selectedLevel], 24 * 3600, 28800, "peak-rms");
     const pathMilliseconds = performance.now() - pathStarted;
+    const symmetricPathStarted = performance.now();
+    const symmetricPaths = buildWaveformPathSpecs(
+      pyramid[selectedLevel],
+      24 * 3600,
+      28800,
+      "symmetric-peak"
+    );
+    const symmetricPathMilliseconds = performance.now() - symmetricPathStarted;
 
     expect(selectedLevel).toBe(0);
     expect(paths).toHaveLength(2);
+    expect(symmetricPaths).toHaveLength(1);
+    expect(symmetricPaths[0].d.length).toBeGreaterThan(0);
     expect(paths.every((path) => path.d.length > 0)).toBe(true);
     expect(pyramidMilliseconds).toBeLessThan(250);
     expect(pathMilliseconds).toBeLessThan(100);
+    expect(symmetricPathMilliseconds).toBeLessThan(100);
   });
 });
 
@@ -81,20 +93,56 @@ describe("waveform paths and display settings", () => {
   const points = [point(5, -0.1, 0.2, 0.05)];
 
   it("builds one SVG subpath per point", () => {
-    expect(buildWaveformPath(points, 10, 100, "rms")).toBe("M50 -12V98");
-    expect(buildWaveformPath(points, 10, 100, "peak")).toBe("M50 -177V153");
+    expect(buildWaveformPath(points, 10, 100, "rms")).toBe("M50 23V63");
+    expect(buildWaveformPath(points, 10, 100, "peak")).toBe("M50 12.9V58.05");
+    expect(buildWaveformPath(points, 10, 100, "symmetric-peak")).toBe("M50 12.9V73.1");
+    expect(buildWaveformPath([point(5, 0, 0, 0)], 10, 100, "symmetric-peak")).toBe("M50 41V45");
+    expect(buildWaveformPath([point(5, -2, 0.5, 0)], 10, 100, "symmetric-peak")).toBe("M50 3V83");
+  });
+
+  it("uses robust adaptive peak and RMS ranges", () => {
+    const typical = Array.from({ length: 100 }, (_, index) =>
+      point(index, -0.1, 0.1, 0.04)
+    );
+    typical[99] = point(99, -0.8, 0.8, 0.3);
+    const scale = calculateWaveformAmplitudeScale(typical);
+
+    expect(scale.peakGain).toBeCloseTo(301);
+    expect(scale.rmsGain).toBe(400);
+    const path = buildWaveformPath(typical, 100, 100, "symmetric-peak", scale);
+    expect(path).toContain("M0 12.9V73.1");
+    expect(path).toContain("M99 3V83");
+  });
+
+  it("restores the fixed x1100 Cut range without depending on other points", () => {
+    const quiet = point(5, -0.02, 0.02, 0.02);
+    const scale = calculateWaveformAmplitudeScale([quiet], "cut-legacy");
+
+    expect(scale).toEqual({ profile: "cut-legacy", peakGain: 1100, rmsGain: 1100 });
+    expect(buildWaveformPath([quiet], 10, 100, "rms", scale)).toBe("M50 21V65");
+    expect(
+      buildWaveformPath([quiet], 10, 100, "rms", calculateWaveformAmplitudeScale([
+        quiet,
+        point(6, -1, 1, 0.8),
+      ], "cut-legacy"))
+    ).toBe("M50 21V65");
   });
 
   it("builds one active path for single modes and two for the combined mode", () => {
     expect(buildWaveformPathSpecs(points, 10, 100, "rms").map((spec) => spec.kind)).toEqual(["rms"]);
     expect(buildWaveformPathSpecs(points, 10, 100, "peak").map((spec) => spec.kind)).toEqual(["peak"]);
     expect(buildWaveformPathSpecs(points, 10, 100, "peak-rms").map((spec) => spec.kind)).toEqual(["peak", "rms"]);
+    expect(buildWaveformPathSpecs(points, 10, 100, "symmetric-peak").map((spec) => spec.kind)).toEqual([
+      "symmetric-peak",
+    ]);
     expect(buildWaveformPathSpecs(points, 10, 100, "peak-rms")[0].opacity).toBe(0.45);
   });
 
   it("falls back to RMS for unknown persisted values", () => {
     expect(normalizeWaveformDisplayMode("peak")).toBe("peak");
+    expect(normalizeWaveformDisplayMode("symmetric-peak")).toBe("symmetric-peak");
     expect(normalizeWaveformDisplayMode("unexpected")).toBe("rms");
+    expect(normalizeWaveformDisplayMode("unexpected", "symmetric-peak")).toBe("symmetric-peak");
     expect(normalizeWaveformDisplayMode(null)).toBe("rms");
   });
 });

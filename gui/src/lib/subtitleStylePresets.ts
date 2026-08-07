@@ -11,6 +11,7 @@ export type SubtitleStylePreset = {
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
+/** `readSubtitleStylePresets`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readSubtitleStylePresets(storage: StorageLike = window.localStorage): SubtitleStylePreset[] {
   try {
     return parseSubtitleStylePresets(storage.getItem(SUBTITLE_STYLE_PRESETS_STORAGE_KEY));
@@ -19,6 +20,7 @@ export function readSubtitleStylePresets(storage: StorageLike = window.localStor
   }
 }
 
+/** `writeSubtitleStylePresets`の値を検証済みの形式で永続先へ保存する。 */
 export function writeSubtitleStylePresets(
   presets: readonly SubtitleStylePreset[],
   storage: StorageLike = window.localStorage
@@ -32,6 +34,7 @@ export function writeSubtitleStylePresets(
   );
 }
 
+/** `upsertSubtitleStylePreset`で同名presetを置換し、存在しない場合は新規追加する。 */
 export function upsertSubtitleStylePreset(
   presets: readonly SubtitleStylePreset[],
   name: string,
@@ -53,6 +56,7 @@ export function upsertSubtitleStylePreset(
     : [...presets, next].slice(-MAX_PRESETS);
 }
 
+/** `parseSubtitleStylePresets`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseSubtitleStylePresets(raw: string | null): SubtitleStylePreset[] {
   if (!raw) return [];
   try {

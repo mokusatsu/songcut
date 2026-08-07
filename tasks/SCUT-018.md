@@ -1,0 +1,38 @@
+# SCUT-018 Cut/Sub operation coordinator の責務対称化
+
+- 目的: CutとSubで異なる場所にあるoperation orchestrationを同じ階層へ移し、Appを共通session owner、mode panelをpresentation、mode coordinatorを固有operation ownerとして対称化する。
+- 開始証拠 (2026-08-05):
+  - ブランチ`codex/sub-mode`、HEAD `203fdeb9227399dd233de7c8f5850f7577b0e66a`から開始した。
+  - 開始時の既存変更は、再評価計画を追加した`docs/task-list.md`だけであり、production codeとの重複はない。
+  - 開始前の現行GUI baselineはtypecheck成功、37 files／238 tests成功、`git diff --check`成功である。
+- 現状証拠:
+  - Cutの`analysis`、`transcription`、`export`は`App.tsx`内で`operationRunner.run`を呼ぶ。
+  - Subの`lyrics-analysis`、`subtitle-export`は`SubModePanel.tsx`内で`operationRunner.run`を呼ぶ。
+  - 共通`useOperationRunner`は既にtask登録、排他、running／interrupted、成功／失敗を提供しているため、runner自体の再実装は不要である。
+- 変更範囲: 新規`useCutOperations.ts`、`useSubOperations.ts`または同等のmode別coordinator、`App.tsx`、`CutModePanel.tsx`、`SubModePanel.tsx`、operation contract tests。
+- 設計:
+  - 両coordinatorは共通の`OperationRunner`、API base URL、source、task view、message／state adapterを受け取る。
+  - Cut coordinatorは解析、segment転写、clip exportを所有する。
+  - Sub coordinatorは歌詞解析、字幕export、字幕render cache jobを所有する。
+  - panelへは`actions`、`jobs`、`busy`、operation固有の表示用stateだけを渡す。
+  - mode固有resultの反映は各coordinatorに残し、共通runnerへdomain stateを持ち込まない。
+- 禁止事項:
+  - Cut/Sub operationを単一の巨大な`switch(mode)`へ統合しない。
+  - REST endpoint、request／result payload、resume仕様を変更しない。
+  - Cut解析／転写／exportをSub panelへ移したり、Sub解析／exportをCut panelへ移したりしない。
+  - model downloadやwaveform等のapp共通taskをmode coordinatorへ重複実装しない。
+- 完了条件:
+  - `App.tsx`が`startAnalysis`、`startTranscription`、`startExport`を直接呼ばない。
+  - `SubModePanel.tsx`が`startLyricsAnalysis`、`startSubtitleExport`、`startSubtitleRender`、`operationRunner.run`を直接呼ばない。
+  - Cut/Subのforeground operationが同じ共通runnerとtask registryを通る。
+  - running、成功、失敗、interrupted、duplicate-start防止、progress dialogの既存挙動が維持される。
+  - panel propsから生の`OperationRunner`を除去し、action／view contractへ置換する。
+- テスト: coordinator pure contract、runner integration、operation kind／interrupted永続化、全Vitest、typecheck、build、Cut/Sub E2E。
+- 停止条件: operationのresume可否や成功後document状態について新しい製品判断が必要になった場合は、現行契約を維持したまま責務移動だけを行う。
+- 完了証拠 (2026-08-05):
+  - `useCutOperations.ts`がCut解析、手動／background転写、clip exportを所有し、`useSubOperations.ts`が歌詞解析、字幕export、字幕render job、歌詞配置、render cache結果適用を所有する。
+  - `App.tsx`は両coordinatorを同じcomposition層で生成し、state／task adapterを渡す。`SubModePanel.tsx`から生の`OperationRunner`、API base URL、source path、operation API呼出しを除去した。
+  - `App.tsx`／`CutModePanel.tsx`／`SubModePanel.tsx`に対象の`startAnalysis`、`startTranscription`、`startExport`、`startLyricsAnalysis`、`startSubtitleExport`、`startSubtitleRender`、`operationRunner.run`が残っていないことを`rg`で確認した。
+  - `luna_worker`による独立レビューを2回実施し、stale subtitle render taskのclear、最新Sub stateへの解析結果適用、background転写監視のApp外移動、監視中の手動転写排他、未完了監視cleanupを追加した。
+  - coordinator contract 6件を追加し、既存runner contractを含む全Vitestは39 files／244 tests成功、`npm run typecheck`成功、`npm run build`成功、`git diff --check`成功である。
+  - ポータブル版1.1.58を生成し、Cut通常E2Eは`E2E_OK`（解析、background転写、progress dialog、clip／TS export）、Sub実データE2Eは`SUB_E2E_OK`（39字幕、PNG cache、style invalidation、SRT／style sidecar、字幕焼き込み動画）まで成功した。

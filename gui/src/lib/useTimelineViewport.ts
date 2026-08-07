@@ -11,6 +11,7 @@ type FollowScrollInput = {
   editing: boolean;
 };
 
+/** `timelineFollowScrollLeft`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function timelineFollowScrollLeft(input: FollowScrollInput): number {
   if (input.editing || input.viewportWidth <= 0 || input.contentWidth <= input.viewportWidth) {
     return input.scrollLeft;
@@ -41,6 +42,7 @@ type FocusScrollInput = {
   segmentEndX: number;
 };
 
+/** `timelineFocusScrollLeft`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function timelineFocusScrollLeft(input: FocusScrollInput): number {
   const segmentWidth = Math.max(0, input.segmentEndX - input.segmentStartX);
   const viewportEnd = input.scrollLeft + input.viewportWidth;
@@ -58,6 +60,7 @@ export function timelineFocusScrollLeft(input: FocusScrollInput): number {
   return clamp(target, 0, Math.max(0, input.contentWidth - input.viewportWidth));
 }
 
+/** `timelineWheelScrollLeft`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function timelineWheelScrollLeft(
   scrollLeft: number,
   viewportWidth: number,
@@ -95,6 +98,7 @@ type TimelineWheelEvent = Pick<
   "deltaX" | "deltaY" | "deltaMode" | "preventDefault"
 >;
 
+/** `useTimelineViewport`に必要な状態、派生値、副作用をReact hookとしてまとめる。 */
 export function useTimelineViewport(options: UseTimelineViewportOptions) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const handledFocusRequestRef = useRef(0);

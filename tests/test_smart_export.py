@@ -18,6 +18,7 @@ from songcut.smart_export import (
     plan_smart_render,
     probe_keyframes,
     snap_video_range_to_frames,
+    _validate_export,
 )
 
 
@@ -491,6 +492,32 @@ class SmartExportTests(unittest.TestCase):
         result_plan = result["smart_render_plan"]
         self.assertIn("smart render failed", result_plan["fallback_reason"])
         self.assertEqual([(span["mode"], span["start"], span["end"]) for span in result_plan["spans"]], [("encode", 10.0, 20.0)])
+
+    def test_validate_export_rejects_output_without_video_stream(self) -> None:
+        plan = SmartRenderPlan(
+            start=1.0,
+            end=3.0,
+            output_suffix=".mp4",
+            container_family="mp4",
+            video_codec="h264",
+            video_encoder="libx264",
+            audio_encoder="aac",
+            audio_bitrate="192k",
+            source_video_bitrate=1_000_000,
+            reencode_bitrate=1_500_000,
+            has_audio=False,
+            copy_start=None,
+            copy_end=None,
+            keyframes=[],
+            spans=[SmartRenderSpan("encode", 1.0, 3.0)],
+            fallback_reason="test",
+        )
+        with mock.patch(
+            "songcut.smart_export.ffprobe_json",
+            return_value={"format": {"duration": "2.0"}, "streams": []},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "no video stream"):
+                _validate_export(Path("ffprobe"), Path("clip.mp4"), plan)
 
 
 class SmartExportFfmpegIntegrationTests(unittest.TestCase):

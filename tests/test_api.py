@@ -723,6 +723,62 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(completed.result["exported"][0]["id"], "guide-001")
         self.assertEqual(completed.result["exported"][0]["target"], "out/01_Song.mp4")
 
+    def test_export_job_reports_titles_and_selected_item_counts(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["export-progress"] = JobRecord(
+                id="export-progress",
+                kind="export",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+
+        request = ExportRequest(
+            source_path="source.mp4",
+            output_dir="out",
+            items=[
+                ExportItem(id="export-001", title="Opening Theme", filename_stem="01_Opening", start=0.0, end=10.0),
+                ExportItem(id="export-002", title="Hidden", filename_stem="02_Hidden", start=10.0, end=20.0, checked=False),
+                ExportItem(id="export-003", filename_stem="03_Encore", start=20.0, end=30.0),
+            ],
+        )
+
+        with (
+            mock.patch("songcut.api.require_file", return_value="source.mp4"),
+            mock.patch("songcut.api.Path.mkdir"),
+            mock.patch("songcut.api.find_ffmpeg", return_value=SimpleNamespace(ffmpeg="ffmpeg.exe", ffprobe="ffprobe.exe")),
+            mock.patch("songcut.api.export_smart_clip", return_value={"ok": True}),
+            mock.patch("songcut.api.update_job", wraps=update_job) as update_job_spy,
+        ):
+            _export_job("export-progress", request)
+
+        running_updates = [
+            call.kwargs
+            for call in update_job_spy.call_args_list
+            if call.kwargs.get("status") == "running"
+        ]
+        self.assertEqual(
+            running_updates,
+            [
+                {
+                    "status": "running",
+                    "progress": 0.0,
+                    "message": "Exporting Opening Theme (1/2)",
+                    "message_code": "exportingItemProgress",
+                    "message_args": {"title": "Opening Theme", "current": 1, "total": 2},
+                },
+                {
+                    "status": "running",
+                    "progress": 0.5,
+                    "message": "Exporting 03_Encore (2/2)",
+                    "message_code": "exportingItemProgress",
+                    "message_args": {"title": "03_Encore", "current": 2, "total": 2},
+                },
+            ],
+        )
+        self.assertTrue(all("export-" not in update["message"] for update in running_updates))
+
     def test_export_plan_reports_smart_and_full_reencode_items(self) -> None:
         source = Path("source.mp4")
         smart_plan = SimpleNamespace(

@@ -1,0 +1,35 @@
+# SCUT-016 Editor focus policy とショートカット継続
+
+- 目的: Cut/Sub editorの操作ボタンへfocusが残ることでWASD等のeditor shortcutが停止する問題を解消し、両モードで同じfocus契約を使う。
+- 変更範囲: editor focus scope、共通UI primitive、Cut/Subのeditor action、shortcut抑止判定、focus contract tests、GUI設計文書、配布版E2E。
+- 禁止事項:
+  - 設定dialog等のmodal内から通常のkeyboard focusを奪わない。
+  - textarea、text/number input、contenteditableをfocusなしで編集可能とみなさない。
+  - IME composition中のEnter/Escapeをeditor shortcutとして扱わない。
+  - Cut/Subごとに同じfocus復帰処理を複製しない。
+- 完了条件:
+  - editor action controlはTab移動先にならず、pointer/keyboard activation後に共通editor focus anchorへfocusを戻す。
+  - text entry中とmodal表示中はeditor shortcutを抑止し、編集終了後はWASD等が再開する。
+  - dialog/settings内は通常のfocus可能性を維持する。
+  - 後続実装者が判断できるGUI focus policyをrepo文書とagent向け入口に残す。
+- テスト: focus policy unit tests、shortcut tests、全Vitest、typecheck、build、再build済みdistでCut/Sub E2E、`git diff --check`。
+- 停止条件: 対話desktop、model、fixture等が不足して配布版E2Eを実行できない場合は、ローカル検証済みとして理由と未確認範囲を記録する。
+- 開始証拠 (2026-08-05):
+  - ブランチ `codex/sub-mode`、HEAD `64fc0eff00cd1df6c86e4fb52e4f0ed5083c6557` から開始した。
+  - 共通`Button`/`Toggle`等にfocus policyがなく、`shortcuts.ts`がfocus中のbutton/checkbox等をinteractiveとして一律抑止するため、クリック後にWASD等が停止する経路を確認した。
+  - 既存の未コミット変更を利用者作業として保持し、対象ファイルの局所差分だけを追加する。
+- 完了証拠 (2026-08-05):
+  - `EditorFocusProvider`、normal/editor scope、共通editor anchor、native action用hookを追加し、`Button`、`Toggle`、`Checkbox`、`TabsTrigger`とCut/Sub固有のunstyled actionへ同じfocus契約を適用した。
+  - 共通`Tabs`はasync `onValueChange`完了を待ってfocusを戻す。実E2EでRadixが非同期mode hydrate後に`.tabs-list`へfocusを戻す挙動を検出し、Cut/Sub個別処理を増やさず共通rootで解消した。
+  - 共通`Dialog`はnormal focus scope、初期focus、終了時focus復帰を持ち、editor actionから開いた場合は閉じた後にeditor anchorへ戻す。modal表示中の遅延focus競合もguardした。
+  - `Input`/`Textarea`はfocus可能なまま維持し、入力中だけshortcutを抑止する。IME compositionを尊重し、editor内では`Escape`でblurしてanchorへ戻す。waveform/wheel操作開始時も入力focusを共通timelineから終了する。
+  - `shortcuts.ts`を目的ベースへ変更し、modal、text entry、明示`data-editor-shortcuts="suppress"`だけを抑止する。button、checkbox、link、action roleは一律抑止しない。
+  - `docs/GUI_FOCUS_POLICY.ja.md`へ判断表、必須原則、実装方法、IME/dialog/timeline契約、禁止パターン、test checklistを記録し、`CODEX.md`と`docs/INDEX.md`から参照可能にした。
+  - `cd gui; pnpm run typecheck`: exit 0。
+  - `cd gui; pnpm test -- --run`: 37 files / 238 tests passed。
+  - `cd gui; pnpm run build`: exit 0（chunk size warningのみ）。
+  - system PythonのPyInstaller 6.21.0でversion 1.1.57の`dist/songcut-win-x64`を再buildした。
+  - 最終distのCut通常E2Eで`CUT_EDITOR_ACTION_FOCUS_OK`、`EDITOR_INPUT_ESCAPE_FOCUS_OK`、text entry抑止、action継続、modal通常focus/抑止/復帰と最終`E2E_OK`を確認した。
+  - 最終distのSub実データE2Eで`SUB_MODE_TAB_FOCUS_OK`、`SUB_EDITOR_ACTION_FOCUS_OK`と最終`SUB_E2E_OK`を確認した。
+  - E2E script 2件の`node --check`: exit 0。`git diff --check`: exit 0。
+  - 既存の広範な未コミット変更は保持し、commitは作成していない。

@@ -1,11 +1,21 @@
 import { clamp } from "@/lib/time";
 import {
+  nudgeBoundaryTime,
+  resolveBoundaryTime,
+  type BoundaryPolicy,
+  type BoundaryPolicyContext,
+} from "@/lib/boundaries";
+import {
+  nearestRhythmTimeInRange,
+  nudgedRhythmTime,
+} from "@/lib/segmentTiming";
+import { rangesOverlap } from "@/lib/timeRange";
+import {
   DEFAULT_SUBTITLE_EFFECT,
   normalizeSubtitleEffect,
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
 
-export type AppMode = "cut" | "sub";
 export type SubtitleSegmentSource = "lyrics" | "title" | "manual";
 
 export type SubtitleStyle = {
@@ -41,6 +51,19 @@ export type SubtitleRenderCache = {
   png_base64: string;
   width: number;
   height: number;
+};
+
+export type SubtitleRenderRequestItem = {
+  segment_id: string;
+  signature: string;
+  text: string;
+  style: SubtitleStyle;
+};
+
+export type SubtitleRenderRequest = {
+  width: number;
+  height: number;
+  items: SubtitleRenderRequestItem[];
 };
 
 export type LyricsLane = {
@@ -111,6 +134,15 @@ export type SubtitleProjectState = {
   confidence_statistics: ConfidenceStatistics | null;
 };
 
+/** `selectedSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
+export function selectedSubtitleSegment(state: SubtitleProjectState) {
+  for (const lane of state.lanes) {
+    const segment = lane.segments.find((item) => item.id === state.selected_segment_id);
+    if (segment) return { laneId: lane.id, segment };
+  }
+  return null;
+}
+
 export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
   font_name: "Yu Gothic UI",
   font_size: 90,
@@ -134,6 +166,7 @@ export const SUBTITLE_STYLE_LIMITS = {
   margin: { min: 0, max: 4000 },
 } as const;
 
+/** `normalizeSubtitleStyle`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeSubtitleStyle(value: unknown): SubtitleStyle {
   const candidate = value && typeof value === "object"
     ? value as Partial<SubtitleStyle>
@@ -195,6 +228,7 @@ export function normalizeSubtitleStyle(value: unknown): SubtitleStyle {
   };
 }
 
+/** `createLyricsLane`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createLyricsLane(alignment = 2, name?: string): LyricsLane {
   return {
     id: crypto.randomUUID(),
@@ -205,6 +239,7 @@ export function createLyricsLane(alignment = 2, name?: string): LyricsLane {
   };
 }
 
+/** `createDefaultSubtitleState`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createDefaultSubtitleState(): SubtitleProjectState {
   const lane = createLyricsLane(2, "Lyrics 1");
   return {
@@ -219,6 +254,7 @@ export function createDefaultSubtitleState(): SubtitleProjectState {
   };
 }
 
+/** 歌詞解析の各lineを、編集可能な字幕segmentとrender前の初期状態へ変換する。 */
 export function analysisLinesToSegments(result: LyricsAnalysisResult): LyricsSegment[] {
   return result.lines.map((line) => ({
     id: `lyrics-${crypto.randomUUID()}`,
@@ -232,6 +268,7 @@ export function analysisLinesToSegments(result: LyricsAnalysisResult): LyricsSeg
   }));
 }
 
+/** `addFourBeatSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function addFourBeatSegment(
   lane: LyricsLane,
   selectedSegmentId: string | null,
@@ -252,7 +289,7 @@ export function addFourBeatSegment(
   if (endIndex <= startIndex) return null;
   const start = times[startIndex];
   const end = times[endIndex];
-  if (ordered.some((segment) => rangesOverlap(start, end, segment.start, segment.end))) return null;
+  if (ordered.some((segment) => rangesOverlap({ start, end }, segment))) return null;
   return {
     id: `manual-${crypto.randomUUID()}`,
     text: "New subtitle",
@@ -265,6 +302,7 @@ export function addFourBeatSegment(
   };
 }
 
+/** `updateSegmentBoundary`で指定された変更を不変更新として状態へ反映する。 */
 export function updateSegmentBoundary(
   lane: LyricsLane,
   segmentId: string,
@@ -272,20 +310,21 @@ export function updateSegmentBoundary(
   proposedTime: number,
   grid: readonly RhythmGridPoint[],
 ): LyricsLane {
-  const times = normalizedGridTimes(grid);
   const ordered = chronologicalSegments(lane.segments);
   const index = ordered.findIndex((segment) => segment.id === segmentId);
-  if (index < 0 || times.length < 2) return lane;
+  if (index < 0 || normalizedGridTimes(grid).length < 2) return lane;
   const segment = ordered[index];
-  const previousEnd = ordered[index - 1]?.end ?? -Infinity;
-  const nextStart = ordered[index + 1]?.start ?? Infinity;
-  const valid = times.filter((time) =>
-    edge === "start"
-      ? time > previousEnd + 1e-6 && time < segment.end - 1e-6
-      : time > segment.start + 1e-6 && time < nextStart - 1e-6
+  const snapped = resolveBoundaryTime(
+    segment,
+    edge,
+    proposedTime,
+    createSubtitleBoundaryPolicy(grid),
+    {
+      previousEnd: ordered[index - 1]?.end,
+      nextStart: ordered[index + 1]?.start,
+    },
   );
-  if (!valid.length) return lane;
-  const snapped = nearestTime(valid, proposedTime);
+  if (snapped === null) return lane;
   return {
     ...lane,
     segments: lane.segments.map((item) =>
@@ -294,6 +333,7 @@ export function updateSegmentBoundary(
   };
 }
 
+/** `nudgeSegmentBoundary`で指定された変更を不変更新として状態へ反映する。 */
 export function nudgeSegmentBoundary(
   lane: LyricsLane,
   segmentId: string,
@@ -301,16 +341,49 @@ export function nudgeSegmentBoundary(
   direction: -1 | 1,
   grid: readonly RhythmGridPoint[],
 ): LyricsLane {
-  const segment = lane.segments.find((item) => item.id === segmentId);
-  if (!segment) return lane;
-  const times = normalizedGridTimes(grid);
-  const current = edge === "start" ? segment.start : segment.end;
-  const index = nearestTimeIndex(times, current);
-  if (index < 0) return lane;
-  const target = times[clamp(index + direction, 0, times.length - 1)];
-  return updateSegmentBoundary(lane, segmentId, edge, target, grid);
+  const ordered = chronologicalSegments(lane.segments);
+  const index = ordered.findIndex((item) => item.id === segmentId);
+  if (index < 0 || normalizedGridTimes(grid).length < 2) return lane;
+  const segment = ordered[index];
+  const target = nudgeBoundaryTime(
+    segment,
+    edge,
+    direction,
+    createSubtitleBoundaryPolicy(grid),
+    {
+      previousEnd: ordered[index - 1]?.end,
+      nextStart: ordered[index + 1]?.start,
+    },
+  );
+  if (target === null) return lane;
+  return {
+    ...lane,
+    segments: lane.segments.map((item) =>
+      item.id === segmentId ? { ...item, [edge]: target, user_edited: true } : item
+    ),
+  };
 }
 
+/** Sub boundaries snap to the rhythm grid and remain strictly inside neighbors. */
+/** `createSubtitleBoundaryPolicy`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
+export function createSubtitleBoundaryPolicy(
+  grid: readonly RhythmGridPoint[],
+): BoundaryPolicy {
+  return {
+    // The strict resolver and rhythm-range helper each apply the existing
+    // single-epsilon edge predicate. Keeping this at zero avoids subtracting
+    // the epsilon twice from the opposite boundary.
+    minimumDuration: 0,
+    strict: true,
+    snap: (value: number, context: BoundaryPolicyContext) =>
+      nearestRhythmTimeInRange(grid, value, context.minimum, context.maximum),
+    nudge: (value: number, direction: -1 | 1) => nudgedRhythmTime(grid, value, direction),
+  };
+}
+
+export const createSubBoundaryPolicy = createSubtitleBoundaryPolicy;
+
+/** `labelStackLevels`の値を現在のlocaleと表示規則に沿った文字列へ整形する。 */
 export function labelStackLevels(segments: readonly LyricsSegment[], maximumLevels = 6) {
   const ordered = chronologicalSegments(segments);
   const levelCount = Math.max(1, maximumLevels);
@@ -341,6 +414,7 @@ export function labelStackLevels(segments: readonly LyricsSegment[], maximumLeve
   return levels;
 }
 
+/** `activeSegmentsAt`で字幕・数値候補を時刻または統計条件に沿って抽出・整列する。 */
 export function activeSegmentsAt(lanes: readonly LyricsLane[], time: number) {
   return lanes.flatMap((lane) =>
     lane.segments
@@ -349,6 +423,7 @@ export function activeSegmentsAt(lanes: readonly LyricsLane[], time: number) {
   );
 }
 
+/** `subtitleRenderSignature`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
 export function subtitleRenderSignature(
   text: string,
   style: SubtitleStyle,
@@ -378,12 +453,14 @@ export function subtitleRenderSignature(
   });
 }
 
+/** `normalizeAlignment`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeAlignment(value: number) {
   return Number.isFinite(value)
     ? clamp(Math.round(value), 1, 9)
     : DEFAULT_SUBTITLE_STYLE.alignment;
 }
 
+/** `validateSubtitleState`の入力が要求された条件やschemaを満たすか検証する。 */
 export function validateSubtitleState(value: unknown): SubtitleProjectState | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Partial<SubtitleProjectState>;
@@ -415,6 +492,7 @@ export function validateSubtitleState(value: unknown): SubtitleProjectState | nu
   };
 }
 
+/** `isLyricsLane`の入力が要求された条件やschemaを満たすか検証する。 */
 function isLyricsLane(value: unknown): value is LyricsLane {
   if (!value || typeof value !== "object") return false;
   const lane = value as Partial<LyricsLane>;
@@ -427,6 +505,7 @@ function isLyricsLane(value: unknown): value is LyricsLane {
   );
 }
 
+/** `isLyricsSegment`の入力が要求された条件やschemaを満たすか検証する。 */
 function isLyricsSegment(value: unknown): value is LyricsSegment {
   if (!value || typeof value !== "object") return false;
   const segment = value as Partial<LyricsSegment>;
@@ -439,6 +518,7 @@ function isLyricsSegment(value: unknown): value is LyricsSegment {
   );
 }
 
+/** `isRhythmGridPoint`の入力が要求された条件やschemaを満たすか検証する。 */
 function isRhythmGridPoint(value: unknown): value is RhythmGridPoint {
   if (!value || typeof value !== "object") return false;
   const point = value as Partial<RhythmGridPoint>;
@@ -448,39 +528,29 @@ function isRhythmGridPoint(value: unknown): value is RhythmGridPoint {
   );
 }
 
+/** `chronologicalSegments`で字幕・数値候補を時刻または統計条件に沿って抽出・整列する。 */
 function chronologicalSegments<T extends { start: number; end: number }>(segments: readonly T[]) {
   return [...segments].sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
+/** `normalizedGridTimes`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function normalizedGridTimes(grid: readonly RhythmGridPoint[]) {
   return [...new Set(grid.map((point) => point.time).filter(Number.isFinite))]
     .sort((left, right) => left - right);
 }
 
+/** `normalizedStyleNumber`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function normalizedStyleNumber(value: unknown, fallback: number, minimum: number, maximum: number) {
   const number = Number(value);
   return Number.isFinite(number) ? clamp(number, minimum, maximum) : fallback;
 }
 
+/** `normalizedStyleInteger`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 function normalizedStyleInteger(value: unknown, fallback: number, minimum: number, maximum: number) {
   return Math.round(normalizedStyleNumber(value, fallback, minimum, maximum));
 }
 
-function nearestTime(times: readonly number[], target: number) {
-  return times.reduce((best, value) =>
-    Math.abs(value - target) < Math.abs(best - target) ? value : best
-  );
-}
-
-function nearestTimeIndex(times: readonly number[], target: number) {
-  if (!times.length) return -1;
-  let best = 0;
-  for (let index = 1; index < times.length; index += 1) {
-    if (Math.abs(times[index] - target) < Math.abs(times[best] - target)) best = index;
-  }
-  return best;
-}
-
+/** `findLastIndex`の候補と条件から、利用すべき値または操作を決定する。 */
 function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean) {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     if (predicate(values[index])) return index;
@@ -488,10 +558,7 @@ function findLastIndex<T>(values: readonly T[], predicate: (value: T) => boolean
   return -1;
 }
 
-function rangesOverlap(leftStart: number, leftEnd: number, rightStart: number, rightEnd: number) {
-  return leftStart < rightEnd - 1e-6 && rightStart < leftEnd - 1e-6;
-}
-
+/** `median`で字幕・数値候補を時刻または統計条件に沿って抽出・整列する。 */
 function median(values: readonly number[]) {
   if (!values.length) return 0;
   const middle = Math.floor(values.length / 2);
@@ -500,6 +567,7 @@ function median(values: readonly number[]) {
     : (values[middle - 1] + values[middle]) / 2;
 }
 
+/** `finiteNumbers`で字幕・数値候補を時刻または統計条件に沿って抽出・整列する。 */
 function finiteNumbers(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is number => Number.isFinite(item)) : [];
 }

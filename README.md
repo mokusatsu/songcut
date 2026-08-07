@@ -6,88 +6,128 @@ English follows the Japanese.
 
 ## 日本語
 
-`songcut` は、VSinger などの歌枠アーカイブから歌唱区間らしい部分を抽出し、
-セグメント動画として書き出したり、TSコメント作成を支援する Windows デスクトップアプリです。
+`songcut` は、歌枠アーカイブから切り抜き動画、タイムスタンプコメント、歌詞字幕付き動画を作るための Windows デスクトップアプリです。
+画面上部のタブで、歌唱区間を扱う Cut と歌詞字幕を扱う Sub を切り替えられます。
 
-![screenshot](docs/image/screenshot.png)
+### 代表画面
+
+Cut では歌唱区間をセグメントとして検出し、波形と動画を見ながらタイトルや境界を整えます。
+書き出すセグメントを選ぶと、曲ごとの動画クリップやタイムスタンプを作成できます。
+
+![Cut モードの代表画面](docs/image/screenshot-cut.png)
+
+Sub では貼り付けた歌詞を音声へ合わせ、字幕タイムライン上で文字とタイミングを調整します。
+字幕の位置やスタイルを設定すると、字幕付き動画と字幕ファイルを書き出せます。
+
+![Sub モードの代表画面](docs/image/screenshot-sub.png)
 
 ### 特徴
-- 歌枠の切り抜き作成およびタイムスタンプ作成に特化した機能
-  - 切り出しセグメントのプレビューツール、微調整ツール
-- 音量変化に合わせて歌唱区間の開始・終了を整える局所境界補正
+
+- **Cut モード**：歌唱区間を検出し、切り抜き動画やタイムスタンプコメントとして書き出します。
+- **Sub モード**：貼り付けた歌詞を音声に合わせ、字幕のタイミングと見た目を編集して字幕付き動画を書き出します。
+- 波形、プレビュー再生、キーボード操作を使って区間や字幕の境界を調整できます。
+- Cut モードでは、音量変化に合わせて歌唱区間の開始と終了を整えます。
+- Sub モードでは、拍グリッド、複数の字幕タイムライン、字幕スタイル、出力エフェクトを利用できます。
 - Opus音声の高速スクラッチプレビュー
 - セグメント動画出力時のスマートレンダリング
-  - GOP単位で再利用できる動画部分はそのままコピーし、それ以外の部分だけ再エンコード
+
+Cut と Sub は同じ動画を読み込めますが、編集内容はモードごとに別のプロジェクトへ保存されます。
+切り抜きと字幕を並行して進めても、一方の編集内容がもう一方へ混ざることはありません。
 
 ### 使用方法
 
-1. Releases からダウンロードして適当なフォルダに展開してください。
-1. ffmpeg/ffprobe をダウンロードし、`third_party\ffmpeg` 以下に配置してください。
-1. `songcut.exe` を起動してください。
-1. 使い方は [docs/USAGE.ja.md](docs/USAGE.ja.md) を参照してください。
+1. Releases から標準版または Full 版をダウンロードし、任意のフォルダに展開します。
+2. `songcut.exe` を起動します。
+3. FFmpeg が見つからない場合は、画面の案内に従って準備します。
+4. 詳しい操作は [日本語の使い方](docs/USAGE.ja.md) を参照します。
 
-### 外部仕様
+標準版では `third_party` と `models` が空で、FFmpeg と必要な AI モデルを利用者が準備します。
+Full 版には、リリースに用意された FFmpeg と AI モデルが含まれます。
 
-- 配布形態は Windows 向けのポータブル GUI アプリです。
-- 利用者向けの入口は、配布物ルートにある `songcut.exe` です。
-- 入力動画はローカルファイルとして扱い、検出結果、レビュー用データ、切り出しクリップを
-  ローカルに出力します。
-- `ffmpeg.exe` と `ffprobe.exe` が必要です。配布物またはリポジトリ配下に配置するか、
-  `PATH` から見つかる状態にしてください。
-- バッチ処理や外部アプリ連携向けに Python CLI も提供します。
+### 動作と保存先
+
+- Windows 向けのポータブルアプリです。
+- 動画とプロジェクトはローカルで扱います。
+- `ffmpeg.exe` と `ffprobe.exe` が必要です。
+- 必要な AI モデルは、設定画面から明示的に準備できます。
+- 開発、自動化、診断向けに Python CLI も提供します。
 
 ### 文書
 
 - 使い方: [docs/USAGE.ja.md](docs/USAGE.ja.md) / [docs/USAGE.md](docs/USAGE.md)
+- キーボードショートカット: [docs/KEYBOARD_SHORTCUTS.md](docs/KEYBOARD_SHORTCUTS.md)
+- 文書一覧: [docs/INDEX.md](docs/INDEX.md)
 - CLI: [docs/CLI.ja.md](docs/CLI.ja.md) / [docs/CLI.md](docs/CLI.md)
 - ビルド: [docs/BUILD.ja.md](docs/BUILD.ja.md) / [docs/BUILD.md](docs/BUILD.md)
 - 設計: [docs/DESIGN.ja.md](docs/DESIGN.ja.md) / [docs/DESIGN.md](docs/DESIGN.md)
-- GUI 詳細仕様: [docs/gui-spec.md](docs/gui-spec.md)
-- 検出アルゴリズム: [docs/algorithm.md](docs/algorithm.md)
 
 ---
 
 ## English
 
-`songcut` is a Windows desktop app that extracts likely singing segments from
-VSinger-style singing-stream archives, exports them as individual video clips,
-and helps prepare timestamp comments.
+`songcut` is a Windows desktop app for creating clips, timestamp comments, and
+lyric-subtitled videos from singing-stream archives.
+Use the tabs at the top of the window to switch between Cut for singing
+segments and Sub for timed lyrics.
+
+### Representative Screens
+
+Cut detects singing sections as segments and lets you refine their titles and
+boundaries while watching the video and waveform.
+Select the segments to export them as individual clips or timestamp text.
+
+![Representative Cut mode screen](docs/image/screenshot-cut.png)
+
+Sub aligns pasted lyrics to the audio and lets you adjust text and timing on
+subtitle timelines.
+After choosing positions and styles, export a subtitled video and subtitle
+files.
+
+![Representative Sub mode screen](docs/image/screenshot-sub.png)
 
 ### Features
 
-- Purpose-built tools for creating clips and timestamp comments from singing
-  streams
-  - Preview and fine-tuning controls for extracted segments
-- Local boundary refinement that aligns singing-segment starts and ends to
-  level changes
+- **Cut mode** detects likely singing segments and exports clips or timestamp
+  comments.
+- **Sub mode** aligns pasted lyrics to the audio and lets you edit subtitle
+  timing, appearance, and export effects.
+- Waveform, preview, and keyboard controls help adjust clip and subtitle
+  boundaries.
+- Cut mode can refine singing-segment boundaries around local level changes.
+- Sub mode provides a rhythm grid, multiple subtitle timelines, reusable styles,
+  and export effects.
 - Fast scratch previews for Opus audio
 - Smart rendering for exported video segments
-  - Copies reusable GOPs without re-encoding and re-encodes only the remaining
-    portions
+
+Cut and Sub can use the same source video, but each mode saves its edits in a
+separate project file.
+This keeps clip editing and subtitle editing independent when you work on both.
 
 ### Usage
 
-1. Download a release and extract it to a folder.
-1. Download ffmpeg/ffprobe and place them under `third_party\ffmpeg`.
-1. Start `songcut.exe`.
-1. See [docs/USAGE.md](docs/USAGE.md) for detailed instructions.
+1. Download either the standard or Full release and extract it to a folder.
+2. Start `songcut.exe`.
+3. If FFmpeg is not found, follow the on-screen instructions to prepare it.
+4. See the [English usage guide](docs/USAGE.md) for detailed instructions.
 
-### External Specification
+The standard archive leaves `third_party` and `models` empty, so you prepare
+FFmpeg and the AI models you need.
+The Full archive includes the FFmpeg and AI model files prepared for that
+release.
 
-- The primary distribution target is a portable Windows GUI app.
-- The user-facing entry point is `songcut.exe` at the distribution root.
-- Input videos are treated as local files. Detection results, review data, and
-  exported clips are written locally.
-- `ffmpeg.exe` and `ffprobe.exe` are required. Place them under the distribution
-  or repository tree, or make them discoverable on `PATH`.
-- A Python CLI is also available for batch processing and external app
-  integration.
+### Operation and storage
+
+- songcut is a portable Windows app.
+- Source videos, projects, and exports stay on the local computer.
+- `ffmpeg.exe` and `ffprobe.exe` are required.
+- Required AI models can be prepared explicitly from Settings.
+- A Python CLI is available for development, automation, and diagnostics.
 
 ### Documentation
 
 - Usage: [docs/USAGE.md](docs/USAGE.md) / [docs/USAGE.ja.md](docs/USAGE.ja.md)
+- Keyboard shortcuts: [docs/KEYBOARD_SHORTCUTS.md](docs/KEYBOARD_SHORTCUTS.md)
+- Document index: [docs/INDEX.md](docs/INDEX.md)
 - CLI: [docs/CLI.md](docs/CLI.md) / [docs/CLI.ja.md](docs/CLI.ja.md)
 - Build: [docs/BUILD.md](docs/BUILD.md) / [docs/BUILD.ja.md](docs/BUILD.ja.md)
 - Design: [docs/DESIGN.md](docs/DESIGN.md) / [docs/DESIGN.ja.md](docs/DESIGN.ja.md)
-- Detailed GUI specification: [docs/gui-spec.md](docs/gui-spec.md)
-- Detection algorithm: [docs/algorithm.md](docs/algorithm.md)

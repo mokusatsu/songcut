@@ -1,0 +1,24 @@
+# SCUT-021 App composition root の縮小
+
+- 開始証拠 (2026-08-05):
+  - SCUT-020完了後、同一branch `codex/sub-mode`で順次開始した。SCUT-018～020の未commit変更は完了証拠付きの前提差分として保持する。
+  - 開始時baselineは全Vitest 41 files／256 tests、typecheck、production build、既存Cut/Sub実sidecar parse成功である。
+- 目的: SCUT-018／020で得た境界を使い、`App.tsx`を共通media/session/persistence、active mode選択、画面配線へ集中させる。
+- 変更範囲: `App.tsx`、mode session/controller hooks、panel props、App内のCut固有dialog helper配置。
+- 禁止事項: state管理ライブラリ導入、全stateの一括移行、UI／DOM class変更、無関係なhelper整理。
+- 完了条件:
+  - Appがmode固有API orchestrationとmode固有project変換を持たない。
+  - Cut/Sub controller生成とoperation actionが対称なmode session境界から得られる。
+  - panelへ渡す共通media／transport propsが型付きview modelとしてまとまる。
+  - Appに残すmode分岐はactive panel、subtitle overlay、mode capabilityなどcomposition上必要なものに限定される。
+- テスト: App配線contract、menu／shortcut、mode switch、autosave、waveform cache、全Vitest、typecheck、build、Cut/Sub E2E。
+- 停止条件: 画面構造や利用者操作を変えないと抽出できない箇所は、無理に共通化せずmode session側のadapterとして残す。
+- 完了証拠 (2026-08-05):
+  - `modeSession.ts`がCut/Subのcontroller、mode固有operation coordinator、共通panel viewを同じcontractで返し、Appは`createModeController`を直接生成しない。
+  - `modeViewModel.ts`の`ModeMediaViewModel`／`ModeTransportViewModel`へsource、waveform、playback、zoom、boundary controlを集約し、Cut/Sub panelへどちらも`view`一つで渡す。
+  - AppのCut/Sub operation actionは各mode sessionの`operations`経由となり、active controllerだけをmode capabilityとして選択する。生operation API、`operationRunner.run`、generic project compose／createはAppに残っていない。
+  - Cut専用時間dialog変換を`CutSegmentTimingDialog.tsx`へ、出力・segment管理・task status・model／export進捗等のview-only componentを`AppDialogs.tsx`へ移した。DOM classと表示契約は維持した。
+  - App配線source contract 3件を追加し、menu／shortcut、autosave、waveform cache、mode controller／session testsを含む全Vitest 44 files／262 tests、`npm run typecheck`、`npm run build`、`git diff --check`が成功した。
+  - Appは開始時約3,950行から3,225行へ縮小した。stateful media／persistence処理、active panel、Sub overlay、mode capability等のcomposition責務はAppに残した。
+  - 2つの`luna_worker`がmode session/view modelとview-only dialog抽出を分担し、Main側でpanel/App配線を統合した。
+  - ポータブル版1.1.58を再buildし、Cut通常E2Eは`E2E_OK`（menu、shortcut、autosave、background転写、0.001秒Cut dialog、clip／TS export）、Sub実データE2Eは`SUB_E2E_OK`（39字幕、rhythm、PNG cache、overlay、SRT／style、焼き込み動画）まで成功した。

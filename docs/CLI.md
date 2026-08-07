@@ -5,6 +5,9 @@ regression checks. The repository's primary distribution target is the desktop
 GUI and portable Windows package; see `README.md` for the GUI overview and
 `docs/BUILD.md` for setup and build details.
 
+This CLI covers Cut-mode segment detection, evaluation, and export.
+Use the desktop GUI for Sub-mode lyrics analysis and subtitle editing.
+
 Install the package from source first:
 
 ```powershell

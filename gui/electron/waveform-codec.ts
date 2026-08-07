@@ -13,6 +13,7 @@ export type PackedWaveformPoint = {
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const waveformEncodingCache = new WeakMap<object, string>();
 
+/** `encodeWaveformPoints`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function encodeWaveformPoints(points: readonly PackedWaveformPoint[]): string {
   const cached = waveformEncodingCache.get(points);
   if (cached !== undefined) return cached;
@@ -36,6 +37,7 @@ export function encodeWaveformPoints(points: readonly PackedWaveformPoint[]): st
   return encoded;
 }
 
+/** `decodeWaveformPoints`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function decodeWaveformPoints(dataBase64: string, pointCount: number): PackedWaveformPoint[] {
   if (!Number.isInteger(pointCount) || pointCount < 0 || pointCount > WAVEFORM_BINARY_MAX_POINTS) {
     throw new Error("Invalid waveform point count.");

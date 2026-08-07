@@ -7,14 +7,17 @@ export type UiLanguagePreference = "system" | UiLanguage;
 
 const preferencesFilename = "app-preferences.json";
 
+/** `normalizeUiLanguage`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeUiLanguage(locale: string): UiLanguage {
   return locale.trim().toLowerCase().split(/[-_]/, 1)[0] === "ja" ? "ja" : "en";
 }
 
+/** `normalizeUiLanguagePreference`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeUiLanguagePreference(value: unknown): UiLanguagePreference {
   return value === "en" || value === "ja" || value === "system" ? value : "system";
 }
 
+/** `loadLocalePreference`の対象をローカル環境から読み取り、型付きの値として返す。 */
 export function loadLocalePreference(userDataDirectory: string): UiLanguagePreference {
   try {
     const parsed = JSON.parse(readFileSync(preferencesPath(userDataDirectory), "utf8")) as { uiLanguage?: unknown };
@@ -24,6 +27,7 @@ export function loadLocalePreference(userDataDirectory: string): UiLanguagePrefe
   }
 }
 
+/** `saveLocalePreference`の値を検証済みの形式で永続先へ保存する。 */
 export async function saveLocalePreference(
   userDataDirectory: string,
   preference: UiLanguagePreference,

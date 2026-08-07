@@ -21,6 +21,7 @@ from .transcription import (
     read_wav_mono_16k,
     select_whisper_runtime,
 )
+from .whisper_execution import WhisperExecutionSession
 
 
 @dataclass(frozen=True)
@@ -445,15 +446,18 @@ def transcribe_whisper_chunks(
     runtime = select_whisper_runtime(device)
     target_model = ensure_whisper_model(model_dir, model_key=model_key)
     _language_code, language_token = normalize_whisper_language(language)
-    pipeline = ov_genai.WhisperPipeline(str(target_model), runtime.device_used)
+    session = WhisperExecutionSession.from_openvino(
+        model_path=target_model,
+        runtime=runtime,
+        requested_device=device,
+        language_token=language_token,
+    )
 
     with tempfile.TemporaryDirectory(prefix="songcut-lyrics-") as temporary_directory:
         wav_path = Path(temporary_directory) / "source.wav"
         extract_segment_wav(ffmpeg_paths.ffmpeg, source, wav_path, start=0.0, end=duration)
         raw_speech = read_wav_mono_16k(wav_path)
         options: dict[str, object] = {"task": "transcribe", "return_timestamps": True}
-        if language_token:
-            options["language"] = language_token
         intervals = find_whisper_active_intervals(raw_speech)
         chunks: list[TranscriptChunk] = []
         recognized_texts: list[str] = []
@@ -461,19 +465,15 @@ def transcribe_whisper_chunks(
             interval_audio = np.ascontiguousarray(raw_speech[sample_start:sample_end])
             interval_start = sample_start / WHISPER_AUDIO_SAMPLE_RATE
             interval_duration = (sample_end - sample_start) / WHISPER_AUDIO_SAMPLE_RATE
-            decoded = pipeline.generate(interval_audio, **options)
-            for chunk in getattr(decoded, "chunks", None) or []:
-                local_start = _safe_timestamp(
-                    getattr(chunk, "start_ts", None), 0.0, interval_duration
-                )
-                local_end = _safe_timestamp(
-                    getattr(chunk, "end_ts", None), interval_duration, interval_duration
-                )
-                text = str(chunk.text).strip()
+            decoded = session.generate(interval_audio, options)
+            for chunk in session.normalize_decoded_chunks(decoded, interval_duration):
+                text = chunk.text
                 if not text:
                     continue
-                start = min(duration, interval_start + local_start)
-                end = min(duration, interval_start + max(local_start, local_end))
+                # The active interval offset and media-duration clamp remain
+                # owned by the standard lyrics caller.
+                start = min(duration, interval_start + chunk.start)
+                end = min(duration, interval_start + max(chunk.start, chunk.end))
                 chunks.append(
                     TranscriptChunk(
                         start=round(start, 3),
@@ -490,17 +490,7 @@ def transcribe_whisper_chunks(
                 progress_callback(interval_index, len(intervals))
 
     text = " ".join(recognized_texts).strip()
-    return chunks, text, duration, runtime.device_used
-
-
-def _safe_timestamp(value: object, default: float, duration: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    if not math.isfinite(number) or number < 0:
-        return default
-    return min(number, duration)
+    return chunks, text, duration, session.device_used
 
 
 def generate_lyrics_srt(

@@ -14,6 +14,7 @@ export type SegmentPair = {
   exportCandidate: ExportCandidate;
 };
 
+/** `createManualSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function createManualSegment(existing: readonly Segment[], currentTime: number, sourceDuration: number, title = "New Segment"): SegmentPair {
   const id = nextManualSegmentId(existing);
   const boundedDuration = Math.max(0, sourceDuration);
@@ -44,6 +45,7 @@ export function createManualSegment(existing: readonly Segment[], currentTime: n
   };
 }
 
+/** `insertSegmentPair`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
 export function insertSegmentPair(
   collection: SegmentCollection,
   pair: SegmentPair,
@@ -57,20 +59,24 @@ export function insertSegmentPair(
   return collectionFromPairs(pairs);
 }
 
+/** `removeSegments`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
 export function removeSegments(collection: SegmentCollection, segmentIds: ReadonlySet<string>): SegmentCollection {
   return collectionFromPairs(normalizedPairs(collection).filter(({ segment }) => !segmentIds.has(segment.id)));
 }
 
+/** `sortSegmentsByStart`でsegmentを開始時刻順に並べた新しいcollectionを返す。 */
 export function sortSegmentsByStart(collection: SegmentCollection): SegmentCollection {
   const pairs = normalizedPairs(collection).map((pair, index) => ({ pair, index }));
   pairs.sort((left, right) => left.pair.segment.start - right.pair.segment.start || left.index - right.index);
   return collectionFromPairs(pairs.map(({ pair }) => pair));
 }
 
+/** `setAllSegmentsChecked`で指定された変更を不変更新として状態へ反映する。 */
 export function setAllSegmentsChecked(segments: readonly Segment[], checked: boolean) {
   return segments.map((segment) => ({ ...segment, checked }));
 }
 
+/** `invertSegmentChecks`で指定された変更を不変更新として状態へ反映する。 */
 export function invertSegmentChecks(segments: readonly Segment[]) {
   return segments.map((segment) => ({ ...segment, checked: segment.checked === false }));
 }

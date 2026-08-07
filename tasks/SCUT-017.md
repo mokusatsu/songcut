@@ -1,0 +1,29 @@
+# SCUT-017 Cut export進捗の利用者向け表示
+
+- 目的: Cutのexport進捗から利用者に意味のない内部IDを除き、出力対象のタイトルと進捗件数を表示する。
+- 変更範囲: export request／job progress metadata、英日i18n resource、API／renderer回帰テスト、必要な配布build。
+- 禁止事項:
+  - export item ID、結果payload、ファイル名生成の既存契約を変更しない。
+  - 内部IDを表示タイトルのfallbackとして再利用しない。
+  - Cut以外のtask lifecycleや共通progress dialog shellの挙動を変更しない。
+- 完了条件:
+  - 英語表示が `Exporting {title} ({current}/{total})` となり、日本語でも同じ情報を自然な文言で表示する。
+  - 複数の選択項目で1始まりの現在件数と選択済み総件数を構造化metadataとして返す。
+  - title未送信の旧requestでも内部IDを露出せず、利用者向けのファイル名stemへfallbackする。
+  - APIとrendererのテストでタイトル、件数、legacy request fallbackを固定する。
+- テスト: 対象pytest、i18n Vitest、全GUI test、typecheck、build、`git diff --check`。配布buildを更新する場合はCut E2Eも実行する。
+- 停止条件: 配布版E2Eに必要な対話desktopやfixtureが利用不能な場合は、ローカル検証済み範囲と未確認事項を記録する。
+- 開始証拠 (2026-08-05):
+  - `_export_job`が`Exporting {item.id}.`を生成し、`export-002`等の内部IDを直接表示していた。
+  - GUI側のcandidateはtitleを保持する一方、APIの`ExportItem`にはtitle fieldがなく、進捗生成まで届いていなかった。
+  - 新規の構造化message codeでtitle/current/totalを渡し、既存のlegacy `exportingItem` mappingは互換用に維持する方針とした。
+- 完了証拠 (2026-08-05):
+  - `ExportItem`へ後方互換のoptional `title`を追加し、Cutが既に送っている利用者向けタイトルをbackendまで保持するようにした。
+  - `_export_job`は選択済み項目だけを母数に、`exportingItemProgress`と`title/current/total`を返す。raw fallbackも`Exporting {title} ({current}/{total})`とし、旧requestのtitle未送信時は内部IDではなく`filename_stem`を使う。
+  - 英語を`Exporting {{title}} ({{current}}/{{total}})`、日本語を`{{title}} を書き出しています ({{current}}/{{total}})`として共通i18n経路へ追加し、legacy `exportingItem`は互換用に残した。
+  - API testでunchecked項目を総数から除外し、1始まりの2件進捗、title、legacy fallback、内部export ID非露出を固定した。renderer testで英日表示を固定した。
+  - `python -m pytest -q`: 367 passed / 2 skipped。`cd gui; pnpm test -- --run`: 37 files / 238 tests passed。
+  - `cd gui; pnpm run typecheck`、`cd gui; pnpm run build`、E2E scriptの`node --check`、`git diff --check`: すべてexit 0（buildは既知のchunk warningのみ）。
+  - version 1.1.57の隔離distをbuildしてCut通常E2Eを完走し、実DOM履歴で`Exporting Smoke Song Edited (1/1)`、内部ID非露出、`EXPORT_PROGRESS_TITLE_COUNT_OK`、`E2E_OK`を確認した。
+  - 通常利用中の既定distは強制終了せず保護した。終了後に`dist/songcut-win-x64`を同じソースから再buildし、renderer bundleとElectron実行物がE2E済みbuildとSHA-256一致することを確認した。
+  - 検証専用`dist/songcut-win-x64-scut017`は、絶対パスとプロセス不在を確認して削除した。既定distは更新済みのまま保持している。
