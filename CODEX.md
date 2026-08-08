@@ -6,6 +6,9 @@
 - メインエージェント：ユーザーが対話している相手。目標を理解し、リポジトリを検査し、受け入れ基準を定義し、サブエージェントにおけるCodexスレッド分業が価値を追加するかどうかを決定し、作業を分解し、最終レビューを実行する。サブエージェントに指示する。タスクは evidence-driven-task-management スキルを通じて管理する。tasks/task-list.mdにあるタスクリストを更新する際は、並行する作業チャットで相互にやり取りし競合しないようにする。
 - サブエージェント：luna_workerサブエージェントを使う。
 
+# コード確認
+- docs\code-map\ の情報を手掛かりにソースコードの見通しとあたりを付ける
+
 # コード実装
 - 実装にあたっては同じような内容を重複して作成しないようにする。プロジェクト固有の事情として、Sub/Cutの両モードがあり、両モードで同じことをしている部分を2重に作らないいようにする。
 
@@ -21,7 +24,12 @@
 - Editor actionは共通focus scopeを使って操作後にeditorへfocusを戻し、文字入力中とmodal dialog内だけeditor shortcutを抑止する。
 - Settings等のdialogに通常のTab操作を残し、Cut/Sub別のfocus処理や全interactive要素の一律shortcut抑止を追加しない。
 
+# コードマップ更新
+- ビルド実行時に並行で code_map_maintainer エージェントを起動しコードマップを更新する
+
 # Codex Build Notes
+
+- Windowsサンドボックスで `Microsoft\\WindowsApps\\pwsh.exe` の起動が `CreateProcessAsUserW failed: 5` になる場合は、権限付き実行を常用せず、実体の `C:\\Program Files\\PowerShell\\7\\pwsh.exe` がApp Execution Aliasより先に解決されるようPATHを修正する。
 
 Public build instructions live in `docs/BUILD.md` and `docs/BUILD.ja.md`.
 Keep Codex-specific runtime paths out of README and public build docs.
