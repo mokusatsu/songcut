@@ -11,8 +11,8 @@
 | 項目 | 値 |
 |---|---|
 | 進行中 | なし |
-| 次のタスクID | `SCUT-033` |
-| ブランチ | `codex/sub-mode` |
+| 次のタスクID | `SCUT-035` |
+| ブランチ | `main` |
 | 再編開始時HEAD | `5308509` |
 
 ## 運用ルール
@@ -82,3 +82,5 @@
 | SCUT-030 | アーキテクチャ | App composition rootの責務分割 | 完了 | 高 | SCUT-029 | model準備などの独立した状態・副作用をfeature hookへ移し、Appを画面配線へ集中させる | [詳細・証拠](../tasks/SCUT-030.md) |
 | SCUT-031 | ドキュメント・品質 | 公開・名前付き関数の日本語JSDoc整備 | 完了 | 中 | SCUT-030 | production TypeScriptの公開関数と変更対象の名前付き関数に日本語JSDocを付与し、契約テストで維持する | [詳細・証拠](../tasks/SCUT-031.md) |
 | SCUT-032 | 開発運用 | 作業タスクリストの汎用化 | 完了 | 高 | SCUT-031 | 一覧とtask briefを分離し、機能分野を問わず同じSSOTで管理できる | [詳細・証拠](../tasks/SCUT-032.md) |
+| SCUT-033 | Sub・字幕 | セグメント個別Style／Effect設定 | 完了 | 高 | SCUT-032 | Subセグメントがレーン継承または独自Style／Effectを選べ、保存・プレビュー・動画・ASSへ反映される | [詳細・証拠](../tasks/SCUT-033.md) |
+| SCUT-034 | GUI | Timeline初回表示幅の同期 | 完了 | 中 | SCUT-006 | Cut/SubのTimelineが初回ペイント前から実viewport幅で描画され、通常ビルドが成功する | [詳細・証拠](../tasks/SCUT-034.md) |
