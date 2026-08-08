@@ -37,5 +37,8 @@ gui/*.tsbuildinfo
 gui/vite.config.js
 gui/vite.config.d.ts
 
+# Regenerable local code-map analysis state
+.codex/code-map/state/
+
 # Microsoft Office temporary files
 ~$*
