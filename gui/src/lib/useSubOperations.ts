@@ -14,6 +14,7 @@ import { createPendingTask, failTask, type TaskSlot } from "@/lib/useTaskRegistr
 import {
   analysisLinesToSegments,
   createLyricsLane,
+  resolveSubtitleSegmentStyle,
   selectedSubtitleSegment,
   subtitleRenderSignature,
   type LyricsAnalysisResult,
@@ -155,7 +156,7 @@ export function applySubtitleRenderResults(
         if (!rendered) return segment;
         const expected = subtitleRenderSignature(
           segment.text,
-          lane.style,
+          resolveSubtitleSegmentStyle(lane, segment).style,
           rendered.width,
           rendered.height,
         );

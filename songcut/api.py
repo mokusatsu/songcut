@@ -204,24 +204,28 @@ class SubtitleStyleRequest(BaseModel):
     margin_v: int = Field(default=54, ge=0, le=4000)
 
 
-class SubtitleSegmentRequest(BaseModel):
-    id: str
-    text: str
-    start: float = Field(ge=0)
-    end: float = Field(gt=0)
-
-    @model_validator(mode="after")
-    def validate_range(self) -> "SubtitleSegmentRequest":
-        if self.end <= self.start:
-            raise ValueError("subtitle segment end must be after start")
-        return self
-
-
 class SubtitleEffectRequest(BaseModel):
     name: str = "cut"
     start_duration_ms: int = Field(default=300, ge=0, le=60000)
     end_duration_ms: int = Field(default=300, ge=0, le=60000)
     params: dict[str, str | int | float] = Field(default_factory=dict)
+
+
+class SubtitleSegmentRequest(BaseModel):
+    id: str
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    style_override: SubtitleStyleRequest | None = None
+    effect_override: SubtitleEffectRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SubtitleSegmentRequest":
+        if self.end <= self.start:
+            raise ValueError("subtitle segment end must be after start")
+        if (self.style_override is None) != (self.effect_override is None):
+            raise ValueError("subtitle segment overrides must provide both style and effect")
+        return self
 
 
 class SubtitleLaneRequest(BaseModel):
@@ -1227,6 +1231,21 @@ def _subtitle_export_job(job_id: str, request: SubtitleExportRequest) -> None:
                         text=segment.text,
                         start=segment.start,
                         end=segment.end,
+                        style_override=(
+                            subtitle_style_from_mapping(segment.style_override.model_dump())
+                            if segment.style_override is not None
+                            else None
+                        ),
+                        effect_override=(
+                            SubtitleEffect(
+                                name=segment.effect_override.name,
+                                start_duration_ms=segment.effect_override.start_duration_ms,
+                                end_duration_ms=segment.effect_override.end_duration_ms,
+                                params=segment.effect_override.params,
+                            )
+                            if segment.effect_override is not None
+                            else None
+                        ),
                     )
                     for segment in lane.segments
                 ],

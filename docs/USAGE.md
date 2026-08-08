@@ -121,7 +121,9 @@ Review the beat grid drawn on the timeline, and adjust boundaries manually if a 
 ### Edit Text, Timing, and Timelines
 
 Double-click a lyric label to edit its text, and drag a section handle to edit its timing.
-Double-click a section to show **Segment timing**, where you can edit its start time and duration or end time.
+Double-click a section to show **Segment settings**. Use the `Timing` tab to edit its start time and duration or end time, and the `Style` tab to choose whether the section inherits its timeline style or uses custom settings.
+Custom settings provide the same typography, position, saved-style, and output-effect controls as the timeline `Style` dialog. Changes are committed together with `Apply`; `Cancel` discards both timing and style changes.
+A zigzag line to the left of the lyric label identifies a section that uses custom settings.
 
 Click `Timeline` and choose one of the nine subtitle positions to add a subtitle timeline.
 Click a timeline to make it active; you can create up to three. `W` and `S` move through sections inside the active timeline.
@@ -146,6 +148,7 @@ In `Saved styles`, choose a preset and click `Apply`, or enter a style name and 
 Click `Export` and choose an output folder to create a subtitled video and one subtitle file set per timeline.
 The subtitled video is named `<video>-subtitled.mp4`, and timelines are written as `<video>-sub-1.srt`, `<video>-sub-2.srt`, and so on.
 Each SRT has a matching style file such as `<video>-sub-1.srt.style`.
+The complete styled subtitles are also written as `<video>-subtitles.ass`; use this file when per-section styles or effects must be preserved.
 
 ## Settings
 

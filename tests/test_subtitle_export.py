@@ -92,6 +92,43 @@ def test_combined_ass_has_one_style_per_lane_and_escapes_text() -> None:
     assert r"\{歌詞\}\\line" in text
 
 
+def test_segment_overrides_use_effective_styles_and_effect_context() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(alignment=2, font_size=48),
+        [
+            SubtitleSegment("base", "通常", 0.0, 1.0),
+            SubtitleSegment(
+                "override",
+                "上部",
+                1.0,
+                2.0,
+                style_override=SubtitleStyle(alignment=7, font_size=80, margin_l=80, margin_v=70),
+                effect_override=SubtitleEffect(
+                    name="wipe",
+                    start_duration_ms=250,
+                    end_duration_ms=400,
+                    params={"direction": "left_to_right"},
+                ),
+            ),
+        ],
+    )
+
+    text = render_ass_document([lane], play_res_x=1280, play_res_y=720, apply_effects=True)
+    style_lines = [line for line in text.splitlines() if line.startswith("Style:")]
+    dialogue_lines = [line for line in text.splitlines() if line.startswith("Dialogue:")]
+    base_style_name = dialogue_lines[0].split(",")[3]
+    override_style_name = dialogue_lines[1].split(",")[3]
+
+    assert base_style_name != override_style_name
+    assert sum(line.startswith(f"Style: {base_style_name},") for line in style_lines) == 1
+    assert sum(line.startswith(f"Style: {override_style_name},") for line in style_lines) == 1
+    assert f"Style: {override_style_name}," in style_lines[1]
+    assert ",80," in style_lines[1]
+    assert r"\clip(" in dialogue_lines[1]
+
+
 def test_effect_is_applied_only_when_export_rendering_requests_it() -> None:
     lane = SubtitleLane(
         "lyrics",
@@ -223,6 +260,11 @@ def test_subtitle_export_validates_created_video_and_duration(tmp_path: Path) ->
     video = Path(result["video"])
     assert video.exists()
     assert video.stat().st_size > 0
+    ass = Path(result["ass"])
+    assert ass.exists()
+    assert ass.read_text(encoding="utf-8-sig") == render_ass_document(
+        [lane], play_res_x=320, play_res_y=180, apply_effects=True
+    )
 
 
 

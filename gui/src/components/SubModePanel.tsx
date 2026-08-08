@@ -35,9 +35,11 @@ import {
   addFourBeatSegment,
   createLyricsLane,
   normalizeSubtitleStyle,
+  resolveSubtitleSegmentStyle,
   selectedSubtitleSegment,
   SUBTITLE_STYLE_LIMITS,
   subtitleRenderSignature,
+  withSubtitleSegmentStyle,
   type LyricsLane,
   type LyricsSegment,
   type SubtitleProjectState,
@@ -132,11 +134,14 @@ export function SubModePanel(props: SubModePanelProps) {
     const width = media.videoInfo?.video.width || 1920;
     const height = media.videoInfo?.video.height || 1080;
     return props.state.lanes.flatMap((lane) =>
-      lane.segments.map((segment) => ({
-        segment,
-        style: lane.style,
-        signature: subtitleRenderSignature(segment.text, lane.style, width, height),
-      }))
+      lane.segments.map((segment) => {
+        const style = resolveSubtitleSegmentStyle(lane, segment).style;
+        return {
+          segment,
+          style,
+          signature: subtitleRenderSignature(segment.text, style, width, height),
+        };
+      })
     );
   }, [props.state.lanes, media.videoInfo?.video.width, media.videoInfo?.video.height]);
   const renderPlanKey = renderPlan
@@ -170,7 +175,7 @@ export function SubModePanel(props: SubModePanelProps) {
   }, [media.videoInfo, props.actions.renderSubtitles, props.actions.invalidateSubtitleRender, renderPlanKey]);
 
   useEffect(() => {
-    if (!styleLane || systemFonts || fontListError) return;
+    if ((!styleLane && !timingSegment) || systemFonts || fontListError) return;
     let cancelled = false;
     props.actions.listSystemFonts()
       .then((fonts) => {
@@ -182,7 +187,7 @@ export function SubModePanel(props: SubModePanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [styleLane, systemFonts, fontListError, props.actions.listSystemFonts]);
+  }, [styleLane, timingSegment, systemFonts, fontListError, props.actions.listSystemFonts]);
 
   /** `analyzeLyrics`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   async function analyzeLyrics() {
@@ -371,8 +376,19 @@ export function SubModePanel(props: SubModePanelProps) {
           ? timingOrderedSegments[timingSegmentIndex + 1].start
           : undefined}
         rhythmGrid={props.state.rhythm_grid}
+        styleOptions={timingLane ? {
+          inheritedStyle: timingLane.style,
+          inheritedEffect: timingLane.effect,
+          renderEditor: (editorProps) => (
+            <SubtitleStyleEditor
+              {...editorProps}
+              fonts={systemFonts}
+              fontListError={fontListError}
+            />
+          ),
+        } : undefined}
         onClose={() => setTimingTarget(null)}
-        onApply={(start, end) => {
+        onApply={(start, end, styleOverride, effectOverride) => {
           if (!timingLane || !timingSegment) return;
           props.onStateChange({
             ...props.state,
@@ -385,7 +401,11 @@ export function SubModePanel(props: SubModePanelProps) {
                     segments: lane.segments
                       .map((segment) =>
                         segment.id === timingSegment.id
-                          ? { ...segment, start, end, user_edited: true }
+                          ? withSubtitleSegmentStyle(
+                              { ...segment, start, end, user_edited: true },
+                              styleOverride,
+                              effectOverride,
+                            )
                           : segment
                       )
                       .sort((left, right) => left.start - right.start),
@@ -446,8 +466,12 @@ export function SubtitleOverlay(props: {
       }}
     >
       {active.map(({ lane, segment }) => (
-        segment.render_cache?.signature ===
-        subtitleRenderSignature(segment.text, lane.style, sourceWidth, sourceHeight) ? (
+        segment.render_cache?.signature === subtitleRenderSignature(
+          segment.text,
+          resolveSubtitleSegmentStyle(lane, segment).style,
+          sourceWidth,
+          sourceHeight,
+        ) ? (
           <img
             key={segment.id}
             className="subtitle-overlay-image"

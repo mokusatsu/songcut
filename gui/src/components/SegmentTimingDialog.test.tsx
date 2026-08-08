@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateSegmentTiming } from "@/components/SegmentTimingDialog";
+import { createSegmentStyleDraft, evaluateSegmentTiming } from "@/components/SegmentTimingDialog";
 import { createCutBoundaryPolicy } from "@/lib/boundaries";
-import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "@/lib/subtitles";
+import {
+  DEFAULT_SUBTITLE_STYLE,
+  createSubtitleBoundaryPolicy,
+  type RhythmGridPoint,
+} from "@/lib/subtitles";
+import { DEFAULT_SUBTITLE_EFFECT } from "@/lib/subtitleEffects";
 
 const grid: RhythmGridPoint[] = [0, 1, 1.5, 2, 2.5, 3, 4].map((time) => ({
   time,
@@ -88,5 +93,37 @@ describe("segment timing policy", () => {
     expect(evaluation.valid).toBe(true);
     expect(evaluation.start).toBe(3);
     expect(evaluation.end).toBe(4);
+  });
+});
+
+describe("Sub segment style dialog draft", () => {
+  const target = { id: "segment", start: 1, end: 2 };
+
+  it("starts an inherited segment from the current timeline settings", () => {
+    expect(createSegmentStyleDraft(
+      target,
+      { ...DEFAULT_SUBTITLE_STYLE, font_size: 72 },
+      { ...DEFAULT_SUBTITLE_EFFECT, name: "fad" },
+    )).toMatchObject({
+      mode: "inherit",
+      style: { font_size: 72 },
+      effect: { name: "fad" },
+    });
+  });
+
+  it("restores a persisted custom draft independently from the timeline", () => {
+    expect(createSegmentStyleDraft(
+      {
+        ...target,
+        style_override: { ...DEFAULT_SUBTITLE_STYLE, font_size: 36 },
+        effect_override: { ...DEFAULT_SUBTITLE_EFFECT, name: "glow" },
+      },
+      { ...DEFAULT_SUBTITLE_STYLE, font_size: 120 },
+      DEFAULT_SUBTITLE_EFFECT,
+    )).toMatchObject({
+      mode: "custom",
+      style: { font_size: 36 },
+      effect: { name: "glow" },
+    });
   });
 });

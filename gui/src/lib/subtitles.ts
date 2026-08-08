@@ -43,6 +43,8 @@ export type LyricsSegment = {
   source: SubtitleSegmentSource;
   low_confidence_outlier: boolean;
   user_edited: boolean;
+  style_override?: SubtitleStyle;
+  effect_override?: SubtitleEffectSettings;
   render_cache?: SubtitleRenderCache;
 };
 
@@ -72,6 +74,12 @@ export type LyricsLane = {
   style: SubtitleStyle;
   effect: SubtitleEffectSettings;
   segments: LyricsSegment[];
+};
+
+export type ResolvedSubtitleSegmentStyle = {
+  style: SubtitleStyle;
+  effect: SubtitleEffectSettings;
+  mode: "inherit" | "custom";
 };
 
 export type RhythmGridPoint = {
@@ -225,6 +233,42 @@ export function normalizeSubtitleStyle(value: unknown): SubtitleStyle {
       SUBTITLE_STYLE_LIMITS.margin.min,
       SUBTITLE_STYLE_LIMITS.margin.max,
     ),
+  };
+}
+
+/** セグメントの個別設定またはレーン既定値から、描画・出力に使う実効Style／Effectを返す。 */
+export function resolveSubtitleSegmentStyle(
+  lane: Pick<LyricsLane, "style" | "effect">,
+  segment: Pick<LyricsSegment, "style_override" | "effect_override">,
+): ResolvedSubtitleSegmentStyle {
+  if (segment.style_override && segment.effect_override) {
+    return {
+      style: normalizeSubtitleStyle(segment.style_override),
+      effect: normalizeSubtitleEffect(segment.effect_override),
+      mode: "custom",
+    };
+  }
+  return {
+    style: normalizeSubtitleStyle(lane.style),
+    effect: normalizeSubtitleEffect(lane.effect),
+    mode: "inherit",
+  };
+}
+
+/** セグメントを継承または独自モードへ切り替え、個別Style／Effectを対で設定する。 */
+export function withSubtitleSegmentStyle(
+  segment: LyricsSegment,
+  style?: SubtitleStyle,
+  effect?: SubtitleEffectSettings,
+): LyricsSegment {
+  if (!style || !effect) {
+    const { style_override: _style, effect_override: _effect, ...inherited } = segment;
+    return inherited;
+  }
+  return {
+    ...segment,
+    style_override: normalizeSubtitleStyle(style),
+    effect_override: normalizeSubtitleEffect(effect),
   };
 }
 
@@ -474,7 +518,7 @@ export function validateSubtitleState(value: unknown): SubtitleProjectState | nu
       ...lane,
       style: normalizeSubtitleStyle(lane.style),
       effect: normalizeSubtitleEffect(lane.effect),
-      segments: chronologicalSegments(lane.segments),
+      segments: chronologicalSegments(lane.segments).map(normalizeLyricsSegment),
     })),
     active_lane_id: activeLaneId,
     selected_segment_id:
@@ -509,13 +553,33 @@ function isLyricsLane(value: unknown): value is LyricsLane {
 function isLyricsSegment(value: unknown): value is LyricsSegment {
   if (!value || typeof value !== "object") return false;
   const segment = value as Partial<LyricsSegment>;
+  const hasStyleOverride = Boolean(segment.style_override);
+  const hasEffectOverride = Boolean(segment.effect_override);
   return (
     typeof segment.id === "string" &&
     typeof segment.text === "string" &&
     Number.isFinite(segment.start) &&
     Number.isFinite(segment.end) &&
-    Number(segment.end) > Number(segment.start)
+    Number(segment.end) > Number(segment.start) &&
+    hasStyleOverride === hasEffectOverride &&
+    (!hasStyleOverride || (
+      typeof segment.style_override === "object" &&
+      typeof segment.effect_override === "object"
+    ))
   );
+}
+
+/** projectから読み込んだセグメントの個別Style／Effectを現在の制約へ正規化する。 */
+function normalizeLyricsSegment(segment: LyricsSegment): LyricsSegment {
+  if (!segment.style_override || !segment.effect_override) {
+    const { style_override: _style, effect_override: _effect, ...inherited } = segment;
+    return inherited;
+  }
+  return {
+    ...segment,
+    style_override: normalizeSubtitleStyle(segment.style_override),
+    effect_override: normalizeSubtitleEffect(segment.effect_override),
+  };
 }
 
 /** `isRhythmGridPoint`の入力が要求された条件やschemaを満たすか検証する。 */

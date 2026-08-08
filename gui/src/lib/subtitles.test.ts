@@ -6,9 +6,11 @@ import {
   labelStackLevels,
   normalizeSubtitleStyle,
   nudgeSegmentBoundary,
+  resolveSubtitleSegmentStyle,
   subtitleRenderSignature,
   updateSegmentBoundary,
   validateSubtitleState,
+  withSubtitleSegmentStyle,
   type LyricsSegment,
   type RhythmGridPoint,
 } from "./subtitles";
@@ -213,6 +215,59 @@ describe("subtitle effects", () => {
       beat_warning: null,
       confidence_statistics: null,
     })?.lanes[0].effect).toEqual(configured.effect);
+  });
+});
+
+describe("segment style overrides", () => {
+  it("inherits lane settings until a complete custom Style and Effect pair is applied", () => {
+    const lane = createLyricsLane();
+    const inheritedSegment = segment("line", 0, 1);
+    expect(resolveSubtitleSegmentStyle(lane, inheritedSegment)).toMatchObject({
+      mode: "inherit",
+      style: { font_size: 90 },
+      effect: { name: "cut" },
+    });
+
+    const customSegment = withSubtitleSegmentStyle(
+      inheritedSegment,
+      { ...lane.style, font_size: 48 },
+      { ...lane.effect, name: "fad" },
+    );
+    lane.style = { ...lane.style, font_size: 120 };
+    expect(resolveSubtitleSegmentStyle(lane, customSegment)).toMatchObject({
+      mode: "custom",
+      style: { font_size: 48 },
+      effect: { name: "fad" },
+    });
+    expect(resolveSubtitleSegmentStyle(lane, withSubtitleSegmentStyle(customSegment))).toMatchObject({
+      mode: "inherit",
+      style: { font_size: 120 },
+    });
+  });
+
+  it("normalizes a persisted complete override and rejects a partial pair", () => {
+    const lane = createLyricsLane();
+    lane.segments = [withSubtitleSegmentStyle(
+      segment("custom", 0, 1),
+      { ...lane.style, font_size: 500 },
+      { ...lane.effect, start_duration_ms: 99_999 },
+    )];
+    const state = validateSubtitleState({
+      lanes: [lane],
+      active_lane_id: lane.id,
+      selected_segment_id: lane.segments[0].id,
+      tempo_bpm: 0,
+      beat_times: [],
+      rhythm_grid: [],
+      beat_warning: null,
+      confidence_statistics: null,
+    });
+    expect(state?.lanes[0].segments[0].style_override?.font_size).toBe(400);
+    expect(state?.lanes[0].segments[0].effect_override?.start_duration_ms).toBe(99_999);
+
+    const partial = { ...lane.segments[0] };
+    delete partial.effect_override;
+    expect(validateSubtitleState({ ...state, lanes: [{ ...lane, segments: [partial] }] })).toBeNull();
   });
 });
 

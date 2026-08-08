@@ -1241,6 +1241,74 @@ tr.selected:hover {
   min-width: min(520px, calc(100vw - 80px));
 }
 
+.segment-settings-dialog {
+  width: min(780px, calc(100vw - 48px));
+}
+
+.segment-settings-tabs {
+  margin-bottom: 14px;
+}
+
+.segment-settings-content {
+  display: grid;
+  gap: 14px;
+}
+
+.segment-style-content {
+  min-height: 0;
+}
+
+.segment-style-scroll {
+  height: min(560px, calc(100vh - 250px));
+  min-height: 0;
+}
+
+.segment-style-scroll-viewport {
+  padding-right: 12px;
+}
+
+.segment-style-scroll-content {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 2px;
+}
+
+.segment-style-mode {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #354850;
+  border-radius: 6px;
+}
+
+.segment-style-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.segment-style-editor-frame {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.segment-style-editor-frame:disabled {
+  opacity: 0.55;
+}
+
+@media (max-width: 760px) {
+  .segment-settings-dialog {
+    width: calc(100vw - 24px);
+  }
+
+  .segment-timing-form {
+    min-width: 0;
+  }
+}
+
 .segment-timing-mode {
   display: flex;
   gap: 18px;
@@ -2107,6 +2175,13 @@ tr.selected:hover {
   width: 2px;
   height: 38px;
   background: currentColor;
+}
+
+.lyrics-label.custom-style .lyrics-connector {
+  width: 6px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='8' viewBox='0 0 6 8'%3E%3Cpath d='M1 0L5 4L1 8' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") center top / 6px 8px repeat-y;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='8' viewBox='0 0 6 8'%3E%3Cpath d='M1 0L5 4L1 8' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") center top / 6px 8px repeat-y;
 }
 
 .lyrics-label .input {

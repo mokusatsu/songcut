@@ -14,6 +14,7 @@ import {
   type LyricsLane,
   type SubtitleRenderRequestItem,
 } from "@/lib/subtitles";
+import { normalizeSubtitleEffect } from "@/lib/subtitleEffects";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -265,7 +266,20 @@ export function startSubtitleExport(
     output_dir: outputDir,
     play_res_x: videoWidth,
     play_res_y: videoHeight,
-    lanes: lanes.map((lane) => ({ ...lane, style: normalizeSubtitleStyle(lane.style) })),
+    lanes: lanes.map((lane) => ({
+      ...lane,
+      style: normalizeSubtitleStyle(lane.style),
+      effect: normalizeSubtitleEffect(lane.effect),
+      segments: lane.segments.map((segment) => ({
+        ...segment,
+        ...(segment.style_override && segment.effect_override
+          ? {
+              style_override: normalizeSubtitleStyle(segment.style_override),
+              effect_override: normalizeSubtitleEffect(segment.effect_override),
+            }
+          : {}),
+      })),
+    })),
   });
 }
 

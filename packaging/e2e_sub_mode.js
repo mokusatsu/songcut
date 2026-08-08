@@ -1221,6 +1221,162 @@ function cleanup(processHandle, cdp) {
       renderRequestCountAfterEffect,
     });
 
+    const segmentStyleTarget = effectUpdatedProject.subtitle.lanes[0].segments[0];
+    const segmentStyleOpened = await evaluate(
+      cdp,
+      `(() => {
+        const target = [...document.querySelectorAll(".lyrics-segment")].find(
+          (item) => item.title.startsWith(${JSON.stringify(`${segmentStyleTarget.text}\n`)})
+        );
+        target?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        return !!target;
+      })()`
+    );
+    assertPass(segmentStyleOpened, "Sub segment settings dialog could not be opened.");
+    const segmentTabs = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const tabs = [...(dialog?.querySelectorAll('[role="tab"]') || [])];
+        return tabs.length === 2
+          ? { labels: tabs.map((tab) => tab.textContent.trim()), portalParentIsBody: dialog.parentElement?.parentElement === document.body }
+          : false;
+      })()`,
+      10_000,
+      "Sub segment Timing and Style tabs"
+    );
+    assertPass(
+      JSON.stringify(segmentTabs.labels) === JSON.stringify(["Timing", "Style"]) && segmentTabs.portalParentIsBody,
+      "Sub segment settings tabs or modal focus scope are incomplete.",
+      segmentTabs
+    );
+    const segmentStyleTabPoint = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const styleTab = [...(dialog?.querySelectorAll('[role="tab"]') || [])].find((tab) => tab.textContent.trim() === "Style");
+        if (!styleTab) return null;
+        const rect = styleTab.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`
+    );
+    assertPass(segmentStyleTabPoint, "Custom Sub segment Style tab could not be opened.");
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "none" });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] input[name="segment-style-mode"]') !== null`,
+      10_000,
+      "Sub segment Style controls"
+    );
+    const segmentStyleScroll = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const root = dialog?.querySelector(".segment-style-scroll.scroll-area");
+        const viewport = root?.querySelector(".scroll-area-viewport");
+        const scrollbar = root?.querySelector(".scroll-area-scrollbar-vertical");
+        return root && viewport && scrollbar
+          ? { viewportClass: viewport.className, scrollbarClass: scrollbar.className }
+          : null;
+      })()`
+    );
+    assertPass(
+      segmentStyleScroll?.viewportClass.includes("segment-style-scroll-viewport") &&
+        segmentStyleScroll?.scrollbarClass.includes("scroll-area-scrollbar-vertical"),
+      "Sub segment Style tab does not use the shared shadcn ScrollArea.",
+      segmentStyleScroll
+    );
+    const customModeSelected = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const radios = dialog?.querySelectorAll('input[name="segment-style-mode"]');
+        radios?.[1]?.click();
+        return !!radios?.[1];
+      })()`
+    );
+    assertPass(customModeSelected, "Custom Sub segment mode could not be selected.");
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] .segment-style-editor-frame')?.disabled === false`,
+      10_000,
+      "enabled custom Sub segment Style editor"
+    );
+    const segmentStyleConfigured = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const sizeLabel = [...(dialog?.querySelectorAll(".subtitle-style-fields label") || [])]
+          .find((item) => item.textContent.trim().startsWith("サイズ"));
+        const sizeInput = sizeLabel?.querySelector("input");
+        const effectSelect = dialog?.querySelector(".subtitle-effect-section select");
+        if (!sizeInput || !effectSelect) return false;
+        const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        inputSetter.call(sizeInput, "52");
+        sizeInput.dispatchEvent(new Event("input", { bubbles: true }));
+        sizeInput.dispatchEvent(new Event("change", { bubbles: true }));
+        const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
+        selectSetter.call(effectSelect, "glow");
+        effectSelect.dispatchEvent(new Event("change", { bubbles: true }));
+        return true;
+      })()`
+    );
+    assertPass(segmentStyleConfigured, "Custom Sub segment Style and Effect could not be configured.");
+    const segmentStyleApplied = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const button = dialog?.querySelector('.dialog-actions button[type="submit"]');
+        button?.click();
+        return !!button;
+      })()`
+    );
+    assertPass(segmentStyleApplied, "Custom Sub segment settings could not be applied.");
+    const segmentStyleUpdatedProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const lane = value.subtitle?.lanes?.[0];
+        const target = lane?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        const inherited = lane?.segments?.filter((segment) => segment.id !== segmentStyleTarget.id) || [];
+        return target?.style_override?.font_size === 52 &&
+          target?.effect_override?.name === "glow" &&
+          target.render_cache?.signature !== segmentStyleTarget.render_cache?.signature &&
+          inherited.every((segment, index) =>
+            segment.render_cache?.signature === effectUpdatedProject.subtitle.lanes[0].segments[index + 1]?.render_cache?.signature
+          );
+      },
+      5 * 60_000,
+      "custom Sub segment Style persistence and targeted cache invalidation"
+    );
+    const renderRequestCountAfterSegmentStyle = await evaluate(cdp, `window.__subtitleRenderRequests`);
+    assertPass(
+      renderRequestCountAfterSegmentStyle > renderRequestCountAfterEffect,
+      "Custom segment Style did not request a refreshed preview frame.",
+      { renderRequestCountAfterEffect, renderRequestCountAfterSegmentStyle }
+    );
+    const customStyleMarker = await waitFor(
+      cdp,
+      `(() => {
+        const label = [...document.querySelectorAll(".lyrics-label")].find(
+          (item) => item.textContent.trim() === ${JSON.stringify(segmentStyleTarget.text)}
+        );
+        const connector = label?.querySelector(".lyrics-connector");
+        return label?.classList.contains("custom-style") && connector
+          ? { customStyle: true, connectorWidth: getComputedStyle(connector).width }
+          : false;
+      })()`,
+      10_000,
+      "custom segment zigzag marker"
+    );
+    assertPass(customStyleMarker.connectorWidth === "6px", "Custom segment marker is not the zigzag variant.", customStyleMarker);
+    log("SUB_SEGMENT_STYLE_OK", {
+      segmentId: segmentStyleTarget.id,
+      style: segmentStyleUpdatedProject.subtitle.lanes[0].segments[0].style_override,
+      effect: segmentStyleUpdatedProject.subtitle.lanes[0].segments[0].effect_override,
+    });
+
     const editorMetrics = await evaluate(
       cdp,
       `(() => {
@@ -1275,7 +1431,7 @@ function cleanup(processHandle, cdp) {
         return true;
       })()`
     );
-    const expectedOverlaySegment = styleUpdatedProject.subtitle.lanes
+    const expectedOverlaySegment = segmentStyleUpdatedProject.subtitle.lanes
       .flatMap((lane) => lane.segments)
       .find((segment) => segment.id === firstLyrics.id);
     assertPass(
@@ -1470,6 +1626,13 @@ function cleanup(processHandle, cdp) {
     const srtFiles = fs.readdirSync(outputDir).filter((name) => name.endsWith(".srt"));
     const styleFiles = fs.readdirSync(outputDir).filter((name) => name.endsWith(".srt.style"));
     assertPass(srtFiles.length === 2 && styleFiles.length === 2, "Lane SRT/style files are incomplete.", { srtFiles, styleFiles });
+    const assFile = path.join(outputDir, `${fixtureStem}-subtitles.ass`);
+    const assText = fs.existsSync(assFile) ? fs.readFileSync(assFile, "utf8") : "";
+    assertPass(
+      assText.includes("Style: Lane1Override") && assText.includes(",52,"),
+      "Full-fidelity ASS sidecar is missing the custom segment style.",
+      { assFile, exists: fs.existsSync(assFile) }
+    );
     const sourceDuration = Number(execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", input], { encoding: "utf8" }).trim());
     const outputDuration = Number(execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", outputVideo], { encoding: "utf8" }).trim());
     const sourceAudioCodec = execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", input], { encoding: "utf8" }).trim();
@@ -1486,7 +1649,7 @@ function cleanup(processHandle, cdp) {
       })()`
     );
     assertPass(exportDialogClosed, "Completed subtitle export progress dialog could not be closed.");
-    log("SUB_EXPORT_OK", { outputVideo, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
+    log("SUB_EXPORT_OK", { outputVideo, assFile, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
 
     const finalScreenshotPath = await captureOptionalScreenshot(cdp, screenshotPath, "final Sub mode");
     log("SUB_E2E_OK", { screenshotPath: finalScreenshotPath, logPath });

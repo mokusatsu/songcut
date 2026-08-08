@@ -40,6 +40,8 @@ class SubtitleSegment:
     text: str
     start: float
     end: float
+    style_override: SubtitleStyle | None = None
+    effect_override: SubtitleEffect | None = None
 
 
 @dataclass(frozen=True)
@@ -132,18 +134,21 @@ def render_ass_document(
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
     ]
-    style_names: dict[str, str] = {}
+    # ASS events reference named styles, so assign one stable name to every
+    # effective style (lane defaults and segment overrides alike).  Names are
+    # allocated by the deterministic lane/segment traversal order and reused
+    # when two segments resolve to the same style.
+    style_names: dict[tuple[object, ...], str] = {}
+    style_definitions: list[tuple[str, SubtitleStyle]] = []
     for index, lane in enumerate(lanes, start=1):
-        name = f"Lane{index}"
-        style_names[lane.id] = name
-        style = lane.style
-        lines.append(
-            f"Style: {name},{_ass_field(style.font_name)},{style.font_size:g},{_ass_color(style.primary_color)},"
-            f"&H000000FF,{_ass_color(style.outline_color)},{_ass_color(style.background_color)},"
-            f"{-1 if style.bold else 0},{-1 if style.italic else 0},0,0,100,100,0,0,1,"
-            f"{style.outline:g},{style.shadow:g},{style.alignment},{style.margin_l},{style.margin_r},"
-            f"{style.margin_v},1"
-        )
+        _register_style(style_names, style_definitions, lane.style, f"Lane{index}")
+        for segment_index, segment in enumerate(
+            sorted(lane.segments, key=lambda item: (item.start, item.end)),
+            start=1,
+        ):
+            style = _effective_style(lane, segment)
+            _register_style(style_names, style_definitions, style, f"Lane{index}Override{segment_index}")
+    lines.extend(_ass_style_line(name, style) for name, style in style_definitions)
     lines.extend(
         [
             "",
@@ -153,28 +158,30 @@ def render_ass_document(
     )
     for layer, lane in enumerate(lanes):
         for segment in sorted(lane.segments, key=lambda item: (item.start, item.end)):
+            style = _effective_style(lane, segment)
+            effect = _effective_effect(lane, segment)
             dialogue = (
                 f"Dialogue: {layer * 1000 if apply_effects else layer},"
                 f"{_ass_timestamp(segment.start)},{_ass_timestamp(segment.end)},"
-                f"{style_names[lane.id]},,0,0,0,,{_ass_text(segment.text)}"
+                f"{style_names[_style_key(style)]},,0,0,0,,{_ass_text(segment.text)}"
             )
-            if apply_effects and lane.effect.name != Effect.CUT.value:
+            if apply_effects and effect.name != Effect.CUT.value:
                 start_ms, end_ms = _fit_effect_durations(
-                    lane.effect.start_duration_ms,
-                    lane.effect.end_duration_ms,
+                    effect.start_duration_ms,
+                    effect.end_duration_ms,
                     segment.end - segment.start,
                 )
-                params = _effect_params(lane.effect.params)
+                params = _effect_params(effect.params)
                 lines.extend(
                     decorate_dialogue(
                         dialogue,
                         start_ms,
                         end_ms,
-                        lane.effect.name,
+                        effect.name,
                         params=params,
                         context=_effect_context(
                             segment.text,
-                            lane.style,
+                            style,
                             play_res_x=play_res_x,
                             play_res_y=play_res_y,
                         ),
@@ -183,6 +190,57 @@ def render_ass_document(
             else:
                 lines.append(dialogue)
     return "\n".join(lines) + "\n"
+
+
+def _effective_style(lane: SubtitleLane, segment: SubtitleSegment) -> SubtitleStyle:
+    return segment.style_override or lane.style
+
+
+def _effective_effect(lane: SubtitleLane, segment: SubtitleSegment) -> SubtitleEffect:
+    return segment.effect_override or lane.effect
+
+
+def _style_key(style: SubtitleStyle) -> tuple[object, ...]:
+    return (
+        style.font_name,
+        style.font_size,
+        style.primary_color,
+        style.outline_color,
+        style.background_color,
+        style.bold,
+        style.italic,
+        style.outline,
+        style.shadow,
+        style.alignment,
+        style.margin_l,
+        style.margin_r,
+        style.margin_v,
+    )
+
+
+def _register_style(
+    names: dict[tuple[object, ...], str],
+    definitions: list[tuple[str, SubtitleStyle]],
+    style: SubtitleStyle,
+    preferred_name: str,
+) -> str:
+    key = _style_key(style)
+    name = names.get(key)
+    if name is None:
+        name = preferred_name
+        names[key] = name
+        definitions.append((name, style))
+    return name
+
+
+def _ass_style_line(name: str, style: SubtitleStyle) -> str:
+    return (
+        f"Style: {name},{_ass_field(style.font_name)},{style.font_size:g},{_ass_color(style.primary_color)},"
+        f"&H000000FF,{_ass_color(style.outline_color)},{_ass_color(style.background_color)},"
+        f"{-1 if style.bold else 0},{-1 if style.italic else 0},0,0,100,100,0,0,1,"
+        f"{style.outline:g},{style.shadow:g},{style.alignment},{style.margin_l},{style.margin_r},"
+        f"{style.margin_v},1"
+    )
 
 
 def render_subtitle_png_base64(
@@ -277,57 +335,56 @@ def export_subtitle_bundle(
         sidecars.append({"lane_id": lane.id, "srt": str(srt_path), "style": str(style_path)})
 
     target = output_dir / f"{source_stem}-subtitled.mp4"
-    with tempfile.TemporaryDirectory(prefix="songcut-subtitle-") as temporary_directory:
-        ass_path = Path(temporary_directory) / "subtitles.ass"
-        ass_path.write_text(
-            render_ass_document(
-                active_lanes,
-                play_res_x=play_res_x,
-                play_res_y=play_res_y,
-                apply_effects=True,
-            ),
-            encoding="utf-8-sig",
-            newline="\n",
-        )
-        if on_progress:
-            on_progress(0.15, "Burning subtitles into video.")
-        command = [
-            str(paths.ffmpeg),
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-nostdin",
-            "-y",
-            "-progress",
-            "pipe:1",
-            "-nostats",
-            "-i",
-            str(source),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-vf",
-            _ass_filter(ass_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "20",
-            "-c:a",
-            "copy",
-            "-movflags",
-            "+faststart",
-            str(target),
-        ]
-        _run_ffmpeg_with_progress(
-            command,
-            duration=expected_duration,
-            on_progress=on_progress,
-            progress_start=0.15,
-            progress_end=0.96,
-        )
+    ass_path = output_dir / f"{source_stem}-subtitles.ass"
+    ass_path.write_text(
+        render_ass_document(
+            active_lanes,
+            play_res_x=play_res_x,
+            play_res_y=play_res_y,
+            apply_effects=True,
+        ),
+        encoding="utf-8-sig",
+        newline="\n",
+    )
+    if on_progress:
+        on_progress(0.15, "Burning subtitles into video.")
+    command = [
+        str(paths.ffmpeg),
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-progress",
+        "pipe:1",
+        "-nostats",
+        "-i",
+        str(source),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-vf",
+        _ass_filter(ass_path),
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(target),
+    ]
+    _run_ffmpeg_with_progress(
+        command,
+        duration=expected_duration,
+        on_progress=on_progress,
+        progress_start=0.15,
+        progress_end=0.96,
+    )
     if not target.exists() or target.stat().st_size <= 0:
         raise RuntimeError("subtitle export did not create a video")
     actual_duration = probe_duration(paths.ffprobe, target)
@@ -335,7 +392,12 @@ def export_subtitle_bundle(
         raise RuntimeError("subtitle export duration does not match the source")
     if on_progress:
         on_progress(1.0, "Subtitle export complete.")
-    return {"video": str(target), "sidecars": sidecars, "output_dir": str(output_dir)}
+    return {
+        "video": str(target),
+        "ass": str(ass_path),
+        "sidecars": sidecars,
+        "output_dir": str(output_dir),
+    }
 
 
 def _run_ffmpeg_with_progress(

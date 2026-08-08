@@ -30,12 +30,14 @@ const en = {
     mmsNpuUnsupported: "The current MMS model supports GPU and CPU. NPU is not supported.",
   },
   segmentTiming: {
-    title: "Segment timing", start: "Start time", end: "End time", duration: "Duration",
+    title: "Segment timing", settingsTitle: "Segment settings", start: "Start time", end: "End time", duration: "Duration",
     specification: "Range specification", durationMode: "Specify duration", endMode: "Specify end time",
     nearestGrid: "Nearest quarter-beat: {{time}}", nearestEndGrid: "Nearest quarter-beat for the end: {{time}}",
     invalidTime: "Enter seconds or a timecode.", positiveDuration: "The segment must have a positive duration.",
     outOfMedia: "The segment must remain inside the video.", previousOverlap: "The segment overlaps the previous segment.",
     nextOverlap: "The segment overlaps the next segment.", apply: "Apply",
+    tabsLabel: "Segment settings", timingTab: "Timing", styleTab: "Style",
+    styleMode: "Style mode", inheritStyle: "Inherit from timeline", customStyle: "Custom settings",
   },
   whisper: {
     aria: "Whisper transcription settings", enable: "Enable Whisper transcription", bundled: "Bundled", ready: "Ready",
@@ -265,12 +267,14 @@ const ja: TranslationShape<typeof en> = {
     mmsNpuUnsupported: "現在のMMSモデルはGPUとCPUに対応しています。NPUには対応していません。",
   },
   segmentTiming: {
-    title: "セグメント時刻", start: "開始時刻", end: "終点", duration: "長さ",
+    title: "セグメント時刻", settingsTitle: "セグメント設定", start: "開始時刻", end: "終点", duration: "長さ",
     specification: "範囲の指定方法", durationMode: "長さ指定", endMode: "終点指定",
     nearestGrid: "最寄りの1/4拍: {{time}}", nearestEndGrid: "終点に最も近い1/4拍: {{time}}",
     invalidTime: "秒数またはタイムコードを入力してください。", positiveDuration: "セグメントには正の長さが必要です。",
     outOfMedia: "セグメントを動画の範囲内に収めてください。", previousOverlap: "前のセグメントと重複しています。",
     nextOverlap: "次のセグメントと重複しています。", apply: "反映",
+    tabsLabel: "セグメント設定", timingTab: "Timing", styleTab: "Style",
+    styleMode: "スタイルモード", inheritStyle: "タイムラインから継承", customStyle: "独自設定",
   },
   whisper: {
     aria: "Whisper 文字起こし設定", enable: "Whisper 文字起こしを有効化", bundled: "同梱済み", ready: "準備完了",

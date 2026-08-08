@@ -18,6 +18,7 @@ from songcut.api import (
     MmsDownloadRequest,
     ProbeRequest,
     ScratchProxyRequest,
+    SubtitleExportRequest,
     SubtitleRenderRequest,
     TranscriptionRequest,
     TranscriptionSegmentRequest,
@@ -34,6 +35,7 @@ from songcut.api import (
     _waveform_finished_at,
     _waveform_points,
     _scratch_proxy_job,
+    _subtitle_export_job,
     _subtitle_render_job,
     cancel_scratch_proxy_job,
     create_transcription_job,
@@ -114,6 +116,84 @@ class ApiJobTests(unittest.TestCase):
             },
         )
         render.assert_called_once()
+
+    def test_subtitle_export_request_preserves_segment_style_and_effect_overrides(self) -> None:
+        now = time.time()
+        with _jobs_lock:
+            _jobs["subtitle-export-001"] = JobRecord(
+                id="subtitle-export-001",
+                kind="subtitle-export",
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+        request = SubtitleExportRequest.model_validate(
+            {
+                "source_path": "source.mp4",
+                "output_dir": "out",
+                "play_res_x": 1280,
+                "play_res_y": 720,
+                "lanes": [
+                    {
+                        "id": "lyrics",
+                        "name": "Lyrics",
+                        "style": {"font_size": 48},
+                        "effect": {"name": "cut"},
+                        "segments": [
+                            {
+                                "id": "line",
+                                "text": "歌詞",
+                                "start": 1,
+                                "end": 2,
+                                "style_override": {"font_size": 80, "alignment": 7},
+                                "effect_override": {"name": "fad", "start_duration_ms": 200},
+                            },
+                            {"id": "fallback", "text": "通常", "start": 2, "end": 3},
+                        ],
+                    }
+                ],
+            }
+        )
+        captured: dict[str, object] = {}
+
+        def fake_export(_source, _output_dir, lanes, **_kwargs):
+            captured["lanes"] = lanes
+            return {"video": "out.mp4", "ass": "out.ass", "sidecars": [], "output_dir": "out"}
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.export_subtitle_bundle", side_effect=fake_export),
+            mock.patch("songcut.api.update_job"),
+        ):
+            _subtitle_export_job("subtitle-export-001", request)
+
+        lane = captured["lanes"][0]
+        assert lane.segments[0].style_override.font_size == 80
+        assert lane.segments[0].style_override.alignment == 7
+        assert lane.segments[0].effect_override.name == "fad"
+        assert lane.segments[0].effect_override.start_duration_ms == 200
+        assert lane.segments[1].style_override is None
+        assert lane.segments[1].effect_override is None
+
+        with self.assertRaisesRegex(ValueError, "both style and effect"):
+            SubtitleExportRequest.model_validate(
+                {
+                    "source_path": "source.mp4",
+                    "output_dir": "out",
+                    "play_res_x": 1280,
+                    "play_res_y": 720,
+                    "lanes": [{
+                        "id": "lyrics",
+                        "segments": [{
+                            "id": "partial",
+                            "text": "invalid",
+                            "start": 0,
+                            "end": 1,
+                            "style_override": {"font_size": 80},
+                        }],
+                    }],
+                }
+            )
 
     def test_analysis_starts_transcription_job_without_waiting_for_it(self) -> None:
         now = time.time()

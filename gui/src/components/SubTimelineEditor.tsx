@@ -346,7 +346,7 @@ function LyricsSegmentView(props: {
         />
       </button>
       <div
-        className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}
+        className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""} ${props.segment.style_override && props.segment.effect_override ? "custom-style" : ""}`}
         style={{ left, top: 38 + props.level * 27, width: props.labelWidth }}
         onClick={props.onSelect}
         onDoubleClick={() => {
