@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 import math
 import re
 import tempfile
-import unicodedata
 import win_safesubprocess as subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
-from .ass_effects23 import Effect, EffectContext, Rect, decorate_dialogue
+from ass_lyric_effects import (
+    CONTEXT_REQUIRED_EFFECTS,
+    Effect,
+    EffectContext,
+    Rect,
+    VisualLineLayout,
+    decorate_dialogue,
+    measure_grapheme_widths,
+    split_graphemes,
+)
 from .ffmpeg_tools import FfmpegPaths, find_ffmpeg, probe_duration
 from .ffmpeg_process import run_ffmpeg_stream, run_ffmpeg_sync
 from .guide import safe_filename_stem
 from .lyrics_alignment import format_srt_timestamp
+from .windows_font_resolver import resolve_windows_font
 
 
 @dataclass(frozen=True)
@@ -49,7 +59,7 @@ class SubtitleEffect:
     name: str = Effect.CUT.value
     start_duration_ms: int = 300
     end_duration_ms: int = 300
-    params: Mapping[str, str | int | float] | None = None
+    params: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -165,26 +175,32 @@ def render_ass_document(
                 f"{_ass_timestamp(segment.start)},{_ass_timestamp(segment.end)},"
                 f"{style_names[_style_key(style)]},,0,0,0,,{_ass_text(segment.text)}"
             )
-            if apply_effects and effect.name != Effect.CUT.value:
+            selected_effect = Effect(effect.name)
+            if apply_effects and selected_effect is not Effect.CUT:
                 start_ms, end_ms = _fit_effect_durations(
                     effect.start_duration_ms,
                     effect.end_duration_ms,
                     segment.end - segment.start,
                 )
                 params = _effect_params(effect.params)
+                context = (
+                    _effect_context(
+                        segment.text,
+                        style,
+                        play_res_x=play_res_x,
+                        play_res_y=play_res_y,
+                    )
+                    if selected_effect in CONTEXT_REQUIRED_EFFECTS
+                    else None
+                )
                 lines.extend(
                     decorate_dialogue(
                         dialogue,
                         start_ms,
                         end_ms,
-                        effect.name,
+                        selected_effect,
                         params=params,
-                        context=_effect_context(
-                            segment.text,
-                            style,
-                            play_res_x=play_res_x,
-                            play_res_y=play_res_y,
-                        ),
+                        context=context,
                     )
                 )
             else:
@@ -484,13 +500,17 @@ def _ass_color(value: str) -> str:
 
 
 def _effect_params(
-    params: Mapping[str, str | int | float] | None,
-) -> dict[str, str | int | float]:
-    result = dict(params or {})
-    color = result.get("color")
-    if isinstance(color, str):
-        result["color"] = _ass_bgr_color(color)
-    return result
+    params: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return {name: _effect_param_value(value) for name, value in (params or {}).items()}
+
+
+def _effect_param_value(value: Any) -> Any:
+    if isinstance(value, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?", value.strip()):
+        return _ass_bgr_color(value)
+    if isinstance(value, (list, tuple)):
+        return [_effect_param_value(item) for item in value]
+    return value
 
 
 def _ass_bgr_color(value: str) -> str:
@@ -534,49 +554,122 @@ def _effect_context(
     height = max(1, int(play_res_y))
     column = (style.alignment - 1) % 3
     row = (style.alignment - 1) // 3
-    anchor_x = (style.margin_l, width // 2, width - style.margin_r)[column]
-    anchor_y = (height - style.margin_v, height // 2, style.margin_v)[row]
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n") or [""]
-    glyph_units = max(sum(_glyph_width(character) for character in line) for line in lines)
-    padding = max(2.0, style.outline + style.shadow)
-    box_width = min(width, max(1, int(math.ceil(glyph_units * style.font_size * 0.56 + padding * 2))))
-    box_height = min(
-        height,
-        max(1, int(math.ceil(len(lines) * style.font_size * 1.28 + padding * 2))),
+    visible_text = "".join(lines)
+    if not split_graphemes(visible_text):
+        raise ValueError("subtitle effect text must contain at least one visible grapheme")
+    resolved = resolve_windows_font(
+        style.font_name,
+        bold=style.bold,
+        italic=style.italic,
+        text=visible_text,
     )
-    if column == 0:
-        x1, x2 = anchor_x, anchor_x + box_width
-    elif column == 1:
-        x1, x2 = anchor_x - box_width // 2, anchor_x + math.ceil(box_width / 2)
-    else:
-        x1, x2 = anchor_x - box_width, anchor_x
-    if row == 0:
-        y1, y2 = anchor_y - box_height, anchor_y
-    elif row == 1:
-        y1, y2 = anchor_y - box_height // 2, anchor_y + math.ceil(box_height / 2)
-    else:
-        y1, y2 = anchor_y, anchor_y + box_height
-    x1, x2 = _clamp_box(x1, x2, width)
-    y1, y2 = _clamp_box(y1, y2, height)
+    measured = [
+        _measure_line(line, str(resolved.font_path), style.font_size, resolved.face_index)
+        if line
+        else ()
+        for line in lines
+    ]
+    left_pad = max(0.0, style.outline)
+    top_pad = max(0.0, style.outline)
+    right_pad = max(0.0, style.outline + style.shadow)
+    bottom_pad = max(0.0, style.outline + style.shadow)
+    line_height = style.font_size + top_pad + bottom_pad
+    block_height = line_height * len(lines)
+    anchor_x = float((style.margin_l, width / 2, width - style.margin_r)[column])
+    anchor_y = float((height - style.margin_v, height / 2, style.margin_v)[row])
+    block_y1, block_y2 = _vertical_extent(anchor_y, block_height, row)
+    line_layouts: list[VisualLineLayout] = []
+    block_x1 = float(width)
+    block_x2 = 0.0
+    for line_index, glyph_widths in enumerate(measured):
+        if not glyph_widths:
+            continue
+        line_width = sum(glyph_widths) + left_pad + right_pad
+        line_x1, line_x2 = _aligned_extent(anchor_x, line_width, column)
+        line_y1 = block_y1 + line_index * line_height
+        line_y2 = line_y1 + line_height
+        rect = _inside_play_res_rect(line_x1, line_y1, line_x2, line_y2, width, height)
+        line_layouts.append(
+            VisualLineLayout(
+                anchor_x=round((rect.x1 + rect.x2) / 2),
+                anchor_y=round((rect.y1 + rect.y2) / 2),
+                text_box=rect,
+                glyph_widths=tuple(glyph_widths),
+            )
+        )
+        block_x1 = min(block_x1, rect.x1)
+        block_x2 = max(block_x2, rect.x2)
+    if not line_layouts:
+        raise ValueError("subtitle effect text must contain a non-empty visual line")
+    block_rect = _inside_play_res_rect(
+        block_x1,
+        block_y1,
+        block_x2,
+        block_y2,
+        width,
+        height,
+    )
+    single_line_widths = line_layouts[0].glyph_widths if len(lines) == 1 else None
     return EffectContext(
         play_res_x=width,
         play_res_y=height,
-        anchor_x=max(0, min(width, int(anchor_x))),
-        anchor_y=max(0, min(height, int(anchor_y))),
-        text_box=Rect(x1, y1, x2, y2),
+        anchor_x=round((block_rect.x1 + block_rect.x2) / 2),
+        anchor_y=round((block_rect.y1 + block_rect.y2) / 2),
+        text_box=block_rect,
+        glyph_widths=single_line_widths,
+        line_layouts=tuple(line_layouts) if len(lines) > 1 else None,
     )
 
 
-def _glyph_width(character: str) -> float:
-    if unicodedata.combining(character):
-        return 0.0
-    return 2.0 if unicodedata.east_asian_width(character) in {"W", "F"} else 1.0
+@lru_cache(maxsize=2048)
+def _measure_line(
+    text: str,
+    font_path: str,
+    font_size: float,
+    face_index: int,
+) -> tuple[float, ...]:
+    widths = measure_grapheme_widths(text, font_path, font_size, face_index=face_index)
+    if len(widths) != len(split_graphemes(text)):
+        raise ValueError("font measurement did not return one width per grapheme")
+    if not widths or sum(widths) <= 0:
+        raise ValueError("subtitle visual line has no positive rendered width")
+    return widths
 
 
-def _clamp_box(start: int | float, end: int | float, limit: int) -> tuple[int, int]:
-    size = min(limit, max(1, int(math.ceil(end - start))))
-    bounded_start = max(0, min(limit - size, int(math.floor(start))))
-    return bounded_start, bounded_start + size
+def _aligned_extent(anchor: float, size: float, alignment_index: int) -> tuple[float, float]:
+    if alignment_index == 0:
+        return anchor, anchor + size
+    if alignment_index == 1:
+        return anchor - size / 2, anchor + size / 2
+    return anchor - size, anchor
+
+
+def _vertical_extent(anchor: float, size: float, alignment_row: int) -> tuple[float, float]:
+    if alignment_row == 0:
+        return anchor - size, anchor
+    if alignment_row == 1:
+        return anchor - size / 2, anchor + size / 2
+    return anchor, anchor + size
+
+
+def _inside_play_res_rect(
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    width: int,
+    height: int,
+) -> Rect:
+    left = math.floor(x1)
+    top = math.floor(y1)
+    right = math.ceil(x2)
+    bottom = math.ceil(y2)
+    if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+        raise ValueError(
+            "rendered subtitle bounds fall outside PlayRes; reduce font size or margins"
+        )
+    return Rect(left, top, right, bottom)
 
 
 def _css_color(value: object, fallback: str) -> str:

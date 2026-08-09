@@ -7,11 +7,11 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 
 ## 指標
 
-- Files: 121
-- Symbols: 947
-- Incoming／Outgoing: 55／27
+- Files: 122
+- Symbols: 978
+- Incoming／Outgoing: 56／28
 - Cohesion: 0.96
-- Node kinds: Class 3、File 121、Function 751、Test 72
+- Node kinds: Class 3、File 122、Function 780、Test 73
 
 ## 代表パス
 
@@ -91,20 +91,20 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 | `if` | Function | `gui/electron/project-schema.ts:610` |
 | `if` | Function | `gui/electron/project-schema.ts:624` |
 | `validateSubtitleEffect` | Function | `gui/electron/project-schema.ts:634` |
-| `if` | Function | `gui/electron/project-schema.ts:641` |
-| `validateSubtitleStyle` | Function | `gui/electron/project-schema.ts:647` |
-| `validateTranscript` | Function | `gui/electron/project-schema.ts:665` |
-| `if` | Function | `gui/electron/project-schema.ts:673` |
-| `validateBoundaryRefinementSummary` | Function | `gui/electron/project-schema.ts:688` |
-| `validateBoundarySegmentDiagnostic` | Function | `gui/electron/project-schema.ts:701` |
-| `for` | Function | `gui/electron/project-schema.ts:704` |
-| `validateBoundarySideDiagnostic` | Function | `gui/electron/project-schema.ts:711` |
-| `for` | Function | `gui/electron/project-schema.ts:714` |
-| `for` | Function | `gui/electron/project-schema.ts:717` |
-| `for` | Function | `gui/electron/project-schema.ts:720` |
-| `whisperSettings` | Function | `gui/electron/project-schema.ts:731` |
-| `validateOperation` | Function | `gui/electron/project-schema.ts:755` |
-| `if` | Function | `gui/electron/project-schema.ts:767` |
+| `if` | Function | `gui/electron/project-schema.ts:647` |
+| `validateSubtitleStyle` | Function | `gui/electron/project-schema.ts:655` |
+| `validateTranscript` | Function | `gui/electron/project-schema.ts:673` |
+| `if` | Function | `gui/electron/project-schema.ts:681` |
+| `validateBoundaryRefinementSummary` | Function | `gui/electron/project-schema.ts:696` |
+| `validateBoundarySegmentDiagnostic` | Function | `gui/electron/project-schema.ts:709` |
+| `for` | Function | `gui/electron/project-schema.ts:712` |
+| `validateBoundarySideDiagnostic` | Function | `gui/electron/project-schema.ts:719` |
+| `for` | Function | `gui/electron/project-schema.ts:722` |
+| `for` | Function | `gui/electron/project-schema.ts:725` |
+| `for` | Function | `gui/electron/project-schema.ts:728` |
+| `whisperSettings` | Function | `gui/electron/project-schema.ts:739` |
+| `validateOperation` | Function | `gui/electron/project-schema.ts:763` |
+| `if` | Function | `gui/electron/project-schema.ts:775` |
 
 ## ファイル一覧
 
@@ -188,6 +188,7 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/settingsScopes.ts`
 - `gui/src/lib/shortcuts.test.ts`
 - `gui/src/lib/shortcuts.ts`
+- `gui/src/lib/subtitleEffectCatalog.tsx`
 - `gui/src/lib/subtitleEffects.test.ts`
 - `gui/src/lib/subtitleEffects.ts`
 - `gui/src/lib/subtitleStylePresets.test.ts`

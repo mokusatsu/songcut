@@ -40,6 +40,13 @@ from .source_separation import (
     separate_vocals,
 )
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
+from .subtitle_effect_catalog import (
+    SubtitleEffectCatalogError,
+    SubtitleEffectValidationError,
+    estimate_subtitle_effect_event_count,
+    get_subtitle_effect_catalog as load_subtitle_effect_catalog,
+    normalize_subtitle_effect_params,
+)
 from .subtitle_export import (
     SubtitleEffect,
     SubtitleLane,
@@ -208,7 +215,24 @@ class SubtitleEffectRequest(BaseModel):
     name: str = "cut"
     start_duration_ms: int = Field(default=300, ge=0, le=60000)
     end_duration_ms: int = Field(default=300, ge=0, le=60000)
-    params: dict[str, str | int | float] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_and_normalize_params(self) -> "SubtitleEffectRequest":
+        try:
+            self.params = normalize_subtitle_effect_params(self.name, self.params)
+        except SubtitleEffectCatalogError as exc:
+            # Pydantic turns this into a concrete 422 body for request
+            # payloads, while the standalone catalog endpoint uses 503.
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+class SubtitleEffectEstimateRequest(SubtitleEffectRequest):
+    duration_ms: int = Field(ge=1, le=86_400_000)
+    grapheme_count: int = Field(default=1, ge=1)
+    line_count: int = Field(default=1, ge=1)
+    budget: int | None = Field(default=None, ge=1)
 
 
 class SubtitleSegmentRequest(BaseModel):
@@ -303,6 +327,38 @@ def health() -> dict[str, Any]:
         payload["ffprobe"] = None
         payload["ffmpeg_error"] = ffmpeg["error"]
     return payload
+
+
+@app.get("/subtitle-effects/catalog")
+def get_subtitle_effect_catalog() -> dict[str, Any]:
+    """Return a fresh catalog from the fixed ASS Lyric Effects v3 package."""
+
+    try:
+        return load_subtitle_effect_catalog()
+    except SubtitleEffectCatalogError as exc:
+        # The dependency is intentionally not bundled into the source tree
+        # while its fixed wheel is being prepared.  Surface that boundary to
+        # clients instead of silently returning the retired 23-effect schema.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/subtitle-effects/estimate")
+def estimate_subtitle_effect(request: SubtitleEffectEstimateRequest) -> dict[str, Any]:
+    """Estimate output events and enforce only a caller-supplied budget."""
+
+    try:
+        return estimate_subtitle_effect_event_count(
+            request.name,
+            request.duration_ms,
+            grapheme_count=request.grapheme_count,
+            line_count=request.line_count,
+            params=request.params,
+            budget=request.budget,
+        )
+    except SubtitleEffectCatalogError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (SubtitleEffectValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/ffmpeg/check")

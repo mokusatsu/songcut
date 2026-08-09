@@ -145,7 +145,7 @@ export type ProjectSubtitleEffect = {
   name: string;
   start_duration_ms: number;
   end_duration_ms: number;
-  params: Record<string, string | number>;
+  params: Record<string, string | number | boolean | string[]>;
 };
 
 export type ProjectLyricsSegment = {
@@ -638,8 +638,16 @@ function validateSubtitleEffect(value: unknown, label: string) {
   nonNegativeInteger(row.end_duration_ms, `${label}.end_duration_ms`);
   const params = objectValue(row.params, `${label}.params`);
   Object.entries(params).forEach(([name, parameter]) => {
-    if (typeof parameter !== "string" && (typeof parameter !== "number" || !Number.isFinite(parameter))) {
-      throw new Error(`${label}.params.${name} must be a finite number or string.`);
+    const scalar =
+      typeof parameter === "string" ||
+      typeof parameter === "boolean" ||
+      (typeof parameter === "number" && Number.isFinite(parameter));
+    const stringArray =
+      Array.isArray(parameter) && parameter.every((item) => typeof item === "string");
+    if (!scalar && !stringArray) {
+      throw new Error(
+        `${label}.params.${name} must be a finite number, string, boolean, or string array.`,
+      );
     }
   });
 }

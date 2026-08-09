@@ -265,6 +265,38 @@ describe("songcut project storage", () => {
     delete custom.subtitle!.lanes[0].segments[0].effect_override;
     expect(() => parseProjectText(JSON.stringify(custom))).toThrow(/both style_override and effect_override/i);
   });
+
+  it("preserves JSON-safe palette and boolean effect parameters in schema v3", () => {
+    const project = subProjectDocument(3);
+    project.subtitle!.lanes[0].effect = {
+      name: "color_wave",
+      start_duration_ms: 300,
+      end_duration_ms: 300,
+      params: {
+        palette: ["&H4FD8FF&", "&HFF8BCE&"],
+        enabled: true,
+      },
+    };
+
+    const parsed = parseProjectText(JSON.stringify(project));
+    expect(parsed.subtitle!.lanes[0].effect!.params).toEqual({
+      palette: ["&H4FD8FF&", "&HFF8BCE&"],
+      enabled: true,
+    });
+
+    const invalid = subProjectDocument(4);
+    invalid.subtitle!.lanes[0].effect = {
+      name: "color_wave",
+      start_duration_ms: 300,
+      end_duration_ms: 300,
+      params: {},
+    };
+    (invalid.subtitle!.lanes[0].effect!.params as Record<string, unknown>).palette = [
+      "&H4FD8FF&",
+      42,
+    ];
+    expect(() => parseProjectText(JSON.stringify(invalid))).toThrow(/string array/i);
+  });
 });
 
 async function tempDirectory() {

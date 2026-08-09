@@ -1,6 +1,7 @@
 import base64
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -13,6 +14,8 @@ from songcut.subtitle_export import (
     SubtitleSegment,
     SubtitleStyle,
     _ffmpeg_progress_seconds,
+    _effect_context,
+    _effect_params,
     _fit_effect_durations,
     _run_ffmpeg_with_progress,
     export_subtitle_bundle,
@@ -170,6 +173,52 @@ def test_glow_converts_gui_rgb_color_to_ass_bgr_override() -> None:
     )
 
     assert r"\3c&HFFD742&" in exported
+
+
+def test_effect_params_convert_every_css_color_including_palettes() -> None:
+    assert _effect_params(
+        {
+            "color_a": "#42D7FF",
+            "palette": ["#4FD8FF", "&HFF8BCE&"],
+            "charset": "アイウエオ",
+        }
+    ) == {
+        "color_a": "&HFFD742&",
+        "palette": ["&HFFD84F&", "&HFF8BCE&"],
+        "charset": "アイウエオ",
+    }
+
+
+def test_multiline_context_uses_real_grapheme_widths_and_skips_empty_line_layout() -> None:
+    resolved = SimpleNamespace(font_path=Path("C:/Fonts/test.ttc"), face_index=2)
+
+    def measure(text: str, path: str, size: float, *, face_index: int) -> tuple[float, ...]:
+        assert path == str(resolved.font_path)
+        assert size == 48
+        assert face_index == 2
+        return {"A": (18.0,), "B": (24.0,)}[text]
+
+    with (
+        mock.patch("songcut.subtitle_export.resolve_windows_font", return_value=resolved) as resolver,
+        mock.patch("songcut.subtitle_export.measure_grapheme_widths", side_effect=measure),
+    ):
+        context = _effect_context(
+            "A\n\nB",
+            SubtitleStyle(font_size=48, alignment=7, margin_l=80, margin_v=70),
+            play_res_x=1280,
+            play_res_y=720,
+        )
+
+    resolver.assert_called_once_with(
+        "Yu Gothic UI",
+        bold=False,
+        italic=False,
+        text="AB",
+    )
+    assert context.glyph_widths is None
+    assert context.line_layouts is not None
+    assert [layout.glyph_widths for layout in context.line_layouts] == [(18.0,), (24.0,)]
+    assert context.line_layouts[1].anchor_y - context.line_layouts[0].anchor_y == 104
 
 
 def test_short_segments_fit_effect_durations_without_changing_ratio() -> None:

@@ -315,6 +315,12 @@ finally {
   --collect-data uroman `
   --collect-data pykakasi `
   --collect-all win_safesubprocess `
+  --collect-all ass_lyric_effects `
+  --collect-all regex `
+  --collect-all uharfbuzz `
+  --copy-metadata ass-lyric-effects `
+  --copy-metadata regex `
+  --copy-metadata uharfbuzz `
   --collect-submodules uta_align `
   --exclude-module tensorflow `
   --exclude-module transformers `

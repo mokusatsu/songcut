@@ -18,6 +18,8 @@ from songcut.api import (
     MmsDownloadRequest,
     ProbeRequest,
     ScratchProxyRequest,
+    SubtitleEffectEstimateRequest,
+    SubtitleEffectRequest,
     SubtitleExportRequest,
     SubtitleRenderRequest,
     TranscriptionRequest,
@@ -44,6 +46,8 @@ from songcut.api import (
     download_mms_model,
     download_whisper_model,
     ffmpeg_check,
+    estimate_subtitle_effect,
+    get_subtitle_effect_catalog,
     health,
     probe,
     update_job,
@@ -67,6 +71,36 @@ class ApiJobTests(unittest.TestCase):
     def test_boundary_refinement_request_rejects_invalid_hysteresis(self) -> None:
         with self.assertRaises(ValidationError):
             BoundaryRefinementRequest(low_occupancy=0.5, high_occupancy=0.5)
+
+    def test_subtitle_effect_catalog_returns_fresh_v3_payload(self) -> None:
+        payload = get_subtitle_effect_catalog()
+        self.assertEqual(payload["version"], "3.0.0")
+        self.assertEqual(len(payload["effects"]), 97)
+        payload["effects"][0]["effect_id"] = "mutated"
+        self.assertEqual(get_subtitle_effect_catalog()["effects"][0]["effect_id"], "cut")
+
+    def test_subtitle_effect_request_normalizes_v3_parameters_and_rejects_unknown(self) -> None:
+        normalized = SubtitleEffectRequest(name="zoom")
+        self.assertEqual(normalized.params, {"min_scale": 0})
+        with self.assertRaises(ValidationError) as caught:
+            SubtitleEffectRequest(name="zoom", params={"unknown": 1})
+        self.assertIn("unknown parameter", str(caught.exception))
+
+    def test_subtitle_effect_estimate_only_enforces_an_explicit_budget(self) -> None:
+        request = SubtitleEffectEstimateRequest(name="waterfall", duration_ms=5000)
+        result = estimate_subtitle_effect(request)
+        self.assertGreater(result["estimated_events"], 0)
+        self.assertIsNone(request.budget)
+
+        with self.assertRaises(HTTPException) as caught:
+            estimate_subtitle_effect(
+                SubtitleEffectEstimateRequest(
+                    name="waterfall",
+                    duration_ms=5000,
+                    budget=1,
+                )
+            )
+        self.assertEqual(caught.exception.status_code, 422)
 
     def test_subtitle_render_job_returns_cache_identity_with_png(self) -> None:
         now = time.time()

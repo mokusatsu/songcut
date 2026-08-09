@@ -17,14 +17,22 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
-import { tr } from "@/i18n";
+import { currentUiLanguage, tr } from "@/i18n";
 import {
-  SUBTITLE_EFFECTS,
   defaultSubtitleEffectParams,
+  normalizeSubtitleEffect,
   subtitleEffectDefinition,
   type SubtitleEffectParameterValue,
+  type SubtitleEffectCatalog,
+  type SubtitleEffectChoice,
+  type SubtitleEffectDefinition,
+  type SubtitleEffectParameterSchema,
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
+import {
+  useSubtitleEffectCatalogContext,
+  type SubtitleEffectCatalogState,
+} from "@/lib/subtitleEffectCatalog";
 import {
   readSubtitleStylePresets,
   upsertSubtitleStylePreset,
@@ -103,6 +111,7 @@ export type SubModePanelProps = {
 
 /** `SubModePanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function SubModePanel(props: SubModePanelProps) {
+  const catalogState = useSubtitleEffectCatalogContext();
   const [lyricsOpen, setLyricsOpen] = useState(false);
   const [lyricsText, setLyricsText] = useState("");
   const [laneDialogOpen, setLaneDialogOpen] = useState(false);
@@ -130,12 +139,20 @@ export function SubModePanel(props: SubModePanelProps) {
     ? timingOrderedSegments.findIndex((segment) => segment.id === timingSegment.id)
     : -1;
   const canAddSegment = props.capabilities.canAddSegment;
+  const catalogEffectError = useMemo(
+    () => catalogState.catalog ? findSubtitleEffectError(props.state, catalogState.catalog) : null,
+    [catalogState.catalog, props.state],
+  );
   const renderPlan = useMemo(() => {
+    const catalog = catalogState.catalog;
+    if (!catalog) return [];
     const width = media.videoInfo?.video.width || 1920;
     const height = media.videoInfo?.video.height || 1080;
     return props.state.lanes.flatMap((lane) =>
-      lane.segments.map((segment) => {
-        const style = resolveSubtitleSegmentStyle(lane, segment).style;
+      lane.segments.flatMap((segment) => {
+        const resolved = tryResolveSubtitleSegmentStyle(lane, segment, catalog);
+        if (!resolved) return [];
+        const style = resolved.style;
         return {
           segment,
           style,
@@ -143,7 +160,7 @@ export function SubModePanel(props: SubModePanelProps) {
         };
       })
     );
-  }, [props.state.lanes, media.videoInfo?.video.width, media.videoInfo?.video.height]);
+  }, [catalogState.catalog, props.state.lanes, media.videoInfo?.video.width, media.videoInfo?.video.height]);
   const renderPlanKey = renderPlan
     .map(({ segment, signature }) => `${segment.id}\u0000${signature}\u0000${segment.render_cache?.signature ?? ""}`)
     .join("\u0001");
@@ -294,6 +311,12 @@ export function SubModePanel(props: SubModePanelProps) {
       </ModeToolbar>
       {props.taskStatus}
       <div className="sub-status-row">
+        <SubtitleEffectCatalogStatus state={catalogState} />
+        {catalogEffectError ? (
+          <span role="alert" className="warning-text">
+            {tr("sub.effectCatalogInvalid", { error: catalogEffectError })}
+          </span>
+        ) : null}
         {props.state.tempo_bpm > 0 ? <span>BPM {props.state.tempo_bpm.toFixed(1)}</span> : null}
         {props.state.confidence_statistics ? (
           <span>
@@ -389,7 +412,8 @@ export function SubModePanel(props: SubModePanelProps) {
         } : undefined}
         onClose={() => setTimingTarget(null)}
         onApply={(start, end, styleOverride, effectOverride) => {
-          if (!timingLane || !timingSegment) return;
+          const catalog = catalogState.catalog;
+          if (!timingLane || !timingSegment || !catalog) return;
           props.onStateChange({
             ...props.state,
             active_lane_id: timingLane.id,
@@ -405,6 +429,7 @@ export function SubModePanel(props: SubModePanelProps) {
                               { ...segment, start, end, user_edited: true },
                               styleOverride,
                               effectOverride,
+                              catalog,
                             )
                           : segment
                       )
@@ -429,6 +454,7 @@ export function SubtitleOverlay(props: {
   videoWidth: number;
   videoHeight: number;
 }) {
+  const catalogState = useSubtitleEffectCatalogContext();
   const overlayRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -449,7 +475,10 @@ export function SubtitleOverlay(props: {
       : 0;
   const displayWidth = sourceWidth * scale;
   const displayHeight = sourceHeight * scale;
-  const active = activeSegmentsAt(props.state.lanes, props.currentTime);
+  const catalog = catalogState.catalog;
+  const active = catalog
+    ? activeSegmentsAt(props.state.lanes, props.currentTime)
+    : [];
   return (
     <div
       ref={overlayRef}
@@ -465,10 +494,13 @@ export function SubtitleOverlay(props: {
         visibility: scale > 0 ? "visible" : "hidden",
       }}
     >
-      {active.map(({ lane, segment }) => (
-        segment.render_cache?.signature === subtitleRenderSignature(
+      {active.map(({ lane, segment }) => {
+        if (!catalog || !segment.render_cache) return null;
+        const resolved = tryResolveSubtitleSegmentStyle(lane, segment, catalog);
+        if (!resolved) return null;
+        return segment.render_cache.signature === subtitleRenderSignature(
           segment.text,
-          resolveSubtitleSegmentStyle(lane, segment).style,
+          resolved.style,
           sourceWidth,
           sourceHeight,
         ) ? (
@@ -479,8 +511,8 @@ export function SubtitleOverlay(props: {
             alt=""
             draggable={false}
           />
-        ) : null
-      ))}
+        ) : null;
+      })}
     </div>
   );
 }
@@ -514,13 +546,16 @@ function SubtitleStyleEditor(props: {
   onChange: (style: SubtitleStyle) => void;
   onEffectChange: (effect: SubtitleEffectSettings) => void;
 }) {
+  const catalogState = useSubtitleEffectCatalogContext();
   const style = props.style;
   const effect = props.effect;
   const [stylePresets, setStylePresets] = useState(readSubtitleStylePresets);
   const [selectedStylePresetId, setSelectedStylePresetId] = useState("");
   const [stylePresetName, setStylePresetName] = useState("");
   const [stylePresetMessage, setStylePresetMessage] = useState("");
-  const effectDefinition = subtitleEffectDefinition(effect.name);
+  const effectDefinition = catalogState.catalog
+    ? subtitleEffectDefinition(effect.name, catalogState.catalog)
+    : undefined;
   const fontOptions = props.fonts?.includes(style.font_name)
     ? props.fonts
     : [style.font_name, ...(props.fonts ?? [])];
@@ -562,6 +597,20 @@ function SubtitleStyleEditor(props: {
     setStylePresetName(preset.name);
     setStylePresetMessage(tr("sub.presetApplied", { name: preset.name }));
   }
+  if (catalogState.status !== "ready" || !catalogState.catalog || !effectDefinition) {
+    const statusMessage = catalogState.status === "ready" && !effectDefinition
+      ? tr("sub.effectCatalogInvalid", { error: `Unknown subtitle effect_id: ${effect.name}` })
+      : catalogState.status === "error"
+        ? tr("sub.effectCatalogFailed", { error: catalogState.error })
+        : tr("sub.effectCatalogLoading");
+    return (
+      <div className="subtitle-style-editor" role="status" aria-live="polite">
+        <p className="font-list-status warning-text">{statusMessage}</p>
+      </div>
+    );
+  }
+  const catalog = catalogState.catalog;
+  const effectGroups = groupEffectDefinitions(catalog);
   return (
     <div className="subtitle-style-editor">
       <section className="subtitle-style-section subtitle-style-presets">
@@ -647,6 +696,7 @@ function SubtitleStyleEditor(props: {
           <h3>{tr("sub.outputEffects")}</h3>
           <small>{tr("sub.outputEffectsHelp")}</small>
         </div>
+        <small className="subtitle-effect-description">{effectDescription(effectDefinition)}</small>
         <div className="subtitle-effect-fields">
           <label>
             {tr("sub.effectType")}
@@ -657,16 +707,20 @@ function SubtitleStyleEditor(props: {
                 const name = event.target.value;
                 patchEffect({
                   name: name as SubtitleEffectSettings["name"],
-                  params: defaultSubtitleEffectParams(name),
+                  params: defaultSubtitleEffectParams(name, catalog),
                 });
               }}
             >
-              {SUBTITLE_EFFECTS.map((item) => (
-                <option key={item.name} value={item.name}>{subtitleEffectLabel(item.name, item.label)}</option>
+              {effectGroups.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.effects.map((item) => (
+                    <option key={item.effect_id} value={item.effect_id}>{effectLabel(item)}</option>
+                  ))}
+                </optgroup>
               ))}
             </Select>
           </label>
-          {effect.name !== "cut" ? (
+          {effect.name !== "cut" && effectDefinition ? (
             <>
               <label>
                 {tr("sub.effectStartDuration")}
@@ -688,47 +742,94 @@ function SubtitleStyleEditor(props: {
                   onChange={(event) => patchEffect({ end_duration_ms: Math.max(0, Number(event.target.value)) })}
                 />
               </label>
-              {effectDefinition.params.map((parameter) => {
-                const value = effect.params[parameter.name] ?? parameter.defaultValue;
-                if (parameter.kind === "select") {
+              {Object.entries(effectDefinition.parameters).map(([parameterName, parameter]) => {
+                const value = effect.params[parameterName] ?? parameter.default;
+                if (parameter.kind === "choice") {
                   return (
-                    <label key={parameter.name}>
-                      {subtitleEffectParameterLabel(parameter.name, parameter.label)}
+                    <label key={parameterName}>
+                      {parameterLabel(parameter)}
                       <Select
                         value={String(value)}
-                        onChange={(event) => patchEffectParam(parameter.name, event.target.value)}
+                        onChange={(event) => patchEffectParam(parameterName, readChoiceValue(parameter, event.target.value))}
                       >
-                        {parameter.options.map(([optionValue, label]) => (
-                          <option key={optionValue} value={optionValue}>{subtitleEffectOptionLabel(optionValue, label)}</option>
-                        ))}
+                        {parameter.choices.map((choice) => {
+                          const optionValue = choiceValueForUi(choice);
+                          return (
+                            <option key={optionValue} value={optionValue}>{choiceLabel(parameter, choice)}</option>
+                          );
+                        })}
                       </Select>
+                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
                     </label>
                   );
                 }
                 if (parameter.kind === "color") {
                   return (
-                    <ColorControl
-                      key={parameter.name}
-                      label={subtitleEffectParameterLabel(parameter.name, parameter.label)}
-                      value={String(value)}
-                      onChange={(next) => patchEffectParam(parameter.name, next)}
-                    />
+                    <div key={parameterName} className="subtitle-effect-color-field">
+                      <ColorControl
+                        label={parameterLabel(parameter)}
+                        value={String(value)}
+                        onChange={(next) => patchEffectParam(parameterName, next)}
+                      />
+                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
+                    </div>
+                  );
+                }
+                if (parameter.kind === "palette") {
+                  return (
+                    <label key={parameterName} className="subtitle-effect-palette-field">
+                      <span>{parameterLabel(parameter)}</span>
+                      <Textarea
+                        aria-label={parameterLabel(parameter)}
+                        rows={3}
+                        value={Array.isArray(value) ? value.join("\n") : String(value)}
+                        onChange={(event) => patchEffectParam(
+                          parameterName,
+                          event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+                        )}
+                      />
+                      <small>{parameterDescription(parameter)}</small>
+                    </label>
+                  );
+                }
+                if (parameter.kind === "boolean") {
+                  return (
+                    <label key={parameterName}>
+                      <span>{parameterLabel(parameter)}</span>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(value)}
+                        onChange={(event) => patchEffectParam(parameterName, event.target.checked)}
+                      />
+                      <small>{parameterDescription(parameter)}</small>
+                    </label>
+                  );
+                }
+                if (parameter.kind === "string") {
+                  return (
+                    <label key={parameterName}>
+                      {parameterLabel(parameter)}
+                      <Input
+                        type="text"
+                        value={String(value)}
+                        onChange={(event) => patchEffectParam(parameterName, event.target.value)}
+                      />
+                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
+                    </label>
                   );
                 }
                 return (
-                  <label key={parameter.name}>
-                    {subtitleEffectParameterLabel(parameter.name, parameter.label)}
+                  <label key={parameterName}>
+                    {parameterLabel(parameter)}
                     <Input
                       type="number"
-                      min={parameter.min}
-                      max={parameter.max}
-                      step={parameter.step}
+                      min={parameter.min ?? undefined}
+                      max={parameter.max ?? undefined}
+                      step={parameter.step ?? undefined}
                       value={Number(value)}
-                      onChange={(event) => patchEffectParam(
-                        parameter.name,
-                        clamp(Number(event.target.value), parameter.min, parameter.max)
-                      )}
+                      onChange={(event) => patchEffectParam(parameterName, clampCatalogNumber(Number(event.target.value), parameter))}
                     />
+                    <small>{parameterDescription(parameter)}</small>
                   </label>
                 );
               })}
@@ -740,6 +841,37 @@ function SubtitleStyleEditor(props: {
             {tr("sub.shortSubtitleHelp")}
           </small>
         ) : null}
+        {effectDefinition.preview_url || effectDefinition.catalog_page_url_en || effectDefinition.catalog_page_url_ja ? (
+          <div className="subtitle-effect-links">
+            {effectDefinition.preview_url ? (
+              <>
+                <video
+                  className="subtitle-effect-preview"
+                  controls
+                  preload="none"
+                  src={effectDefinition.preview_url}
+                  aria-label={tr("sub.effectSample")}
+                />
+                <a href={effectDefinition.preview_url} target="_blank" rel="noreferrer">
+                  {tr("sub.effectSample")}
+                </a>
+              </>
+            ) : null}
+            {(currentUiLanguage() === "ja"
+              ? effectDefinition.catalog_page_url_ja
+              : effectDefinition.catalog_page_url_en) ? (
+              <a
+                href={currentUiLanguage() === "ja"
+                  ? effectDefinition.catalog_page_url_ja ?? undefined
+                  : effectDefinition.catalog_page_url_en ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {tr("sub.effectCatalogPage")}
+              </a>
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -747,38 +879,145 @@ function SubtitleStyleEditor(props: {
 
 /** `ColorControl`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 function ColorControl(props: { label: string; value: string; onChange: (value: string) => void }) {
+  const pickerValue = colorPickerValue(props.value);
   return (
     <label className="color-control" title={props.label}>
       <span>{props.label}</span>
       <Input
         type="color"
         aria-label={props.label}
-        value={props.value.slice(0, 7)}
-        onChange={(event) => props.onChange(event.target.value.toUpperCase())}
+        value={pickerValue}
+        onChange={(event) => props.onChange(colorPickerResult(event.target.value, props.value))}
+      />
+      <Input
+        type="text"
+        aria-label={`${props.label} value`}
+        value={props.value}
+        onChange={(event) => props.onChange(event.target.value)}
       />
     </label>
   );
 }
 
-/** `subtitleEffectLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
-function subtitleEffectLabel(name: string, fallback: string) {
-  const key = `sub.effect.${name}`;
-  const translated = tr(key);
-  return translated === key ? fallback : translated;
+/** `colorPickerValue`でcatalogのASS／CSS色をHTML pickerへ変換する。 */
+function colorPickerValue(value: string) {
+  const ass = value.match(/^&H(?:[0-9A-F]{2})?([0-9A-F]{2})([0-9A-F]{2})([0-9A-F]{2})&?$/i);
+  if (ass) return `#${ass[3]}${ass[2]}${ass[1]}`.toUpperCase();
+  return /^#[0-9A-F]{6}$/i.test(value) ? value.slice(0, 7) : "#000000";
 }
 
-/** `subtitleEffectParameterLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
-function subtitleEffectParameterLabel(name: string, fallback: string) {
-  const key = `sub.effect.param.${name}`;
-  const translated = tr(key);
-  return translated === key ? fallback : translated;
+/** `colorPickerResult`でpicker値を元のcatalog色形式へ戻す。 */
+function colorPickerResult(value: string, previous: string) {
+  if (!previous.startsWith("&H")) return value.toUpperCase();
+  const hex = value.replace("#", "").toUpperCase();
+  const alpha = previous.match(/^&H([0-9A-F]{2})[0-9A-F]{6}&?$/i)?.[1] ?? "";
+  return `&H${alpha}${hex.slice(4, 6)}${hex.slice(2, 4)}${hex.slice(0, 2)}&`;
 }
 
-/** `subtitleEffectOptionLabel`のdomain規則を適用し、画面または保存処理で使う値を返す。 */
-function subtitleEffectOptionLabel(value: string, fallback: string) {
-  const key = `sub.effect.option.${value}`;
-  const translated = tr(key);
-  return translated === key ? fallback : translated;
+/** `effectLabel`の現在localeに対応するcatalog名称を返す。 */
+function effectLabel(effect: SubtitleEffectDefinition) {
+  return currentUiLanguage() === "ja" ? effect.name_ja : effect.name_en;
+}
+
+/** `effectDescription`の現在localeに対応するcatalog説明を返す。 */
+function effectDescription(effect: SubtitleEffectDefinition) {
+  return currentUiLanguage() === "ja" ? effect.description_ja : effect.description_en;
+}
+
+/** `parameterLabel`の現在localeに対応するcatalog名称を返す。 */
+function parameterLabel(parameter: SubtitleEffectParameterSchema) {
+  return currentUiLanguage() === "ja" ? parameter.label_ja : parameter.label_en;
+}
+
+/** `parameterDescription`の現在localeに対応するcatalog説明を返す。 */
+function parameterDescription(parameter: SubtitleEffectParameterSchema) {
+  return currentUiLanguage() === "ja" ? parameter.description_ja : parameter.description_en;
+}
+
+/** `choiceValueForUi`の選択肢をHTML select値へ変換する。 */
+function choiceValueForUi(choice: SubtitleEffectChoice) {
+  return choice;
+}
+
+/** `readChoiceValue`のselect値をcatalogのchoice値へ戻す。 */
+function readChoiceValue(parameter: SubtitleEffectParameterSchema, value: string): SubtitleEffectParameterValue {
+  const choice = parameter.choices.find((item) => choiceValueForUi(item) === value);
+  if (choice === undefined) return value;
+  return choice;
+}
+
+/** `choiceLabel`のcatalog提供labelを現在localeで返す。 */
+function choiceLabel(parameter: SubtitleEffectParameterSchema, choice: SubtitleEffectChoice) {
+  const value = choiceValueForUi(choice);
+  const labels = currentUiLanguage() === "ja" ? parameter.choice_labels_ja : parameter.choice_labels_en;
+  return labels[value] ?? value;
+}
+
+/** `clampCatalogNumber`のcatalog範囲に沿った数値を返す。 */
+function clampCatalogNumber(value: number, parameter: SubtitleEffectParameterSchema): number {
+  if (!Number.isFinite(value)) return Number(parameter.default) || 0;
+  const minimum = parameter.min ?? value;
+  const maximum = parameter.max ?? value;
+  const clamped = Math.min(maximum, Math.max(minimum, value));
+  return parameter.kind === "integer" ? Math.round(clamped) : clamped;
+}
+
+/** `groupEffectDefinitions`のcatalog効果をカテゴリごとにまとめる。 */
+function groupEffectDefinitions(catalog: SubtitleEffectCatalog) {
+  const groups = new Map<string, SubtitleEffectDefinition[]>();
+  for (const effect of catalog.effects) {
+    const label = currentUiLanguage() === "ja"
+      ? effect.major_category_ja || effect.family || "Effects"
+      : effect.major_category_en || effect.family || "Effects";
+    const list = groups.get(label) ?? [];
+    list.push(effect);
+    groups.set(label, list);
+  }
+  return [...groups].map(([label, effects]) => ({ label, effects }));
+}
+
+/** `tryResolveSubtitleSegmentStyle`で不正なproject effectを表示用に明示的に除外する。 */
+function tryResolveSubtitleSegmentStyle(
+  lane: Parameters<typeof resolveSubtitleSegmentStyle>[0],
+  segment: Parameters<typeof resolveSubtitleSegmentStyle>[1],
+  catalog: SubtitleEffectCatalog,
+) {
+  try {
+    return resolveSubtitleSegmentStyle(lane, segment, catalog);
+  } catch {
+    // The owning state remains untouched so the caller can report the invalid
+    // stable ID/parameter instead of silently changing it to `cut`.
+    return null;
+  }
+}
+
+/** `findSubtitleEffectError`でcatalog検証に失敗したstable IDまたはparameterを報告する。 */
+function findSubtitleEffectError(state: SubtitleProjectState, catalog: SubtitleEffectCatalog) {
+  for (const lane of state.lanes) {
+    try {
+      normalizeSubtitleEffect(lane.effect, catalog);
+    } catch (error) {
+      return String(error);
+    }
+    for (const segment of lane.segments) {
+      if (!segment.effect_override) continue;
+      try {
+        normalizeSubtitleEffect(segment.effect_override, catalog);
+      } catch (error) {
+        return String(error);
+      }
+    }
+  }
+  return null;
+}
+
+/** `SubtitleEffectCatalogStatus`の取得中／失敗／準備完了を表示する。 */
+function SubtitleEffectCatalogStatus(props: { state: SubtitleEffectCatalogState }) {
+  if (props.state.status === "ready") return <span role="status">{tr("sub.effectCatalogReady")}</span>;
+  if (props.state.status === "error") {
+    return <span role="alert" className="warning-text">{tr("sub.effectCatalogFailed", { error: props.state.error })}</span>;
+  }
+  return <span role="status" className="warning-text">{tr("sub.effectCatalogLoading")}</span>;
 }
 
 /** `hasSubtitleSegments`の入力が要求された条件やschemaを満たすか検証する。 */

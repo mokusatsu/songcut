@@ -2220,6 +2220,7 @@ tr.selected:hover {
 
 .subtitle-style-dialog {
   width: min(780px, calc(100vw - 48px));
+  max-height: 82vh;
 }
 
 .subtitle-style-editor {
@@ -2366,6 +2367,11 @@ tr.selected:hover {
   text-align: right;
 }
 
+.subtitle-effect-description {
+  color: #91a3ab;
+  font-size: var(--font-size-meta);
+}
+
 .subtitle-effect-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, 1fr));
@@ -2381,6 +2387,19 @@ tr.selected:hover {
 
 .subtitle-effect-fields > .color-control {
   align-self: end;
+}
+
+.subtitle-effect-fields > .subtitle-effect-color-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  align-items: end;
+}
+
+.subtitle-effect-color-field > small,
+.subtitle-effect-fields label > small {
+  color: #91a3ab;
+  font-size: var(--font-size-meta);
 }
 
 .analysis-progress {

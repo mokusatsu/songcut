@@ -141,7 +141,7 @@ Click a timeline's `Style` button to show `Subtitle style`.
 In `Saved styles`, choose a preset and click `Apply`, or enter a style name and click `Save` to apply or save a preset.
 `Typeface and colors` sets the font, text color, background color, outline color, bold, and italic options, while `Display position` sets the position, size, outline width, shadow, and horizontal and vertical margins.
 
-`Output effects` are applied only during export and are not shown in the editing preview.
+`Output effects` provides 97 effects grouped by category. Choose an effect to edit its available values, colors, palette, and timing; the controls and limits come from the installed effect package. The sample player shows the selected effect from the online catalog. Effects are applied only during export and are not shown in the editing preview.
 
 ### Export Subtitles
 

@@ -4,6 +4,7 @@ import {
   addFourBeatSegment,
   createLyricsLane,
   labelStackLevels,
+  normalizeSubtitleState,
   normalizeSubtitleStyle,
   nudgeSegmentBoundary,
   resolveSubtitleSegmentStyle,
@@ -14,6 +15,7 @@ import {
   type LyricsSegment,
   type RhythmGridPoint,
 } from "./subtitles";
+import type { SubtitleEffectCatalog } from "./subtitleEffects";
 
 vi.stubGlobal("crypto", { randomUUID: () => "uuid" });
 
@@ -23,6 +25,18 @@ const grid: RhythmGridPoint[] = Array.from({ length: 41 }, (_, index) => ({
   attraction_radius: 0.05,
   grid_penalty: 0,
 }));
+
+const effectCatalog = {
+  package: "ass-lyric-effects",
+  version: "3.0.0",
+  schema_version: "1.0",
+  stable_id_contract: {},
+  multiline_context_contract: {},
+  effects: [
+    { effect_id: "cut", stable_effect_id: true, name_en: "Cut", name_ja: "カット", description_en: "", description_ja: "", parameters: {} },
+    { effect_id: "fad", stable_effect_id: true, name_en: "Fade", name_ja: "フェード", description_en: "", description_ja: "", parameters: {} },
+  ],
+} as SubtitleEffectCatalog;
 
 describe("subtitle segment management", () => {
   it("adds a four-beat segment after the selected segment", () => {
@@ -222,7 +236,7 @@ describe("segment style overrides", () => {
   it("inherits lane settings until a complete custom Style and Effect pair is applied", () => {
     const lane = createLyricsLane();
     const inheritedSegment = segment("line", 0, 1);
-    expect(resolveSubtitleSegmentStyle(lane, inheritedSegment)).toMatchObject({
+    expect(resolveSubtitleSegmentStyle(lane, inheritedSegment, effectCatalog)).toMatchObject({
       mode: "inherit",
       style: { font_size: 90 },
       effect: { name: "cut" },
@@ -232,14 +246,15 @@ describe("segment style overrides", () => {
       inheritedSegment,
       { ...lane.style, font_size: 48 },
       { ...lane.effect, name: "fad" },
+      effectCatalog,
     );
     lane.style = { ...lane.style, font_size: 120 };
-    expect(resolveSubtitleSegmentStyle(lane, customSegment)).toMatchObject({
+    expect(resolveSubtitleSegmentStyle(lane, customSegment, effectCatalog)).toMatchObject({
       mode: "custom",
       style: { font_size: 48 },
       effect: { name: "fad" },
     });
-    expect(resolveSubtitleSegmentStyle(lane, withSubtitleSegmentStyle(customSegment))).toMatchObject({
+    expect(resolveSubtitleSegmentStyle(lane, withSubtitleSegmentStyle(customSegment, undefined, undefined, effectCatalog), effectCatalog)).toMatchObject({
       mode: "inherit",
       style: { font_size: 120 },
     });
@@ -251,6 +266,7 @@ describe("segment style overrides", () => {
       segment("custom", 0, 1),
       { ...lane.style, font_size: 500 },
       { ...lane.effect, start_duration_ms: 99_999 },
+      effectCatalog,
     )];
     const state = validateSubtitleState({
       lanes: [lane],
@@ -268,6 +284,28 @@ describe("segment style overrides", () => {
     const partial = { ...lane.segments[0] };
     delete partial.effect_override;
     expect(validateSubtitleState({ ...state, lanes: [{ ...lane, segments: [partial] }] })).toBeNull();
+  });
+
+  it("keeps raw effect IDs before catalog arrival and rejects unknown IDs when validating", () => {
+    const lane = createLyricsLane();
+    lane.effect = {
+      name: "future_effect",
+      start_duration_ms: 100,
+      end_duration_ms: 100,
+      params: { palette: ["&HFFFFFF&"] },
+    };
+    const raw = validateSubtitleState({
+      lanes: [lane],
+      active_lane_id: lane.id,
+      selected_segment_id: null,
+      tempo_bpm: 0,
+      beat_times: [],
+      rhythm_grid: [],
+      beat_warning: null,
+      confidence_statistics: null,
+    });
+    expect(raw?.lanes[0].effect).toEqual(lane.effect);
+    expect(() => normalizeSubtitleState(raw, effectCatalog)).toThrow(/Unknown subtitle effect_id/);
   });
 });
 

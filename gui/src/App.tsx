@@ -55,6 +55,10 @@ import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
 import { useModeOperations } from "@/lib/useModeOperations";
+import {
+  SubtitleEffectCatalogProvider,
+  useSubtitleEffectCatalog,
+} from "@/lib/subtitleEffectCatalog";
 import { useModelPreparation } from "@/lib/useModelPreparation";
 import {
   ExportProgressDialog,
@@ -155,6 +159,7 @@ import { createModeSession } from "@/lib/modeSession";
 import {
   addFourBeatSegment,
   createDefaultSubtitleState,
+  normalizeSubtitleState,
   nudgeSegmentBoundary,
   updateSegmentBoundary,
   type LyricsSegment,
@@ -206,6 +211,8 @@ export default function App(props: {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [mode, setMode] = useState<AppMode>("cut");
   const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
+  const subtitleStateRef = useRef<SubtitleProjectState>(subtitleState);
+  subtitleStateRef.current = subtitleState;
   const [localePreference, setLocalePreference] = useState<UiLanguagePreference>(props.initialLocaleSettings.preference);
   const [localeRestartRequired, setLocaleRestartRequired] = useState(false);
   const scratchProxyAudioRef = useRef<HTMLAudioElement>(null);
@@ -230,6 +237,7 @@ export default function App(props: {
   const taskRegistry = useTaskRegistry();
   const [waveformSessionCache] = useState(() => createWaveformSessionCache());
   const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const subtitleEffectCatalogState = useSubtitleEffectCatalog(apiBaseUrl);
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
@@ -504,6 +512,15 @@ export default function App(props: {
 
   projectDocumentRef.current = projectDocument;
 
+  useEffect(() => {
+    if (subtitleEffectCatalogState.status !== "ready") return;
+    try {
+      setSubtitleState(normalizeSubtitleState(subtitleStateRef.current, subtitleEffectCatalogState.catalog));
+    } catch (error) {
+      setMessage(tr("sub.effectCatalogInvalid", { error: String(error) }));
+    }
+  }, [subtitleEffectCatalogState]);
+
   /** `markProjectChanged`の変更をrevisionへ記録し、永続化対象であることを示す。 */
   function markProjectChanged() {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
@@ -553,6 +570,7 @@ export default function App(props: {
       focusSegment: focusSubtitleSegment,
       onMessage: setMessage,
       confirm: (message) => window.confirm(message),
+      catalog: subtitleEffectCatalogState.catalog,
     },
   });
 
@@ -852,7 +870,21 @@ export default function App(props: {
     setVideoInfo(info ?? offlineVideoInfo(document));
     setGuideText(hydrated.mode === "cut" ? hydrated.guideText : "");
     setMode(hydrated.mode);
-    setSubtitleState(hydrated.mode === "sub" ? hydrated.subtitle : createDefaultSubtitleState());
+    if (hydrated.mode === "sub") {
+      if (subtitleEffectCatalogState.status === "ready") {
+        try {
+          setSubtitleState(normalizeSubtitleState(hydrated.subtitle, subtitleEffectCatalogState.catalog));
+        } catch (error) {
+          setSubtitleState(hydrated.subtitle);
+          setMessage(tr("sub.effectCatalogInvalid", { error: String(error) }));
+        }
+      } else {
+        // Preserve stable IDs and raw JSON parameters until the catalog arrives.
+        setSubtitleState(hydrated.subtitle);
+      }
+    } else {
+      setSubtitleState(createDefaultSubtitleState());
+    }
     setAnalysis(hydrated.mode === "cut" ? hydrated.analysis : null);
     showWaveformForDocument(document, sourcePath);
     setSegments(hydrated.mode === "cut" ? hydrated.segments : []);
@@ -2300,6 +2332,7 @@ export default function App(props: {
 
   return (
     <EditorFocusProvider rootRef={editorRootRef}>
+      <SubtitleEffectCatalogProvider state={subtitleEffectCatalogState}>
       <main
         ref={editorRootRef}
         tabIndex={-1}
@@ -2852,6 +2885,7 @@ export default function App(props: {
         </div>
       </Dialog>
       </main>
+      </SubtitleEffectCatalogProvider>
     </EditorFocusProvider>
   );
 }

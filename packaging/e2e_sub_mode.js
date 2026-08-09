@@ -1174,6 +1174,26 @@ function cleanup(processHandle, cdp) {
       10_000,
       "subtitle effect selector"
     );
+    const effectCatalogUi = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕スタイル"]');
+        const select = dialog?.querySelector(".subtitle-effect-section select");
+        const video = dialog?.querySelector(".subtitle-effect-preview");
+        return select ? {
+          optionCount: select.options.length,
+          groupCount: select.querySelectorAll("optgroup").length,
+          previewUrl: video?.getAttribute("src") || ""
+        } : null;
+      })()`
+    );
+    assertPass(
+      effectCatalogUi?.optionCount === 97 &&
+        effectCatalogUi.groupCount > 1 &&
+        effectCatalogUi.previewUrl.includes("mokusatsu.github.io/ASS_Lyric_Effects/preview/"),
+      "ASS_Lyric_Effects v3 catalog or Pages preview is incomplete.",
+      effectCatalogUi
+    );
     const effectConfigured = await evaluate(
       cdp,
       `(() => {
@@ -1186,6 +1206,12 @@ function cleanup(processHandle, cdp) {
       })()`
     );
     assertPass(effectConfigured, "Subtitle lane effect could not be configured.");
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-preview')?.getAttribute("src")?.includes("_fad.mp4")`,
+      10_000,
+      "catalog-derived fad preview"
+    );
     await waitFor(
       cdp,
       `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] input[value="300"]') !== null`,
@@ -1629,8 +1655,8 @@ function cleanup(processHandle, cdp) {
     const assFile = path.join(outputDir, `${fixtureStem}-subtitles.ass`);
     const assText = fs.existsSync(assFile) ? fs.readFileSync(assFile, "utf8") : "";
     assertPass(
-      assText.includes("Style: Lane1Override") && assText.includes(",52,"),
-      "Full-fidelity ASS sidecar is missing the custom segment style.",
+      assText.includes("Style: Lane1Override") && assText.includes(",52,") && assText.includes("\\fad(300,300)"),
+      "Full-fidelity ASS sidecar is missing the custom segment style or v3 effect.",
       { assFile, exists: fs.existsSync(assFile) }
     );
     const sourceDuration = Number(execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", input], { encoding: "utf8" }).trim());

@@ -25,8 +25,10 @@ import {
 } from "@/lib/subtitles";
 import {
   normalizeSubtitleEffect,
+  type SubtitleEffectCatalog,
   type SubtitleEffectSettings,
 } from "@/lib/subtitleEffects";
+import { useSubtitleEffectCatalogContext } from "@/lib/subtitleEffectCatalog";
 import { TIME_RANGE_EPSILON } from "@/lib/timeRange";
 import { tr } from "@/i18n";
 
@@ -75,6 +77,7 @@ export function SegmentTimingDialog(props: {
     effectOverride?: SubtitleEffectSettings,
   ) => void;
 }) {
+  const catalogState = useSubtitleEffectCatalogContext();
   const [rangeMode, setRangeMode] = useState<RangeMode>("duration");
   const [startInput, setStartInput] = useState("0:00.000");
   const [extentInput, setExtentInput] = useState("0:00.000");
@@ -96,15 +99,22 @@ export function SegmentTimingDialog(props: {
     setActiveTab("timing");
     setStartInput(formatTimeInput(props.segment.start));
     setExtentInput(formatTimeInput(props.segment.end - props.segment.start));
+    if (!props.styleOptions) return;
+    if (!catalogState.catalog) {
+      setStyleDraft(null);
+      setEffectDraft(null);
+      return;
+    }
     const styleState = createSegmentStyleDraft(
       props.segment,
-      props.styleOptions?.inheritedStyle,
-      props.styleOptions?.inheritedEffect,
+      props.styleOptions.inheritedStyle,
+      props.styleOptions.inheritedEffect,
+      catalogState.catalog,
     );
     setStyleMode(styleState.mode);
     setStyleDraft(styleState.style);
     setEffectDraft(styleState.effect);
-  }, [props.open, props.segment?.id]);
+  }, [props.open, props.segment?.id, catalogState.catalog]);
 
   const evaluation = useMemo(
     () => evaluateSegmentTiming({
@@ -322,7 +332,12 @@ export function SegmentTimingDialog(props: {
         </Tabs>
         <div className="dialog-actions">
           <Button type="button" variant="secondary" onClick={props.onClose}>{tr("common.cancel")}</Button>
-          <Button type="submit" disabled={!evaluation.valid}>{tr("segmentTiming.apply")}</Button>
+          <Button
+            type="submit"
+            disabled={!evaluation.valid || (Boolean(props.styleOptions) && catalogState.status !== "ready")}
+          >
+            {tr("segmentTiming.apply")}
+          </Button>
         </div>
       </form>
     </Dialog>
@@ -332,14 +347,15 @@ export function SegmentTimingDialog(props: {
 /** ダイアログを開いた時点の継承／独自モードと編集用Style／Effect draftを作る。 */
 export function createSegmentStyleDraft(
   segment: SegmentTimingTarget,
-  inheritedStyle?: SubtitleStyle,
-  inheritedEffect?: SubtitleEffectSettings,
+  inheritedStyle: SubtitleStyle | undefined,
+  inheritedEffect: SubtitleEffectSettings | undefined,
+  catalog: SubtitleEffectCatalog,
 ): SegmentStyleDraftState {
   const custom = Boolean(segment.style_override && segment.effect_override);
   return {
     mode: custom ? "custom" : "inherit",
     style: normalizeSubtitleStyle(custom ? segment.style_override : inheritedStyle),
-    effect: normalizeSubtitleEffect(custom ? segment.effect_override : inheritedEffect),
+    effect: normalizeSubtitleEffect(custom ? segment.effect_override : inheritedEffect, catalog),
   };
 }
 

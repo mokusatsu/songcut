@@ -7,7 +7,24 @@ import {
   createSubtitleBoundaryPolicy,
   type RhythmGridPoint,
 } from "@/lib/subtitles";
-import { DEFAULT_SUBTITLE_EFFECT } from "@/lib/subtitleEffects";
+import { DEFAULT_SUBTITLE_EFFECT, type SubtitleEffectCatalog } from "@/lib/subtitleEffects";
+
+const effectCatalog = {
+  package: "ass-lyric-effects",
+  version: "3.0.0",
+  schema_version: "1.0",
+  stable_id_contract: {},
+  multiline_context_contract: {},
+  effects: ["cut", "fad", "glow"].map((effect_id) => ({
+    effect_id,
+    stable_effect_id: true,
+    name_en: effect_id,
+    name_ja: effect_id,
+    description_en: effect_id,
+    description_ja: effect_id,
+    parameters: {},
+  })),
+} satisfies SubtitleEffectCatalog;
 
 const grid: RhythmGridPoint[] = [0, 1, 1.5, 2, 2.5, 3, 4].map((time) => ({
   time,
@@ -104,6 +121,7 @@ describe("Sub segment style dialog draft", () => {
       target,
       { ...DEFAULT_SUBTITLE_STYLE, font_size: 72 },
       { ...DEFAULT_SUBTITLE_EFFECT, name: "fad" },
+      effectCatalog,
     )).toMatchObject({
       mode: "inherit",
       style: { font_size: 72 },
@@ -120,6 +138,7 @@ describe("Sub segment style dialog draft", () => {
       },
       { ...DEFAULT_SUBTITLE_STYLE, font_size: 120 },
       DEFAULT_SUBTITLE_EFFECT,
+      effectCatalog,
     )).toMatchObject({
       mode: "custom",
       style: { font_size: 36 },

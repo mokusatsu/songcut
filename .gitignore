@@ -11,8 +11,6 @@ __pycache__/
 third_party/
 !third_party/
 third_party/*
-!third_party/ass-effects23/
-!third_party/ass-effects23/**
 !third_party/uta_align/
 !third_party/uta_align/**
 third_party/uta_align/**/__pycache__/

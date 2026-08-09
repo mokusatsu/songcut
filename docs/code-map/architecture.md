@@ -7,27 +7,27 @@
 
 | ID | 主な範囲 | ファイル | シンボル | 入／出境界 | 凝集度 | 推定責務 |
 |---|---|---:|---:|---:|---:|---|
-| `gui` | gui | 121 | 947 | 55／27 | 0.96 | Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、Python API との連携、プロジェクト保存・復旧を扱う。 |
-| `songcut` | songcut | 47 | 716 | 61／67 | 0.76 | FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境界調整、波形生成、クリップ・字幕書き出しを提供する Python バックエンド。 |
+| `gui` | gui | 122 | 978 | 56／28 | 0.96 | Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、Python API との連携、プロジェクト保存・復旧を扱う。 |
+| `songcut` | songcut | 46 | 721 | 61／71 | 0.72 | FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境界調整、波形生成、クリップ・字幕書き出しを提供する Python バックエンド。 |
 | `third_party-uta_align` | third_party/uta_align | 25 | 373 | 4／16 | 0.86 | 歌詞と音声認識候補からアンカーと整列結果を構築し、候補合意、反復処理、フォールバック、整列検証を行う同梱 uta_align エンジン。 |
-| `tests` | tests | 20 | 255 | 53／59 | 0.02 | Python バックエンド、Electron/React の状態・操作・永続化、および統合契約を検証する Python と TypeScript のテスト群。 |
+| `tests` | tests | 21 | 255 | 56／58 | 0.02 | Python バックエンド、Electron/React の状態・操作・永続化、および統合契約を検証する Python と TypeScript のテスト群。 |
 | `packaging` | packaging | 3 | 41 | 0／4 | 0.00 | Windows 配布物の構築、パッケージ済み GUI の E2E スモーク検証、字幕フレーム評価などを担う配布・検証補助。 |
 
 ## 依存地図
 
 ```mermaid
 flowchart LR
-  gui["gui\n121 files"]
-  songcut["songcut\n47 files"]
+  gui["gui\n122 files"]
+  songcut["songcut\n46 files"]
   third_party_uta_align["third_party-uta_align\n25 files"]
-  tests["tests\n20 files"]
+  tests["tests\n21 files"]
   packaging["packaging\n3 files"]
-  tests -->|45| songcut
-  songcut -->|37| gui
-  songcut -->|27| tests
+  tests -->|44| songcut
+  songcut -->|38| gui
+  songcut -->|30| tests
   gui -->|18| tests
   tests -->|13| gui
-  gui -->|9| songcut
+  gui -->|10| songcut
   third_party_uta_align -->|6| songcut
   third_party_uta_align -->|6| tests
   third_party_uta_align -->|4| gui
@@ -54,7 +54,7 @@ flowchart LR
 - `gui/src/types.ts`
 - `gui/src/components/SettingsDialog.tsx`
 
-境界: incoming 55、outgoing 27、内部凝集度 0.96。
+境界: incoming 56、outgoing 28、内部凝集度 0.96。
 
 ### `songcut`
 
@@ -68,7 +68,7 @@ flowchart LR
 - `songcut/subtitle_export.py`
 - `songcut/smart_export.py`
 
-境界: incoming 61、outgoing 67、内部凝集度 0.76。
+境界: incoming 61、outgoing 71、内部凝集度 0.72。
 
 ### `third_party-uta_align`
 
@@ -93,10 +93,10 @@ flowchart LR
 - `tests/test_api.py`
 - `gui/src/lib/waveformSessionCache.ts`
 - `tests/test_smart_export.py`
-- `tests/test_mms_alignment.py`
 - `tests/test_subtitle_export.py`
+- `tests/test_mms_alignment.py`
 
-境界: incoming 53、outgoing 59、内部凝集度 0.02。
+境界: incoming 56、outgoing 58、内部凝集度 0.02。
 
 ### `packaging`
 
