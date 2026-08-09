@@ -29,16 +29,16 @@
 
 ## 完了条件
 
-- [ ] `ass-lyric-effects==3.0.0`の固定配布物または固定commitから構築した同一wheelを開発環境とportable buildが利用し、旧packageコード・設定・配布物が残らない。
-- [ ] Python公開APIから取得した97個のstable `effect_id`と全parameter schemaを、JSON API経由でGUIが表示・編集できる。
-- [ ] number／integer／choice／color／paletteの既定値、範囲、step、選択肢、日英label／descriptionが公開catalogと一致し、別Effectの古いparameterを保存・送信しない。
-- [ ] レーン／セグメントEffectが既存schema v3 projectへ保存・再読込され、97個の文字列IDをそのまま保持する。
-- [ ] 使用中フォントの実ファイルとfaceを解決し、UAX #29とHarfBuzz/libass REAL_DIMで得た行別glyph幅と座標を`EffectContext`へ渡す。East Asian Width推定は削除される。
-- [ ] 単一行と複数行で全97既定効果を9 alignment、四辺近傍、狭いboxに対して生成でき、strict tag、未知parameter、event budget超過を利用者向けに明示する。
-- [ ] ASS sidecarと焼き込み動画で選択したEffectが反映され、Karaokeはv3 clip sweepとして出力される。
-- [ ] `estimate_event_count()`を使う事前警告または拒否境界があり、既定上限をsongcut側の根拠なしに強制しない。
-- [ ] Python／GUI unit・integration、typecheck、production build、portable package smoke、Cut/Sub E2Eが成功し、証跡を記録する。
-- [ ] ASS_Lyric_Effectsの固定commit、wheel SHA-256、songcut開始／終了HEAD、差分、未実施事項を実施証跡へ記録する。
+- [x] `ass-lyric-effects==3.0.0`の固定配布物または固定commitから構築した同一wheelを開発環境とportable buildが利用し、旧packageコード・設定・配布物が残らない。
+- [x] Python公開APIから取得した97個のstable `effect_id`と全parameter schemaを、JSON API経由でGUIが表示・編集できる。
+- [x] number／integer／choice／color／paletteの既定値、範囲、step、選択肢、日英label／descriptionが公開catalogと一致し、別Effectの古いparameterを保存・送信しない。
+- [x] レーン／セグメントEffectが既存schema v3 projectへ保存・再読込され、97個の文字列IDをそのまま保持する。
+- [x] 使用中フォントの実ファイルとfaceを解決し、UAX #29とHarfBuzz/libass REAL_DIMで得た行別glyph幅と座標を`EffectContext`へ渡す。East Asian Width推定は削除される。
+- [x] 単一行と複数行で全97既定効果を9 alignment、四辺近傍、狭いboxに対して生成でき、strict tag、未知parameter、event budget超過を利用者向けに明示する。
+- [x] ASS sidecarと焼き込み動画で選択したEffectが反映され、Karaokeはv3 clip sweepとして出力される。
+- [x] `estimate_event_count()`を使う事前警告または拒否境界があり、既定上限をsongcut側の根拠なしに強制しない。
+- [x] Python／GUI unit・integration、typecheck、production build、portable package smoke、Cut/Sub E2Eが成功し、証跡を記録する。
+- [x] ASS_Lyric_Effectsの固定commit、wheel SHA-256、songcut開始／終了HEAD、差分、未実施事項を実施証跡へ記録する。
 
 ## テスト方法
 
@@ -61,10 +61,16 @@
 
 ## 実施証跡
 
-- 開始: 2026-08-09、branch `codex/SCUT-036-ass-lyric-effects-integration`、HEAD `459ca5eb7ac3651319fb6ed2d72cb049675fc137`。
-- 開始時既存差分: SCUT-035調査による`tasks/task-list.md`変更と未追跡`tasks/SCUT-035.md`。内容を保持してSCUT-036へ継続。
-- 依存先: `C:/dev/ASS_Lyric_Effects40`の`MERGE23-003`は実装中。Codex task `019fe4c5-2e23-70f3-a6f2-6694874a195a`へ固定commit、公開signature、wheel、multiline contractを照会済み。
-- 上流回答: push済み`3927a8abe9ab3fad84aeb227745a373f6bb72510`は分類propertyとgeometry修正の固定点だが旧import名のためv3依存には使用しない。integration-ready SHA通知を待つ。
-- 確定予定API: `ass_lyric_effects`、`__version__ == "3.0.0"`、package rootから`get_effect_catalog()`、`estimate_event_count()`、`EventBudgetExceededError`を公開する。
-- 検証用wheel予定: `C:/dev/ASS_Lyric_Effects40/source/ass_lyric_effects-3.0.0-py3-none-any.whl`。Release／PyPI固定前はlocal wheelを隔離installし、絶対file URLを`pyproject.toml`へcommitしない。
-- multiline予定契約: `VisualLineLayout(anchor_x, anchor_y, text_box, glyph_widths)`を`EffectContext.line_layouts`へ上から順に渡す。18文字配置効果は行別layout＋共有timeline、Typewriter／Scramble Resolveは全行textを上段からsequential、native効果はblock contextを使う。不足・不一致の黙った推定は行わない。
+- 完了: 2026-08-10。branch `codex/SCUT-036-ass-lyric-effects-integration`、開始HEAD `459ca5eb7ac3651319fb6ed2d72cb049675fc137`、開始checkpoint `ae5fe500ea81c0b6a9be2cd0cd9efad71e981587`、統合実装HEAD `27ba6b5baf2f961a141f0bec7f2774ed7ea823ea`。
+- 上流固定点: ASS_Lyric_Effects commit `715af13f227aa0a1d9a1f78250224292c278fcf8`（実装commit `de16acc5b84df7f07b8f0789644059a813ba5127`）。wheel `ass_lyric_effects-3.0.0-py3-none-any.whl`、SHA-256 `e3246edcc5d64e44766d6b99faa855e7386a76b4849c63a094381c1350000f72`。上流testは`92 passed`。
+- `pyproject.toml`は上記commitのraw wheel URLとSHA-256 fragmentへ固定した。portable `runtime/ass_lyric_effects-3.0.0.dist-info/direct_url.json`でも同一URL／hashを確認し、`ass_lyric_effects`、`regex`、`uharfbuzz`と各metadata／licenseを同梱した。
+- 公開catalogを`GET /subtitle-effects/catalog`で透過し、97 stable string ID、parameter schema、日英choice label、preview／catalog URLをGUIの単一SSOTにした。未知ID／parameter／不正値は明示エラー、catalog未準備中は編集・書き出しを抑止し、fallbackしない。
+- `POST /subtitle-effects/estimate`は上流`estimate_event_count()`を使用する。budget未指定時は上限を強制せず、指定時の超過は上流`EventBudgetExceededError`の値を保って422にする。
+- Windows WPF `GlyphTypeface`から使用fontの物理pathとTTC face indexを解決し、SFNT name/style/coverageを厳格照合する。UAX #29とHarfBuzz/libass REAL_DIMで行別advanceを計測し、非空visual lineだけの`VisualLineLayout`を渡す。空行separatorと縦gap、sequential Typewriter／Scramble契約も全97 integration testで確認した。
+- `songcut/ass_effects23/`、`third_party/ass-effects23/`、旧CLI／test／ignore／package設定を削除した。実装・設定範囲の`ass_effects23|ass-effects23|east_asian_width|East Asian Width`検索は該当なし。
+- Python: `python -m pytest -q` → `410 passed, 2 skipped`。全97効果について単一行／空行を含む複数行、9 alignment、1920系と狭小解像度、実font faceの生成を含む。
+- GUI: `pnpm exec vitest run` → `48 files / 301 passed`、`pnpm run typecheck`成功、`pnpm run build`成功。project schema v3のlane／segment effect保存・再読込、全parameter kind、未知値拒否を確認した。
+- Portable: `packaging/build_dist.ps1`成功、`dist/songcut-win-x64` version `1.1.71`を生成。Cut E2Eは`E2E_OK`と`JAPANESE_LOCALE_OK`、Sub E2Eは39 segment／2 laneの実解析、Fad／Glow、overlay、ASS sidecar、動画焼き込みを経て`SUB_E2E_OK`。
+- コードマップ: 217 files、2448 nodes、8981 edges、parse error 0で更新し、verify／validate成功。
+- Karaokeは互換migrationなしでv3 clip sweepへ置換した。動画previewはcatalogのGitHub Pages URLをGUIで直接再生し、songcut側へ動画を同梱していない。
+- 未実施事項: push／PR作成なし。機能・検証上の残件なし。
