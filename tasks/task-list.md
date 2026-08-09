@@ -10,9 +10,9 @@
 
 | 項目 | 値 |
 |---|---|
-| 進行中 | なし |
-| 次のタスクID | `SCUT-035` |
-| ブランチ | `main` |
+| 進行中 | `SCUT-036` |
+| 次のタスクID | `SCUT-037` |
+| ブランチ | `codex/SCUT-036-ass-lyric-effects-integration` |
 | 再編開始時HEAD | `5308509` |
 
 ## 運用ルール
@@ -84,3 +84,5 @@
 | SCUT-032 | 開発運用 | 作業タスクリストの汎用化 | 完了 | 高 | SCUT-031 | 一覧とtask briefを分離し、機能分野を問わず同じSSOTで管理できる | [詳細・証拠](../tasks/SCUT-032.md) |
 | SCUT-033 | Sub・字幕 | セグメント個別Style／Effect設定 | 完了 | 高 | SCUT-032 | Subセグメントがレーン継承または独自Style／Effectを選べ、保存・プレビュー・動画・ASSへ反映される | [詳細・証拠](../tasks/SCUT-033.md) |
 | SCUT-034 | GUI | Timeline初回表示幅の同期 | 完了 | 中 | SCUT-006 | Cut/SubのTimelineが初回ペイント前から実viewport幅で描画され、通常ビルドが成功する | [詳細・証拠](../tasks/SCUT-034.md) |
+| SCUT-035 | 字幕・調査 | ASS_Lyric_Effects置換調査 | 完了 | 高 | なし | 外部契約とsongcut影響範囲を照合し、障害・必要変更・互換性判断点・検証計画を根拠付きで確定する | [詳細・証拠](../tasks/SCUT-035.md) |
+| SCUT-036 | 字幕・統合 | ASS_Lyric_Effects v3統合 | 実装中 | 最高 | SCUT-035、ASS_Lyric_Effects MERGE23-003 | 旧ass-effects23を残さずv3公開catalog・97効果・実フォント複数行layoutをGUI、保存、ASS出力、配布版へ統合する | [詳細・証拠](../tasks/SCUT-036.md) |
