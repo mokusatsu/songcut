@@ -94,6 +94,18 @@ describe("backend-owned subtitle effect catalog", () => {
     });
   });
 
+  it("uses 750ms for omitted start and end durations", () => {
+    expect(normalizeSubtitleEffect({
+      name: "zoom",
+      params: { min_scale: 25 },
+    }, catalog)).toEqual({
+      name: "zoom",
+      start_duration_ms: 750,
+      end_duration_ms: 750,
+      params: { min_scale: 25 },
+    });
+  });
+
   it("rejects unknown effects instead of falling back to cut", () => {
     expect(() => normalizeSubtitleEffect({ name: "removed", params: {} }, catalog)).toThrow(
       /Unknown subtitle effect_id/,

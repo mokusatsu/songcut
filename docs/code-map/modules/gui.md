@@ -7,11 +7,11 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 
 ## 指標
 
-- Files: 122
-- Symbols: 978
-- Incoming／Outgoing: 56／28
+- Files: 124
+- Symbols: 981
+- Incoming／Outgoing: 58／28
 - Cohesion: 0.96
-- Node kinds: Class 3、File 122、Function 780、Test 73
+- Node kinds: Class 3、File 124、Function 780、Test 74
 
 ## 代表パス
 
@@ -132,6 +132,7 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/components/SegmentTimingDialog.tsx`
 - `gui/src/components/SettingsDialog.test.ts`
 - `gui/src/components/SettingsDialog.tsx`
+- `gui/src/components/SubModePanel.test.ts`
 - `gui/src/components/SubTimelineEditor.tsx`
 - `gui/src/components/SubtitleAlignmentIcon.test.tsx`
 - `gui/src/components/SubtitleAlignmentIcon.tsx`
@@ -147,6 +148,7 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/components/ui/editor-focus.test.ts`
 - `gui/src/components/ui/editor-focus.tsx`
 - `gui/src/components/ui/input.tsx`
+- `gui/src/components/ui/radix-select.tsx`
 - `gui/src/components/ui/scroll-area.tsx`
 - `gui/src/components/ui/select.tsx`
 - `gui/src/components/ui/tabs.tsx`

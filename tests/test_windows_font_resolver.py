@@ -75,8 +75,8 @@ def _ttc(path: Path, *, faces: int = 2) -> Path:
     return path
 
 
-def _ttf(path: Path) -> Path:
-    path.write_bytes(_sfnt_face())
+def _ttf(path: Path, **face_names: object) -> Path:
+    path.write_bytes(_sfnt_face(**face_names))
     return path
 
 
@@ -104,12 +104,25 @@ def _candidate(
         "is_file": is_file,
         "face_index": face_index,
         "face_index_known": face_index_known,
+        "face_created": True,
+        "file_count": 1,
+        "local_file_count": 1,
+        "local_loader_available": True,
+        "multiple_files": False,
         "weight": weight,
         "style": style,
         "style_simulations": simulations,
         "coverage_checked": coverage_checked,
         "missing_codepoints": missing or [],
     }
+
+
+def _install_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+    candidates: list[dict[str, object]],
+) -> None:
+    monkeypatch.setattr(resolver, "_enumerate_native_candidates", lambda: candidates)
+    monkeypatch.setattr(resolver, "_probe_native_candidate", lambda candidate, text: dict(candidate))
 
 
 @pytest.fixture(autouse=True)
@@ -124,14 +137,13 @@ def test_resolves_local_ttc_face_and_caches_probe(monkeypatch: pytest.MonkeyPatc
     record = _candidate(font_path)
     calls = 0
 
-    def fake_probe(family: str, text: str) -> list[dict[str, object]]:
+    def fake_enumerate() -> list[dict[str, object]]:
         nonlocal calls
         calls += 1
-        assert family == "Yu Gothic UI"
-        assert text == "日本語"
         return [record]
 
-    monkeypatch.setattr(resolver, "_run_wpf_probe", fake_probe)
+    monkeypatch.setattr(resolver, "_enumerate_native_candidates", fake_enumerate)
+    monkeypatch.setattr(resolver, "_probe_native_candidate", lambda candidate, text: dict(candidate))
     record["weight"] = 700
     record["face_names"] = ["Bold"]
     record["win32_face_names"] = ["Bold"]
@@ -148,11 +160,7 @@ def test_resolves_local_ttc_face_and_caches_probe(monkeypatch: pytest.MonkeyPatc
 
 def test_single_face_cannot_claim_nonzero_ttc_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     font_path = _ttf(tmp_path / "test.ttf")
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [_candidate(font_path, face_index=1)],
-    )
+    _install_candidates(monkeypatch, [_candidate(font_path, face_index=1)])
 
     with pytest.raises(resolver.FontMetadataError, match="single-face"):
         resolver.resolve_windows_font("Yu Gothic UI")
@@ -163,11 +171,7 @@ def test_unknown_collection_index_is_an_explicit_error(
     tmp_path: Path,
 ) -> None:
     font_path = _ttc(tmp_path / "test.ttc")
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [_candidate(font_path, face_index=0, face_index_known=False)],
-    )
+    _install_candidates(monkeypatch, [_candidate(font_path, face_index=0, face_index_known=False)])
 
     with pytest.raises(resolver.FontMetadataError, match="trustworthy TTC face index"):
         resolver.resolve_windows_font("Yu Gothic UI")
@@ -175,11 +179,7 @@ def test_unknown_collection_index_is_an_explicit_error(
 
 def test_missing_coverage_is_an_explicit_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     font_path = _ttf(tmp_path / "test.ttf")
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [_candidate(font_path, face_index=0, missing=[0x1F600])],
-    )
+    _install_candidates(monkeypatch, [_candidate(font_path, face_index=0, missing=[0x1F600])])
 
     with pytest.raises(resolver.FontCoverageError, match=r"U\+1F600"):
         resolver.resolve_windows_font("Yu Gothic UI", text="😀")
@@ -196,7 +196,7 @@ def test_shaping_controls_and_variation_selectors_are_not_missing_glyphs(
         face_index=0,
         missing=[0x200C, 0x200D, 0xFE0F, 0xE0100],
     )
-    monkeypatch.setattr(resolver, "_run_wpf_probe", lambda family, text: [record])
+    _install_candidates(monkeypatch, [record])
 
     resolved = resolver.resolve_windows_font("Test Family", text="👩\u200d💻")
     assert resolved.postscript_name == "TestFamily-Regular"
@@ -204,10 +204,9 @@ def test_shaping_controls_and_variation_selectors_are_not_missing_glyphs(
 
 def test_style_simulation_is_not_accepted_as_italic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     font_path = _ttf(tmp_path / "test.ttf")
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [
+    _install_candidates(
+        monkeypatch,
+        [
             _candidate(
                 font_path,
                 face_index=0,
@@ -221,12 +220,57 @@ def test_style_simulation_is_not_accepted_as_italic(monkeypatch: pytest.MonkeyPa
         resolver.resolve_windows_font("Yu Gothic UI", italic=True)
 
 
-def test_remote_or_in_memory_face_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [_candidate(None, is_file=False)],
+def test_named_medium_family_is_accepted_as_non_bold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    family = "Noto Sans JP Medium"
+    font_path = _ttf(
+        tmp_path / "NotoSansJP-Medium.ttf",
+        family=family,
+        subfamily="Medium",
+        full_name=family,
+        postscript="NotoSansJP-Medium",
     )
+    candidate = _candidate(
+        font_path,
+        family="Noto Sans JP",
+        face_index=0,
+        weight=500,
+        face_name="Medium",
+    )
+    candidate["full_names"] = [family]
+    candidate["postscript_names"] = ["NotoSansJP-Medium"]
+    _install_candidates(monkeypatch, [candidate])
+
+    resolved = resolver.resolve_windows_font(family, text="日本語")
+
+    assert resolved.weight == 500
+    assert resolved.subfamily_name == "Medium"
+    assert not resolved.bold
+
+
+@pytest.mark.parametrize("weight", [100, 300, 400, 500])
+def test_non_bold_accepts_physical_weights_below_semibold(weight: int) -> None:
+    resolver._style_matches(_candidate(None, weight=weight), bold=False, italic=False)
+
+
+@pytest.mark.parametrize("weight", [600, 700, 900])
+def test_bold_accepts_physical_weights_from_semibold(weight: int) -> None:
+    resolver._style_matches(_candidate(None, weight=weight), bold=True, italic=False)
+
+
+@pytest.mark.parametrize(
+    ("weight", "bold"),
+    [(600, False), (700, False), (500, True), (400, True)],
+)
+def test_physical_weight_must_match_requested_bold_class(weight: int, bold: bool) -> None:
+    with pytest.raises(resolver.FontStyleMismatchError, match=f"weight {weight}"):
+        resolver._style_matches(_candidate(None, weight=weight), bold=bold, italic=False)
+
+
+def test_remote_or_in_memory_face_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_candidates(monkeypatch, [_candidate(None, is_file=False)])
 
     with pytest.raises(resolver.FontMetadataError, match="remote"):
         resolver.resolve_windows_font("Yu Gothic UI")
@@ -237,11 +281,7 @@ def test_registry_like_unmatched_record_is_not_silently_used(
     tmp_path: Path,
 ) -> None:
     font_path = _ttf(tmp_path / "other.ttf")
-    monkeypatch.setattr(
-        resolver,
-        "_run_wpf_probe",
-        lambda family, text: [_candidate(font_path, family="Other Family", face_index=0)],
-    )
+    _install_candidates(monkeypatch, [_candidate(font_path, family="Other Family", face_index=0)])
 
     with pytest.raises(resolver.FontNotFoundError, match="not found exactly"):
         resolver.resolve_windows_font("Yu Gothic UI")
@@ -284,7 +324,7 @@ def test_libass_mismatch_is_an_explicit_error(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.skipif(os.name != "nt", reason="WPF integration requires Windows")
+@pytest.mark.skipif(os.name != "nt", reason="DirectWrite integration requires Windows")
 def test_current_windows_yu_gothic_ui_regular_bold_and_italic() -> None:
     try:
         regular = resolver.resolve_windows_font("Yu Gothic UI", text="日本語")
@@ -302,7 +342,7 @@ def test_current_windows_yu_gothic_ui_regular_bold_and_italic() -> None:
     assert bold.style_simulations.casefold() in {"none", ""}
 
     # Yu Gothic UI has no physical italic face on the target Windows image;
-    # the resolver must reject WPF's ItalicSimulation instead of synthesizing.
+    # The resolver must reject DirectWrite's italic simulation instead of synthesizing.
     try:
         italic = resolver.resolve_windows_font("Yu Gothic UI", italic=True, text="日本語")
     except resolver.FontStyleMismatchError:

@@ -11,7 +11,7 @@
 | 項目 | 値 |
 |---|---|
 | 進行中 | なし |
-| 次のタスクID | `SCUT-037` |
+| 次のタスクID | `SCUT-040` |
 | ブランチ | `codex/SCUT-036-ass-lyric-effects-integration` |
 | 再編開始時HEAD | `5308509` |
 
@@ -86,3 +86,6 @@
 | SCUT-034 | GUI | Timeline初回表示幅の同期 | 完了 | 中 | SCUT-006 | Cut/SubのTimelineが初回ペイント前から実viewport幅で描画され、通常ビルドが成功する | [詳細・証拠](../tasks/SCUT-034.md) |
 | SCUT-035 | 字幕・調査 | ASS_Lyric_Effects置換調査 | 完了 | 高 | なし | 外部契約とsongcut影響範囲を照合し、障害・必要変更・互換性判断点・検証計画を根拠付きで確定する | [詳細・証拠](../tasks/SCUT-035.md) |
 | SCUT-036 | 字幕・統合 | ASS_Lyric_Effects v3統合 | 完了 | 最高 | SCUT-035、ASS_Lyric_Effects MERGE23-003 | 旧ass-effects23を残さずv3公開catalog・97効果・実フォント複数行layoutをGUI、保存、ASS出力、配布版へ統合する | [詳細・証拠](../tasks/SCUT-036.md) |
+| SCUT-037 | 字幕・不具合修正 | 名前付きウェイト書体の字幕出力修正 | 完了 | 最高 | SCUT-036 | Medium等の非太字物理faceを正しく解決し、ASS Effect付き出力とportable buildが成功する | [詳細・証拠](../tasks/SCUT-037.md) |
+| SCUT-038 | 字幕・基盤 | MSVC DirectWrite font resolverへの置換 | 完了 | 高 | SCUT-037 | runtimeのPowerShell／子processを廃止し、MSVC DLLから実font path・face・coverageを厳格解決する | [詳細・証拠](../tasks/SCUT-038.md) |
+| SCUT-039 | 字幕・GUI | 字幕エフェクト設定の情報設計修正 | 完了 | 高 | SCUT-036 | Type説明、duration、parameter、外部リンクを整理し、Outline／Boldの重なりを解消する | [詳細・証拠](../tasks/SCUT-039.md) |

@@ -27,6 +27,9 @@ from .lyrics_alignment import format_srt_timestamp
 from .windows_font_resolver import resolve_windows_font
 
 
+DEFAULT_EFFECT_DURATION_MS = 750
+
+
 @dataclass(frozen=True)
 class SubtitleStyle:
     font_name: str = "Yu Gothic UI"
@@ -57,8 +60,8 @@ class SubtitleSegment:
 @dataclass(frozen=True)
 class SubtitleEffect:
     name: str = Effect.CUT.value
-    start_duration_ms: int = 300
-    end_duration_ms: int = 300
+    start_duration_ms: int = DEFAULT_EFFECT_DURATION_MS
+    end_duration_ms: int = DEFAULT_EFFECT_DURATION_MS
     params: Mapping[str, Any] | None = None
 
 

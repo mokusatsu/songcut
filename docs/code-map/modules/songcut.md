@@ -7,11 +7,11 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 
 ## 指標
 
-- Files: 46
-- Symbols: 721
-- Incoming／Outgoing: 61／71
+- Files: 51
+- Symbols: 810
+- Incoming／Outgoing: 72／77
 - Cohesion: 0.72
-- Node kinds: Class 88、File 46、Function 406、Method 59、Test 122
+- Node kinds: Class 116、File 51、Function 422、Method 70、Test 151
 
 ## 代表パス
 
@@ -19,7 +19,7 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `gui/src/components/SubModePanel.tsx`
 - `songcut/transcription.py`
 - `songcut/subtitle_export.py`
-- `songcut/smart_export.py`
+- `songcut/ffmpeg_tools.py`
 
 ## 主なシンボル
 
@@ -28,43 +28,63 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 | `time` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:71` |
 | `nullableTime` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:72` |
 | `db` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:73` |
-| `SubModePanel` | Function | `gui/src/components/SubModePanel.tsx:113` |
-| `analyzeLyrics` | Function | `gui/src/components/SubModePanel.tsx:210` |
-| `openLyricsDialog` | Function | `gui/src/components/SubModePanel.tsx:218` |
-| `exportSubtitles` | Function | `gui/src/components/SubModePanel.tsx:231` |
-| `addLane` | Function | `gui/src/components/SubModePanel.tsx:236` |
-| `removeLane` | Function | `gui/src/components/SubModePanel.tsx:249` |
-| `updateLane` | Function | `gui/src/components/SubModePanel.tsx:266` |
-| `update` | Function | `gui/src/components/SubModePanel.tsx:463` |
-| `patch` | Function | `gui/src/components/SubModePanel.tsx:563` |
-| `patchEffect` | Function | `gui/src/components/SubModePanel.tsx:567` |
-| `patchEffectParam` | Function | `gui/src/components/SubModePanel.tsx:571` |
-| `saveStylePreset` | Function | `gui/src/components/SubModePanel.tsx:575` |
-| `applyStylePreset` | Function | `gui/src/components/SubModePanel.tsx:593` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:600` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:747` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:766` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:778` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:795` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:808` |
-| `colorPickerValue` | Function | `gui/src/components/SubModePanel.tsx:903` |
-| `colorPickerResult` | Function | `gui/src/components/SubModePanel.tsx:910` |
-| `effectLabel` | Function | `gui/src/components/SubModePanel.tsx:918` |
-| `effectDescription` | Function | `gui/src/components/SubModePanel.tsx:923` |
-| `parameterLabel` | Function | `gui/src/components/SubModePanel.tsx:928` |
-| `parameterDescription` | Function | `gui/src/components/SubModePanel.tsx:933` |
-| `choiceValueForUi` | Function | `gui/src/components/SubModePanel.tsx:938` |
-| `readChoiceValue` | Function | `gui/src/components/SubModePanel.tsx:943` |
-| `choiceLabel` | Function | `gui/src/components/SubModePanel.tsx:950` |
-| `clampCatalogNumber` | Function | `gui/src/components/SubModePanel.tsx:957` |
-| `groupEffectDefinitions` | Function | `gui/src/components/SubModePanel.tsx:966` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:968` |
-| `findSubtitleEffectError` | Function | `gui/src/components/SubModePanel.tsx:995` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:996` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:1002` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:1017` |
-| `hasSubtitleSegments` | Function | `gui/src/components/SubModePanel.tsx:1024` |
+| `SubModePanel` | Function | `gui/src/components/SubModePanel.tsx:123` |
+| `analyzeLyrics` | Function | `gui/src/components/SubModePanel.tsx:220` |
+| `openLyricsDialog` | Function | `gui/src/components/SubModePanel.tsx:228` |
+| `exportSubtitles` | Function | `gui/src/components/SubModePanel.tsx:241` |
+| `addLane` | Function | `gui/src/components/SubModePanel.tsx:246` |
+| `removeLane` | Function | `gui/src/components/SubModePanel.tsx:259` |
+| `updateLane` | Function | `gui/src/components/SubModePanel.tsx:276` |
+| `update` | Function | `gui/src/components/SubModePanel.tsx:480` |
+| `patch` | Function | `gui/src/components/SubModePanel.tsx:580` |
+| `patchEffect` | Function | `gui/src/components/SubModePanel.tsx:584` |
+| `patchEffectParam` | Function | `gui/src/components/SubModePanel.tsx:588` |
+| `saveStylePreset` | Function | `gui/src/components/SubModePanel.tsx:592` |
+| `applyStylePreset` | Function | `gui/src/components/SubModePanel.tsx:610` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:617` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:772` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:790` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:801` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:817` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:829` |
+| `colorPickerValue` | Function | `gui/src/components/SubModePanel.tsx:934` |
+| `colorPickerResult` | Function | `gui/src/components/SubModePanel.tsx:941` |
+| `effectLabel` | Function | `gui/src/components/SubModePanel.tsx:949` |
+| `effectDescription` | Function | `gui/src/components/SubModePanel.tsx:954` |
+| `parameterLabel` | Function | `gui/src/components/SubModePanel.tsx:959` |
+| `choiceValueForUi` | Function | `gui/src/components/SubModePanel.tsx:964` |
+| `readChoiceValue` | Function | `gui/src/components/SubModePanel.tsx:969` |
+| `choiceLabel` | Function | `gui/src/components/SubModePanel.tsx:976` |
+| `clampCatalogNumber` | Function | `gui/src/components/SubModePanel.tsx:983` |
+| `groupEffectDefinitions` | Function | `gui/src/components/SubModePanel.tsx:992` |
+| `for` | Function | `gui/src/components/SubModePanel.tsx:994` |
+| `findSubtitleEffectError` | Function | `gui/src/components/SubModePanel.tsx:1021` |
+| `for` | Function | `gui/src/components/SubModePanel.tsx:1022` |
+| `for` | Function | `gui/src/components/SubModePanel.tsx:1028` |
+| `if` | Function | `gui/src/components/SubModePanel.tsx:1043` |
+| `hasSubtitleSegments` | Function | `gui/src/components/SubModePanel.tsx:1050` |
 | `samplePoints` | Test | `gui/src/lib/waveformSessionCache.test.ts:99` |
+| `ComApartmentScope` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:38` |
+| `NameInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:63` |
+| `CandidateInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:69` |
+| `CandidateRef` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:81` |
+| `FileInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:86` |
+| `GlyphInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:94` |
+| `FaceInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:101` |
+| `BlobBuilder` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:114` |
+| `Resolver` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:229` |
+| `ErrorState` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:231` |
+| `Resolver` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:239` |
+| `CallGuard` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:425` |
+| `CallGuard.CallGuard` | Method | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:427` |
+| `BuildCandidateInfo` | Function | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:437` |
+| `ResolvePath` | Function | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:516` |
+| `_arguments` | Function | `packaging/e2e_all_subtitle_effects.py:30` |
+| `_effect_defaults` | Function | `packaging/e2e_all_subtitle_effects.py:42` |
+| `_build_lane` | Function | `packaging/e2e_all_subtitle_effects.py:53` |
+| `_create_black_source` | Function | `packaging/e2e_all_subtitle_effects.py:112` |
+| `main` | Function | `packaging/e2e_all_subtitle_effects.py:149` |
+| `main.report` | Function | `packaging/e2e_all_subtitle_effects.py:185` |
 | `log` | Function | `packaging/e2e_sub_mode.js:25` |
 | `assertPass` | Function | `packaging/e2e_sub_mode.js:31` |
 | `sleep` | Function | `packaging/e2e_sub_mode.js:35` |
@@ -85,32 +105,14 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 | `if` | Function | `packaging/e2e_sub_mode.js:744` |
 | `parse_args` | Function | `packaging/set_windows_exe_icon.py:10` |
 | `main` | Function | `packaging/set_windows_exe_icon.py:19` |
-| `ProbeRequest` | Class | `songcut/api.py:89` |
-| `BoundaryRefinementRequest` | Class | `songcut/api.py:93` |
-| `BoundaryRefinementRequest.validate_hysteresis` | Method | `songcut/api.py:107` |
-| `BoundaryRefinementRequest.to_config` | Method | `songcut/api.py:112` |
-| `AnalyzeRequest` | Class | `songcut/api.py:118` |
-| `WhisperDownloadRequest` | Class | `songcut/api.py:130` |
-| `DemucsDownloadRequest` | Class | `songcut/api.py:134` |
-| `MmsDownloadRequest` | Class | `songcut/api.py:138` |
-| `TranscriptionSegmentRequest` | Class | `songcut/api.py:142` |
-| `TranscriptionRequest` | Class | `songcut/api.py:148` |
-| `ExportItem` | Class | `songcut/api.py:157` |
-| `ExportRequest` | Class | `songcut/api.py:166` |
-| `ExportPlanRequest` | Class | `songcut/api.py:174` |
-| `ScratchProxyRequest` | Class | `songcut/api.py:179` |
-| `WaveformRequest` | Class | `songcut/api.py:183` |
-| `LyricsAnalysisRequest` | Class | `songcut/api.py:187` |
-| `SubtitleStyleRequest` | Class | `songcut/api.py:198` |
-| `SubtitleEffectRequest` | Class | `songcut/api.py:214` |
-| `SubtitleEffectRequest.validate_and_normalize_params` | Method | `songcut/api.py:221` |
-| `SubtitleEffectEstimateRequest` | Class | `songcut/api.py:231` |
 
 ## ファイル一覧
 
 - `gui/src/components/BoundaryRefinementDialog.tsx`
 - `gui/src/components/SubModePanel.tsx`
 - `gui/src/lib/waveformSessionCache.test.ts`
+- `native/windows_font_resolver/src/scut_windows_font_resolver.cpp`
+- `packaging/e2e_all_subtitle_effects.py`
 - `packaging/e2e_sub_mode.js`
 - `packaging/set_windows_exe_icon.py`
 - `songcut/__init__.py`
@@ -141,6 +143,7 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `songcut/uta_alignment.py`
 - `songcut/waveform.py`
 - `songcut/whisper_execution.py`
+- `songcut/windows_font_native.py`
 - `songcut/windows_font_resolver.py`
 - `songcut/youtube_metadata.py`
 - `songcut_cli.py`
@@ -154,4 +157,6 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `tests/test_timestamps.py`
 - `tests/test_transcription.py`
 - `tests/test_whisper_execution.py`
+- `tests/test_windows_font_native.py`
+- `tests/test_windows_font_resolver.py`
 <!-- code-map:generated:end -->

@@ -206,6 +206,7 @@ class ApiJobTests(unittest.TestCase):
         assert lane.segments[0].style_override.alignment == 7
         assert lane.segments[0].effect_override.name == "fad"
         assert lane.segments[0].effect_override.start_duration_ms == 200
+        assert lane.segments[0].effect_override.end_duration_ms == 750
         assert lane.segments[1].style_override is None
         assert lane.segments[1].effect_override is None
 

@@ -11,6 +11,9 @@
 - pnpm
 - Git
 - PowerShell
+- Visual Studio CommunityまたはBuild Toolsの「C++によるデスクトップ開発」
+  - MSVC x64 toolset
+  - Windows 10／11 SDK
 
 開発時の `ffmpeg.exe` / `ffprobe.exe` 同梱は任意です。アプリはリポジトリまたは
 パッケージルートを先に探し、見つからなければ `PATH` を探します。
@@ -39,8 +42,14 @@ python -m pip install -e ".[gui,dev]"
 Python テストは次で実行します。
 
 ```powershell
+.\packaging\build_native_font_resolver.ps1
 python -m pytest
 ```
+
+字幕Effectの実フォント解決には、DirectWriteを呼ぶMSVC製native DLLが必要です。
+`build_native_font_resolver.ps1`はVisual Studio Installerの`vswhere.exe`からMSBuildを
+検出し、x64 Release DLLとnative testを構築・実行します。実行時にPowerShellや別の
+helper processは起動せず、PythonからDLLを直接読み込みます。
 
 このリポジトリにはプロプライエタリなメディア fixture は含めていません。ローカル
 メディアが必要なテストは、対象ファイルがない場合に skip される想定です。
@@ -104,6 +113,10 @@ $env:SONGCUT_GIT = (Get-Command git).Source
 .\packaging\build_dist.ps1
 ```
 
+`build_dist.ps1`はnative font resolverも自動的に構築してからPyInstallerへ同梱します。
+複数のVisual StudioがありMSBuildを固定したい場合は、`SONGCUT_MSBUILD`または
+`-MSBuild`を指定します。
+
 このスクリプトは内部で production GUI build も実行します。パッケージング前に
 フロントエンドだけを明示的に確認したい場合は、事前に `pnpm run typecheck` と
 `pnpm run build` を実行してください。
@@ -115,7 +128,8 @@ $env:SONGCUT_GIT = (Get-Command git).Source
   -Python "C:\Path\To\python.exe" `
   -Node "C:\Path\To\node.exe" `
   -Pnpm "C:\Path\To\pnpm.cmd" `
-  -Git "C:\Path\To\git.exe"
+  -Git "C:\Path\To\git.exe" `
+  -MSBuild "C:\Path\To\MSBuild.exe"
 ```
 
 既定のコマンドは通常の配布ビルドです。`dist\songcut-win-x64` だけを更新し、Release

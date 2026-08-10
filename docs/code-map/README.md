@@ -2,12 +2,12 @@
 ## 現在のスナップショット
 
 - Repository: `songcut`
-- Generated: `2026-08-10T00:11:20+09:00`
+- Generated: `2026-08-10T22:44:26+09:00`
 - Mode: `verify`
 - Engine: embedded Python `2.0.0`
-- VCS head: `ae5fe500ea81c0b6a9be2cd0cd9efad71e981587`
+- VCS head: `c3f21e650f6be8ce9a9cb541c790a835ec77f13f`
 - Dirty: `yes`
-- Files／Nodes／Edges: 217／2448／8981
+- Files／Nodes／Edges: 226／2543／9305
 - Components／Flows: 5／18
 
 ## 最初に読む場所

@@ -77,11 +77,13 @@ export type SubtitleEffectSettings = {
   params: Record<string, SubtitleEffectParameterValue>;
 };
 
+const DEFAULT_SUBTITLE_EFFECT_DURATION_MS = 750;
+
 /** The default is only the stable no-op ID; all effect metadata comes from the catalog. */
 export const DEFAULT_SUBTITLE_EFFECT: SubtitleEffectSettings = {
   name: "cut",
-  start_duration_ms: 300,
-  end_duration_ms: 300,
+  start_duration_ms: DEFAULT_SUBTITLE_EFFECT_DURATION_MS,
+  end_duration_ms: DEFAULT_SUBTITLE_EFFECT_DURATION_MS,
   params: {},
 };
 
@@ -138,8 +140,8 @@ export function normalizeSubtitleEffect(
   ) as Record<string, SubtitleEffectParameterValue>;
   return {
     name: definition.effect_id,
-    start_duration_ms: nonnegativeInteger(candidate.start_duration_ms, 300),
-    end_duration_ms: nonnegativeInteger(candidate.end_duration_ms, 300),
+    start_duration_ms: nonnegativeInteger(candidate.start_duration_ms, DEFAULT_SUBTITLE_EFFECT_DURATION_MS),
+    end_duration_ms: nonnegativeInteger(candidate.end_duration_ms, DEFAULT_SUBTITLE_EFFECT_DURATION_MS),
     params,
   };
 }

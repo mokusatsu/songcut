@@ -1,10 +1,9 @@
-"""Resolve a Windows font family to the file and face that DirectWrite can use.
+"""Resolve a Windows font family to the physical DirectWrite face.
 
 The subtitle renderer receives a family name, but libass ultimately opens a
-specific local SFNT face.  This module asks Windows' WPF font stack for that
-mapping and then validates the answer locally.  WPF's ``GlyphTypeface.FontUri``
-is important here: unlike the registry, it contains both the physical file
-and (for a collection) the face fragment.
+specific local SFNT face.  A policy-free MSVC DLL collects raw DirectWrite
+metadata; this module owns every selection, style, coverage, and ambiguity
+decision before validating the physical file locally.
 
 No registry-only guess or style fallback is made.  A caller gets a
 ``FontResolutionError`` when the requested face cannot be proven to be local,
@@ -13,19 +12,30 @@ to have the requested style, or to cover all requested characters.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 import hashlib
-import json
-import os
 from pathlib import Path
 import re
-import shutil
 import struct
-import subprocess
 import threading
 import unicodedata
 from typing import Any, Mapping, Sequence
+
+from .windows_font_native import (
+    FACE_CREATED,
+    GLYPH_QUERY_FAILED,
+    LOCAL_LOADER_AVAILABLE,
+    MULTIPLE_FILES,
+    NAME_FACE,
+    NAME_FAMILY,
+    NAME_FULL,
+    NAME_POSTSCRIPT,
+    PATH_RESOLVED,
+    NativeFontCandidate,
+    NativeFontCollectorError,
+    get_native_font_collector,
+    reset_native_font_collector,
+)
 
 
 class FontResolutionError(RuntimeError):
@@ -33,7 +43,7 @@ class FontResolutionError(RuntimeError):
 
 
 class FontResolverUnavailableError(FontResolutionError):
-    """Windows/WPF is unavailable or the probe process failed."""
+    """The native DirectWrite collector is unavailable or incompatible."""
 
 
 class FontNotFoundError(FontResolutionError):
@@ -93,144 +103,6 @@ class LibassFontSelection:
     selected_name: str
 
 
-_POWERSHELL_SCRIPT = r"""
-$ErrorActionPreference = 'Stop'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-try { [Console]::OutputEncoding = $utf8 } catch {}
-$OutputEncoding = $utf8
-$requestedFamily = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__FAMILY__'))
-$requestedText = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__TEXT__'))
-
-Add-Type -AssemblyName PresentationCore -ErrorAction Stop
-
-function Get-MapNames($map) {
-  if ($null -eq $map) { return @() }
-  $values = @()
-  foreach ($value in $map.Values) {
-    if ($null -ne $value -and ([string]$value).Trim().Length -gt 0) {
-      $values += [string]$value
-    }
-  }
-  return @($values | Select-Object -Unique)
-}
-
-function Name-Matches($value, $needle) {
-  if ($null -eq $value) { return $false }
-  $left = ([string]$value).Normalize([Text.NormalizationForm]::FormKC).Trim()
-  $right = ([string]$needle).Normalize([Text.NormalizationForm]::FormKC).Trim()
-  return [string]::Equals($left, $right, [StringComparison]::OrdinalIgnoreCase)
-}
-
-function Test-CoverageIgnorable($text, $offset, $codePoint) {
-  # ZWJ/ZWNJ, tag characters, and other Unicode controls/format characters
-  # are shaping instructions rather than standalone glyphs.  Variation
-  # selectors are Mn, not Cf, so cover both BMP and supplementary ranges.
-  if (($codePoint -ge 0xfe00 -and $codePoint -le 0xfe0f) -or
-      ($codePoint -ge 0xe0100 -and $codePoint -le 0xe01ef)) {
-    return $true
-  }
-  try {
-    $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($text, $offset)
-    if ($category -eq [Globalization.UnicodeCategory]::Control -or
-        $category -eq [Globalization.UnicodeCategory]::Format -or
-        $category -eq [Globalization.UnicodeCategory]::Surrogate) {
-      return $true
-    }
-  } catch {}
-  return $false
-}
-
-$rows = New-Object System.Collections.Generic.List[object]
-foreach ($fontFamily in [System.Windows.Media.Fonts]::SystemFontFamilies) {
-  $source = [string]$fontFamily.Source
-  $familyNames = @(Get-MapNames $fontFamily.FamilyNames)
-  $familyCandidateNames = @($source) + $familyNames
-  $typefaces = @($fontFamily.GetTypefaces())
-
-  foreach ($typeface in $typefaces) {
-    $glyph = $null
-    if (-not $typeface.TryGetGlyphTypeface([ref]$glyph)) { continue }
-    $win32FamilyNames = @(Get-MapNames $glyph.Win32FamilyNames)
-    $faceNames = @(Get-MapNames $glyph.FaceNames)
-    $win32FaceNames = @(Get-MapNames $glyph.Win32FaceNames)
-    $allNames = @($familyCandidateNames + $win32FamilyNames + $faceNames + $win32FaceNames)
-    $isMatch = $false
-    foreach ($name in $allNames) {
-      if (Name-Matches $name $requestedFamily) { $isMatch = $true; break }
-    }
-    if (-not $isMatch) { continue }
-
-    $fontUri = $glyph.FontUri
-    $isFile = $false
-    $path = $null
-    $faceIndex = $null
-    $faceIndexKnown = $false
-    if ($null -ne $fontUri -and $fontUri.IsFile) {
-      $isFile = $true
-      $path = $fontUri.LocalPath
-      if ([string]::IsNullOrEmpty($fontUri.Fragment)) {
-        $faceIndex = 0
-        $extension = [IO.Path]::GetExtension($path)
-        $faceIndexKnown = $extension -notin @('.ttc', '.otc')
-      } else {
-        $fragment = $fontUri.Fragment.TrimStart('#')
-        $parsedIndex = 0
-        if ([int]::TryParse($fragment, [ref]$parsedIndex) -and $parsedIndex -ge 0) {
-          $faceIndex = $parsedIndex
-          $faceIndexKnown = $true
-        }
-      }
-    }
-
-    $weight = 400
-    try { $weight = [int]$typeface.Weight.ToOpenTypeWeight() } catch {
-      try { $weight = [int]$glyph.Weight.ToOpenTypeWeight() } catch {}
-    }
-    $style = [string]$typeface.Style
-    $simulations = [string]$glyph.StyleSimulations
-
-    $missing = New-Object System.Collections.Generic.List[int]
-    for ($offset = 0; $offset -lt $requestedText.Length; $offset++) {
-      $codePoint = [char]::ConvertToUtf32($requestedText, $offset)
-      if (Test-CoverageIgnorable $requestedText $offset $codePoint) {
-        if ($codePoint -gt 0xffff) { $offset++ }
-        continue
-      }
-      if ($codePoint -gt 0xffff) { $offset++ }
-      $glyphId = 0
-      try {
-        if ($glyph.CharacterToGlyphMap.ContainsKey($codePoint)) {
-          $glyphId = [int]$glyph.CharacterToGlyphMap[$codePoint]
-        }
-      } catch {}
-      if ($glyphId -eq 0 -and -not $missing.Contains($codePoint)) {
-        [void]$missing.Add($codePoint)
-      }
-    }
-
-    [void]$rows.Add([pscustomobject]@{
-      family_source = $source
-      family_names = @($familyNames)
-      win32_family_names = @($win32FamilyNames)
-      face_names = @($faceNames)
-      win32_face_names = @($win32FaceNames)
-      path = $path
-      is_file = $isFile
-      face_index = $faceIndex
-      face_index_known = $faceIndexKnown
-      weight = $weight
-      style = $style
-      style_simulations = $simulations
-      coverage_checked = $true
-      missing_codepoints = @($missing)
-    })
-  }
-}
-
-$rowsArray = [object[]]$rows.ToArray()
-[Console]::WriteLine((ConvertTo-Json -InputObject $rowsArray -Compress -Depth 10))
-"""
-
 _FONTSELECT_RE = re.compile(
     r"fontselect:\s*\((?P<family>.*?),\s*(?P<weight>\d+),\s*(?P<italic>[01])\)"
     r"\s*->\s*(?P<postscript>[^,\r\n]+),\s*(?P<index>\d+)"
@@ -278,58 +150,6 @@ def _as_int(value: Any, *, field: str) -> int:
         return int(value)
     except (TypeError, ValueError) as exc:
         raise FontMetadataError(f"font probe returned invalid {field}: {value!r}") from exc
-
-
-def _powershell_executable() -> str:
-    configured = os.environ.get("SONGCUT_POWERSHELL")
-    if configured:
-        return configured
-    return shutil.which("powershell.exe") or "powershell.exe"
-
-
-def _run_wpf_probe(family: str, text: str) -> list[dict[str, Any]]:
-    """Run the built-in WPF probe and decode its candidate records."""
-
-    family_b64 = base64.b64encode(family.encode("utf-8")).decode("ascii")
-    text_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
-    script = _POWERSHELL_SCRIPT.replace("__FAMILY__", family_b64).replace("__TEXT__", text_b64)
-    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    try:
-        completed = subprocess.run(
-            [
-                _powershell_executable(),
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-EncodedCommand",
-                encoded,
-            ],
-            capture_output=True,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-        )
-    except OSError as exc:
-        raise FontResolverUnavailableError(f"cannot start PowerShell/WPF font probe: {exc}") from exc
-    if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip()
-        raise FontResolverUnavailableError(f"WPF font probe failed ({completed.returncode}): {detail}")
-    output = (completed.stdout or "").strip()
-    if not output:
-        raise FontResolverUnavailableError("WPF font probe returned no JSON")
-    try:
-        decoded = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise FontResolverUnavailableError(f"WPF font probe returned invalid JSON: {output[:240]!r}") from exc
-    if decoded is None:
-        return []
-    if isinstance(decoded, Mapping):
-        return [dict(decoded)]
-    if not isinstance(decoded, list):
-        raise FontResolverUnavailableError("WPF font probe returned a non-array JSON value")
-    return [dict(item) for item in decoded if isinstance(item, Mapping)]
 
 
 def _u16(data: bytes, offset: int) -> int:
@@ -467,17 +287,110 @@ def _candidate_matches_family(candidate: Mapping[str, Any], requested: str) -> b
         "win32_face_names",
         "full_names",
         "postscript_name",
+        "postscript_names",
     ):
         values.extend(_as_names(candidate.get(key)))
     return wanted in {_normalise_name(value) for value in values if value.strip()}
 
 
+def _native_style_name(style: int) -> str:
+    return {0: "Normal", 1: "Oblique", 2: "Italic"}.get(style, f"Unknown({style})")
+
+
+def _native_simulation_name(simulations: int) -> str:
+    names: list[str] = []
+    if simulations & 1:
+        names.append("BoldSimulation")
+    if simulations & 2:
+        names.append("ObliqueSimulation")
+    unknown = simulations & ~3
+    if unknown:
+        names.append(f"UnknownSimulation(0x{unknown:X})")
+    return "|".join(names) or "None"
+
+
+def _native_candidate_mapping(candidate: NativeFontCandidate) -> dict[str, Any]:
+    names_by_kind: dict[int, list[str]] = {
+        NAME_FAMILY: [],
+        NAME_FACE: [],
+        NAME_FULL: [],
+        NAME_POSTSCRIPT: [],
+    }
+    for name in candidate.names:
+        if name.kind in names_by_kind and name.value.strip() and name.value not in names_by_kind[name.kind]:
+            names_by_kind[name.kind].append(name.value)
+    family_names = names_by_kind[NAME_FAMILY]
+    return {
+        "native_candidate": candidate,
+        "family_source": family_names[0] if family_names else "",
+        "family_names": family_names,
+        "win32_family_names": [],
+        "face_names": names_by_kind[NAME_FACE],
+        "win32_face_names": [],
+        "full_names": names_by_kind[NAME_FULL],
+        "postscript_names": names_by_kind[NAME_POSTSCRIPT],
+        "postscript_name": names_by_kind[NAME_POSTSCRIPT][0] if names_by_kind[NAME_POSTSCRIPT] else "",
+        "weight": candidate.weight,
+        "style": _native_style_name(candidate.style),
+        "stretch": candidate.stretch,
+        "style_simulations": _native_simulation_name(candidate.simulations),
+    }
+
+
+def _enumerate_native_candidates() -> list[dict[str, Any]]:
+    try:
+        return [_native_candidate_mapping(item) for item in get_native_font_collector().enumerate()]
+    except NativeFontCollectorError as exc:
+        raise FontResolverUnavailableError(f"native DirectWrite font collection failed: {exc}") from exc
+
+
+def _probe_native_candidate(candidate: Mapping[str, Any], text: str) -> dict[str, Any]:
+    native_candidate = candidate.get("native_candidate")
+    if not isinstance(native_candidate, NativeFontCandidate):
+        raise FontMetadataError("native candidate identity is missing")
+    codepoints = tuple(dict.fromkeys(ord(character) for character in text if not _is_coverage_ignorable(ord(character))))
+    try:
+        face = get_native_font_collector().inspect_face(native_candidate, codepoints)
+    except NativeFontCollectorError as exc:
+        raise FontMetadataError(f"native DirectWrite face inspection failed: {exc}") from exc
+    glyph_map = {glyph.codepoint: glyph for glyph in face.glyphs}
+    coverage_checked = (
+        not (face.status_flags & GLYPH_QUERY_FAILED)
+        and face.glyph_hresult >= 0
+        and set(glyph_map) == set(codepoints)
+        and all(glyph.hresult >= 0 for glyph in glyph_map.values())
+    )
+    missing = [codepoint for codepoint in codepoints if codepoint not in glyph_map or glyph_map[codepoint].glyph_index == 0]
+    files = [item for item in face.files if item.path]
+    path = face.path or (files[0].path if len(files) == 1 else None)
+    result = dict(candidate)
+    result.update(
+        {
+            "path": path,
+            "is_file": bool(face.status_flags & PATH_RESOLVED),
+            "face_created": bool(face.status_flags & FACE_CREATED),
+            "local_loader_available": bool(face.status_flags & LOCAL_LOADER_AVAILABLE),
+            "multiple_files": bool(face.status_flags & MULTIPLE_FILES),
+            "file_count": face.file_count,
+            "local_file_count": face.local_file_count,
+            "face_index": face.face_index,
+            "face_index_known": bool(face.status_flags & FACE_CREATED) and face.hresult >= 0,
+            "style_simulations": _native_simulation_name(face.simulations),
+            "coverage_checked": coverage_checked,
+            "missing_codepoints": missing,
+        }
+    )
+    return result
+
+
 def _style_matches(candidate: Mapping[str, Any], *, bold: bool, italic: bool) -> None:
-    expected_weight = 700 if bold else 400
     weight = _as_int(candidate.get("weight"), field="weight")
-    if weight != expected_weight:
+    if not 1 <= weight <= 999:
+        raise FontStyleMismatchError(f"font face returned invalid OpenType weight {weight}")
+    is_bold_weight = weight >= 600
+    if is_bold_weight != bold:
         raise FontStyleMismatchError(
-            f"requested {'bold' if bold else 'regular'} face requires weight {expected_weight}, got {weight}"
+            f"requested {'bold' if bold else 'non-bold'} face got weight {weight}"
         )
     style = str(candidate.get("style") or "").strip().casefold()
     expected_styles = {"oblique", "italic"} if italic else {"normal", "roman"}
@@ -529,6 +442,16 @@ def _resolve_candidate(
     bold: bool,
     italic: bool,
 ) -> ResolvedFont:
+    if not _as_bool(candidate.get("face_created")):
+        raise FontMetadataError("DirectWrite did not create a physical font face")
+    if _as_int(candidate.get("file_count"), field="file_count") != 1:
+        raise FontMetadataError("font face must resolve to exactly one physical file")
+    if _as_int(candidate.get("local_file_count"), field="local_file_count") != 1:
+        raise FontMetadataError("font face does not expose exactly one local file")
+    if _as_bool(candidate.get("multiple_files")):
+        raise FontMetadataError("multi-file font faces are not supported")
+    if not _as_bool(candidate.get("local_loader_available")):
+        raise FontMetadataError("font face does not use the DirectWrite local file loader")
     if not _as_bool(candidate.get("is_file")):
         raise FontMetadataError("font provider returned a remote, in-memory, or non-file font URI")
     raw_path = candidate.get("path")
@@ -554,34 +477,31 @@ def _resolve_candidate(
             rendered += ", ..."
         raise FontCoverageError(f"font face lacks requested character coverage: {rendered}")
     names = _inspect_font_face(path, face_index)
-    advertised_families = {
+    advertised_names = {
         _normalise_name(value)
-        for key in ("family_source", "family_names", "win32_family_names")
-        for value in _as_names(candidate.get(key))
-        if value.strip()
-    }
-    if advertised_families and _normalise_name(names["family_name"]) not in advertised_families:
-        raise FontMetadataError(
-            "resolved SFNT family disagrees with the Windows provider: "
-            f"{names['family_name']!r} is not one of {sorted(advertised_families)!r}"
+        for key in (
+            "family_source",
+            "family_names",
+            "win32_family_names",
+            "face_names",
+            "win32_face_names",
+            "full_names",
+            "postscript_names",
         )
-    advertised_faces = {
-        _normalise_name(value)
-        for key in ("face_names", "win32_face_names")
         for value in _as_names(candidate.get(key))
         if value.strip()
     }
-    if advertised_faces:
-        binary_face_names = {
-            _normalise_name(names["subfamily_name"]),
-            _normalise_name(names["full_name"]),
-            _normalise_name(names["postscript_name"]),
-        }
-        if not advertised_faces.intersection(binary_face_names):
-            raise FontMetadataError(
-                "resolved SFNT face disagrees with the Windows provider: "
-                f"{names['subfamily_name']!r} is not one of {sorted(advertised_faces)!r}"
-            )
+    binary_names = {
+        _normalise_name(names["family_name"]),
+        _normalise_name(names["subfamily_name"]),
+        _normalise_name(names["full_name"]),
+        _normalise_name(names["postscript_name"]),
+    }
+    if advertised_names and not advertised_names.intersection(binary_names):
+        raise FontMetadataError(
+            "resolved SFNT identity disagrees with the Windows provider: "
+            f"{sorted(binary_names)!r} has no identity in {sorted(advertised_names)!r}"
+        )
     try:
         file_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError as exc:
@@ -604,7 +524,7 @@ def _resolve_candidate(
 
 
 def _resolve_uncached(family: str, *, bold: bool, italic: bool, text: str) -> ResolvedFont:
-    candidates = _run_wpf_probe(family, text)
+    candidates = _enumerate_native_candidates()
     candidates = [candidate for candidate in candidates if _candidate_matches_family(candidate, family)]
     if not candidates:
         raise FontNotFoundError(f"Windows font family was not found exactly: {family!r}")
@@ -613,9 +533,10 @@ def _resolve_uncached(family: str, *, bold: bool, italic: bool, text: str) -> Re
     failures: list[FontResolutionError] = []
     for candidate in candidates:
         try:
+            _style_matches(candidate, bold=bold, italic=italic)
             valid.append(
                 _resolve_candidate(
-                    candidate,
+                    _probe_native_candidate(candidate, text),
                     requested_family=family,
                     bold=bold,
                     italic=italic,
@@ -695,6 +616,7 @@ def clear_font_cache() -> None:
 
     with _CACHE_LOCK:
         _CACHE.clear()
+    reset_native_font_collector()
 
 
 def parse_libass_fontselect(log: str) -> list[LibassFontSelection]:

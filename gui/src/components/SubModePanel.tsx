@@ -14,6 +14,16 @@ import { Dialog } from "@/components/ui/dialog";
 import { JobProgressDialog } from "@/components/JobProgressDialog";
 import { SegmentTimingDialog } from "@/components/SegmentTimingDialog";
 import { Input } from "@/components/ui/input";
+import {
+  RadixSelect,
+  RadixSelectContent,
+  RadixSelectGroup,
+  RadixSelectItem,
+  RadixSelectLabel,
+  RadixSelectTrigger,
+  RadixSelectValue,
+} from "@/components/ui/radix-select";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Toggle } from "@/components/ui/toggle";
@@ -379,14 +389,21 @@ export function SubModePanel(props: SubModePanelProps) {
       </Dialog>
       <Dialog open={Boolean(styleLane)} title={tr("sub.subtitleStyleTitle")} className="subtitle-style-dialog" onClose={() => setStyleLaneId(null)}>
         {styleLane ? (
-          <SubtitleStyleEditor
-            style={styleLane.style}
-            effect={styleLane.effect}
-            fonts={systemFonts}
-            fontListError={fontListError}
-            onChange={(style) => updateLane(styleLane.id, { ...styleLane, style })}
-            onEffectChange={(effect) => updateLane(styleLane.id, { ...styleLane, effect })}
-          />
+          <ScrollArea
+            className="subtitle-style-scroll"
+            viewportClassName="subtitle-style-scroll-viewport"
+            scrollbars={["vertical"]}
+            type="always"
+          >
+            <SubtitleStyleEditor
+              style={styleLane.style}
+              effect={styleLane.effect}
+              fonts={systemFonts}
+              fontListError={fontListError}
+              onChange={(style) => updateLane(styleLane.id, { ...styleLane, style })}
+              onEffectChange={(effect) => updateLane(styleLane.id, { ...styleLane, effect })}
+            />
+          </ScrollArea>
         ) : null}
       </Dialog>
       <SegmentTimingDialog
@@ -696,32 +713,38 @@ function SubtitleStyleEditor(props: {
           <h3>{tr("sub.outputEffects")}</h3>
           <small>{tr("sub.outputEffectsHelp")}</small>
         </div>
-        <small className="subtitle-effect-description">{effectDescription(effectDefinition)}</small>
-        <div className="subtitle-effect-fields">
-          <label>
-            {tr("sub.effectType")}
-            <Select
-              aria-label={tr("sub.effectType")}
+        <div className="subtitle-effect-type-row">
+          <label className="subtitle-effect-type-control">
+            <span>{tr("sub.effectType")}</span>
+            <RadixSelect
               value={effect.name}
-              onChange={(event) => {
-                const name = event.target.value;
-                patchEffect({
-                  name: name as SubtitleEffectSettings["name"],
-                  params: defaultSubtitleEffectParams(name, catalog),
-                });
-              }}
+              onValueChange={(name) => patchEffect({
+                name: name as SubtitleEffectSettings["name"],
+                params: defaultSubtitleEffectParams(name, catalog),
+              })}
             >
-              {effectGroups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.effects.map((item) => (
-                    <option key={item.effect_id} value={item.effect_id}>{effectLabel(item)}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </Select>
+              <RadixSelectTrigger aria-label={tr("sub.effectType")}>
+                <RadixSelectValue />
+              </RadixSelectTrigger>
+              <RadixSelectContent>
+                {effectGroups.map((group) => (
+                  <RadixSelectGroup key={group.label}>
+                    <RadixSelectLabel>{group.label}</RadixSelectLabel>
+                    {group.effects.map((item) => (
+                      <RadixSelectItem key={item.effect_id} value={item.effect_id} data-effect-id={item.effect_id}>
+                        {effectLabel(item)}
+                      </RadixSelectItem>
+                    ))}
+                  </RadixSelectGroup>
+                ))}
+              </RadixSelectContent>
+            </RadixSelect>
           </label>
-          {effect.name !== "cut" && effectDefinition ? (
-            <>
+          <small className="subtitle-effect-description">{effectDescription(effectDefinition)}</small>
+        </div>
+        {effect.name !== "cut" && effectDefinition ? (
+          <>
+            <div className="subtitle-effect-duration-row">
               <label>
                 {tr("sub.effectStartDuration")}
                 <Input
@@ -742,6 +765,8 @@ function SubtitleStyleEditor(props: {
                   onChange={(event) => patchEffect({ end_duration_ms: Math.max(0, Number(event.target.value)) })}
                 />
               </label>
+            </div>
+            <div className="subtitle-effect-parameter-grid">
               {Object.entries(effectDefinition.parameters).map(([parameterName, parameter]) => {
                 const value = effect.params[parameterName] ?? parameter.default;
                 if (parameter.kind === "choice") {
@@ -759,7 +784,6 @@ function SubtitleStyleEditor(props: {
                           );
                         })}
                       </Select>
-                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
                     </label>
                   );
                 }
@@ -771,7 +795,6 @@ function SubtitleStyleEditor(props: {
                         value={String(value)}
                         onChange={(next) => patchEffectParam(parameterName, next)}
                       />
-                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
                     </div>
                   );
                 }
@@ -788,7 +811,6 @@ function SubtitleStyleEditor(props: {
                           event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
                         )}
                       />
-                      <small>{parameterDescription(parameter)}</small>
                     </label>
                   );
                 }
@@ -801,7 +823,6 @@ function SubtitleStyleEditor(props: {
                         checked={Boolean(value)}
                         onChange={(event) => patchEffectParam(parameterName, event.target.checked)}
                       />
-                      <small>{parameterDescription(parameter)}</small>
                     </label>
                   );
                 }
@@ -814,7 +835,6 @@ function SubtitleStyleEditor(props: {
                         value={String(value)}
                         onChange={(event) => patchEffectParam(parameterName, event.target.value)}
                       />
-                      {parameterDescription(parameter) ? <small>{parameterDescription(parameter)}</small> : null}
                     </label>
                   );
                 }
@@ -829,13 +849,12 @@ function SubtitleStyleEditor(props: {
                       value={Number(value)}
                       onChange={(event) => patchEffectParam(parameterName, clampCatalogNumber(Number(event.target.value), parameter))}
                     />
-                    <small>{parameterDescription(parameter)}</small>
                   </label>
                 );
               })}
-            </>
-          ) : null}
-        </div>
+            </div>
+          </>
+        ) : null}
         {effect.name !== "cut" ? (
           <small className="font-list-status">
             {tr("sub.shortSubtitleHelp")}
@@ -845,31 +864,43 @@ function SubtitleStyleEditor(props: {
           <div className="subtitle-effect-links">
             {effectDefinition.preview_url ? (
               <>
-                <video
-                  className="subtitle-effect-preview"
-                  controls
-                  preload="none"
-                  src={effectDefinition.preview_url}
-                  aria-label={tr("sub.effectSample")}
-                />
-                <a href={effectDefinition.preview_url} target="_blank" rel="noreferrer">
-                  {tr("sub.effectSample")}
-                </a>
+                <div className="subtitle-effect-preview-frame">
+                  <video
+                    className="subtitle-effect-preview"
+                    controls
+                    preload="none"
+                    src={effectDefinition.preview_url}
+                    aria-label={tr("sub.effectSample")}
+                  />
+                </div>
               </>
             ) : null}
-            {(currentUiLanguage() === "ja"
-              ? effectDefinition.catalog_page_url_ja
-              : effectDefinition.catalog_page_url_en) ? (
-              <a
-                href={currentUiLanguage() === "ja"
-                  ? effectDefinition.catalog_page_url_ja ?? undefined
-                  : effectDefinition.catalog_page_url_en ?? undefined}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {tr("sub.effectCatalogPage")}
-              </a>
-            ) : null}
+            <div className="subtitle-effect-link-actions">
+              {effectDefinition.preview_url ? (
+                <a
+                  className="button button-secondary button-sm subtitle-effect-link"
+                  href={effectDefinition.preview_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {tr("sub.effectSample")}
+                </a>
+              ) : null}
+              {(currentUiLanguage() === "ja"
+                ? effectDefinition.catalog_page_url_ja
+                : effectDefinition.catalog_page_url_en) ? (
+                <a
+                  className="button button-secondary button-sm subtitle-effect-link"
+                  href={currentUiLanguage() === "ja"
+                    ? effectDefinition.catalog_page_url_ja ?? undefined
+                    : effectDefinition.catalog_page_url_en ?? undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {tr("sub.effectCatalogPage")}
+                </a>
+              ) : null}
+            </div>
           </div>
         ) : null}
       </section>
@@ -927,11 +958,6 @@ function effectDescription(effect: SubtitleEffectDefinition) {
 /** `parameterLabel`の現在localeに対応するcatalog名称を返す。 */
 function parameterLabel(parameter: SubtitleEffectParameterSchema) {
   return currentUiLanguage() === "ja" ? parameter.label_ja : parameter.label_en;
-}
-
-/** `parameterDescription`の現在localeに対応するcatalog説明を返す。 */
-function parameterDescription(parameter: SubtitleEffectParameterSchema) {
-  return currentUiLanguage() === "ja" ? parameter.description_ja : parameter.description_en;
 }
 
 /** `choiceValueForUi`の選択肢をHTML select値へ変換する。 */

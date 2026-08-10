@@ -39,6 +39,13 @@ def test_lane_srt_keeps_text_and_orders_segments() -> None:
     assert "00:00:00,500 --> 00:00:01,500" in text
 
 
+def test_subtitle_effect_defaults_to_750ms_transitions() -> None:
+    effect = SubtitleEffect()
+
+    assert effect.start_duration_ms == 750
+    assert effect.end_duration_ms == 750
+
+
 def test_srt_style_uses_numpad_alignment_and_ass_color_order() -> None:
     style = SubtitleStyle(primary_color="#112233", background_color="#44556680", alignment=7)
 

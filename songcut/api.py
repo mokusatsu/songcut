@@ -48,6 +48,7 @@ from .subtitle_effect_catalog import (
     normalize_subtitle_effect_params,
 )
 from .subtitle_export import (
+    DEFAULT_EFFECT_DURATION_MS,
     SubtitleEffect,
     SubtitleLane,
     SubtitleSegment,
@@ -213,8 +214,8 @@ class SubtitleStyleRequest(BaseModel):
 
 class SubtitleEffectRequest(BaseModel):
     name: str = "cut"
-    start_duration_ms: int = Field(default=300, ge=0, le=60000)
-    end_duration_ms: int = Field(default=300, ge=0, le=60000)
+    start_duration_ms: int = Field(default=DEFAULT_EFFECT_DURATION_MS, ge=0, le=60000)
+    end_duration_ms: int = Field(default=DEFAULT_EFFECT_DURATION_MS, ge=0, le=60000)
     params: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

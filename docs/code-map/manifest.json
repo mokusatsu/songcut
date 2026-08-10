@@ -9,111 +9,117 @@
     "database": ".codex/code-map/state/graph.sqlite3",
     "external_analysis_dependencies": []
   },
-  "generated_at": "2026-08-10T00:11:20+09:00",
+  "generated_at": "2026-08-10T22:44:26+09:00",
   "repository": "songcut",
   "mode": "verify",
   "vcs": {
     "type": "git",
-    "analyzed_head": "ae5fe500ea81c0b6a9be2cd0cd9efad71e981587",
-    "last_analyzed_commit": "ae5fe500ea81c0b6a9be2cd0cd9efad71e981587",
+    "analyzed_head": "c3f21e650f6be8ce9a9cb541c790a835ec77f13f",
+    "last_analyzed_commit": "c3f21e650f6be8ce9a9cb541c790a835ec77f13f",
     "branch": "codex/SCUT-036-ass-lyric-effects-integration",
-    "base": "ae5fe500ea81c0b6a9be2cd0cd9efad71e981587",
+    "base": "c3f21e650f6be8ce9a9cb541c790a835ec77f13f",
     "dirty": true,
-    "tracked_diff_sha256": "07a4873b43d13f78aeed73f1a43b76218167f774479baf5a9d31a59881359f2e",
+    "tracked_diff_sha256": "062822b095dac9c907ba06f4bc95857e0a4275a26552aee18842da047ae99431",
     "changed_paths": [
-      ".gitignore",
-      "docs/USAGE.ja.md",
-      "docs/USAGE.md",
+      "docs/BUILD.ja.md",
+      "docs/BUILD.md",
       "docs/code-map/README.md",
       "docs/code-map/architecture.md",
       "docs/code-map/change-impact.md",
-      "docs/code-map/flows.md",
       "docs/code-map/hotspots.md",
       "docs/code-map/manifest.json",
       "docs/code-map/modules/gui.md",
       "docs/code-map/modules/songcut.md",
       "docs/code-map/modules/tests.md",
-      "gui/electron/project-schema.ts",
-      "gui/electron/project-store.test.ts",
-      "gui/src/App.tsx",
-      "gui/src/components/SegmentTimingDialog.tsx",
+      "docs/code-map/modules/third_party-uta_align.md",
+      "gui/package.json",
+      "gui/pnpm-lock.yaml",
+      "gui/src/components/SubModePanel.test.ts",
       "gui/src/components/SubModePanel.tsx",
-      "gui/src/i18n.ts",
-      "gui/src/lib/api.ts",
-      "gui/src/lib/subtitleEffectCatalog.tsx",
+      "gui/src/components/ui/radix-select.tsx",
       "gui/src/lib/subtitleEffects.test.ts",
       "gui/src/lib/subtitleEffects.ts",
       "gui/src/lib/subtitles.test.ts",
-      "gui/src/lib/subtitles.ts",
-      "gui/src/lib/useSubOperations.test.ts",
-      "gui/src/lib/useSubOperations.ts",
       "gui/src/styles.css",
+      "native/windows_font_resolver/README.md",
+      "native/windows_font_resolver/include/scut_windows_font_resolver.h",
+      "native/windows_font_resolver/songcut_font_resolver.sln",
+      "native/windows_font_resolver/songcut_font_resolver.vcxproj",
+      "native/windows_font_resolver/songcut_font_resolver_tests.vcxproj",
+      "native/windows_font_resolver/src/scut_windows_font_resolver.cpp",
+      "native/windows_font_resolver/tests/scut_windows_font_resolver_tests.cpp",
       "packaging/build_dist.ps1",
-      "pyproject.toml",
+      "packaging/build_native_font_resolver.ps1",
+      "packaging/e2e_all_subtitle_effects.py",
+      "packaging/e2e_sub_mode.js",
       "songcut/api.py",
-      "songcut/ass_effects23/__init__.py",
-      "songcut/ass_effects23/cli.py",
-      "songcut/ass_effects23/core.py",
-      "songcut/ass_effects23/py.typed",
-      "songcut/subtitle_effect_catalog.py",
       "songcut/subtitle_export.py",
+      "songcut/windows_font_native.py",
       "songcut/windows_font_resolver.py",
+      "tasks/SCUT-037.md",
+      "tasks/SCUT-038.md",
+      "tasks/SCUT-039.md",
+      "tasks/task-list.md",
       "tests/test_api.py",
-      "tests/test_ass_effects23_core.py",
-      "tests/test_ass_lyric_effects_v3_integration.py",
-      "tests/test_subtitle_effect_catalog.py",
       "tests/test_subtitle_export.py",
-      "tests/test_windows_font_resolver.py",
-      "third_party/ass-effects23/LICENSE",
-      "third_party/ass-effects23/README.md",
-      "third_party/ass-effects23/all_23_effects.ass",
-      "third_party/ass-effects23/examples/generate_catalog.py",
-      "third_party/ass-effects23/pyproject.toml"
+      "tests/test_windows_font_native.py",
+      "tests/test_windows_font_resolver.py"
     ],
     "untracked_paths": [
-      "gui/src/lib/subtitleEffectCatalog.tsx",
-      "songcut/subtitle_effect_catalog.py",
-      "songcut/windows_font_resolver.py",
-      "tests/test_ass_lyric_effects_v3_integration.py",
-      "tests/test_subtitle_effect_catalog.py",
-      "tests/test_windows_font_resolver.py"
+      "gui/src/components/SubModePanel.test.ts",
+      "gui/src/components/ui/radix-select.tsx",
+      "native/windows_font_resolver/README.md",
+      "native/windows_font_resolver/include/scut_windows_font_resolver.h",
+      "native/windows_font_resolver/songcut_font_resolver.sln",
+      "native/windows_font_resolver/songcut_font_resolver.vcxproj",
+      "native/windows_font_resolver/songcut_font_resolver_tests.vcxproj",
+      "native/windows_font_resolver/src/scut_windows_font_resolver.cpp",
+      "native/windows_font_resolver/tests/scut_windows_font_resolver_tests.cpp",
+      "packaging/build_native_font_resolver.ps1",
+      "packaging/e2e_all_subtitle_effects.py",
+      "songcut/windows_font_native.py",
+      "tasks/SCUT-037.md",
+      "tasks/SCUT-038.md",
+      "tasks/SCUT-039.md",
+      "tests/test_windows_font_native.py"
     ]
   },
   "snapshot": {
-    "source_tree_sha256": "4aa7c827d0fb2ae053c0024104dabaeb253a2ed9477c71b0c349e8b4661b627f",
-    "file_count": 217,
-    "previous_source_tree_sha256": "4aa7c827d0fb2ae053c0024104dabaeb253a2ed9477c71b0c349e8b4661b627f"
+    "source_tree_sha256": "3c909e94c1145b661476f280d58a3953bcd803310523a9077e9bbb2d1855a28b",
+    "file_count": 226,
+    "previous_source_tree_sha256": "3c909e94c1145b661476f280d58a3953bcd803310523a9077e9bbb2d1855a28b"
   },
   "graph": {
     "status": "ready",
     "stats": {
-      "files": 217,
-      "nodes": 2448,
-      "edges": 8981,
+      "files": 226,
+      "nodes": 2543,
+      "edges": 9305,
       "components": 5,
       "flows": 18,
       "parse_errors": 0,
       "languages": {
+        "c_cpp": 3,
         "javascript": 3,
-        "powershell": 1,
-        "python": 88,
-        "typescript": 125
+        "powershell": 2,
+        "python": 91,
+        "typescript": 127
       },
       "node_kinds": {
-        "Class": 118,
-        "External": 80,
-        "File": 217,
-        "Function": 1381,
-        "Method": 79,
-        "Test": 573
+        "Class": 159,
+        "External": 82,
+        "File": 226,
+        "Function": 1397,
+        "Method": 90,
+        "Test": 589
       },
       "edge_kinds": {
-        "call": 6220,
+        "call": 6484,
         "decorator": 9,
-        "external_io": 285,
-        "import": 733,
+        "external_io": 289,
+        "import": 762,
         "inherit": 9,
-        "tests": 1725
+        "tests": 1752
       }
     }
   },
@@ -141,8 +147,8 @@
         "gui/src/components/SettingsDialog.tsx"
       ],
       "page": "modules/gui.md",
-      "files": 122,
-      "cohesion": 0.9613
+      "files": 124,
+      "cohesion": 0.9615
     },
     {
       "id": "songcut",
@@ -152,11 +158,11 @@
         "gui/src/components/SubModePanel.tsx",
         "songcut/transcription.py",
         "songcut/subtitle_export.py",
-        "songcut/smart_export.py"
+        "songcut/ffmpeg_tools.py"
       ],
       "page": "modules/songcut.md",
-      "files": 46,
-      "cohesion": 0.7159
+      "files": 51,
+      "cohesion": 0.7233
     },
     {
       "id": "third_party-uta_align",
@@ -164,27 +170,27 @@
       "anchors": [
         "third_party/uta_align/src/uta_align/pipeline.py",
         "third_party/uta_align/src/uta_align/lyrics.py",
-        "third_party/uta_align/tests/test_candidate_consensus.py",
         "third_party/uta_align/src/uta_align/fallback.py",
+        "third_party/uta_align/tests/test_candidate_consensus.py",
         "third_party/uta_align/src/uta_align/alignment.py"
       ],
       "page": "modules/third_party-uta_align.md",
       "files": 25,
-      "cohesion": 0.8649
+      "cohesion": 0.8104
     },
     {
       "id": "tests",
       "name": "tests",
       "anchors": [
-        "tests/test_api.py",
         "gui/src/lib/waveformSessionCache.ts",
+        "tests/test_api.py",
         "tests/test_smart_export.py",
         "tests/test_subtitle_export.py",
         "tests/test_mms_alignment.py"
       ],
       "page": "modules/tests.md",
-      "files": 21,
-      "cohesion": 0.0211
+      "files": 22,
+      "cohesion": 0.0224
     },
     {
       "id": "packaging",
@@ -192,10 +198,11 @@
       "anchors": [
         "packaging/evaluate_subtitle_frame.py",
         "packaging/e2e_scratch_proxy.js",
-        "packaging/build_dist.ps1"
+        "packaging/build_dist.ps1",
+        "packaging/build_native_font_resolver.ps1"
       ],
       "page": null,
-      "files": 3,
+      "files": 4,
       "cohesion": 0.0
     }
   ],

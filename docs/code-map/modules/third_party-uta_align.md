@@ -9,16 +9,16 @@
 
 - Files: 25
 - Symbols: 373
-- Incoming／Outgoing: 4／16
-- Cohesion: 0.86
+- Incoming／Outgoing: 4／26
+- Cohesion: 0.81
 - Node kinds: Class 20、File 25、Function 145、Method 20、Test 163
 
 ## 代表パス
 
 - `third_party/uta_align/src/uta_align/pipeline.py`
 - `third_party/uta_align/src/uta_align/lyrics.py`
-- `third_party/uta_align/tests/test_candidate_consensus.py`
 - `third_party/uta_align/src/uta_align/fallback.py`
+- `third_party/uta_align/tests/test_candidate_consensus.py`
 - `third_party/uta_align/src/uta_align/alignment.py`
 
 ## 主なシンボル

@@ -191,8 +191,8 @@ describe("subtitle effects", () => {
   it("creates lanes with a non-previewing cut effect by default", () => {
     expect(createLyricsLane().effect).toEqual({
       name: "cut",
-      start_duration_ms: 300,
-      end_duration_ms: 300,
+      start_duration_ms: 750,
+      end_duration_ms: 750,
       params: {},
     });
   });
