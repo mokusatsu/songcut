@@ -141,6 +141,13 @@ export type ProjectSubtitleStyle = {
   margin_v: number;
 };
 
+export type ProjectSubtitleEffect = {
+  name: string;
+  start_duration_ms: number;
+  end_duration_ms: number;
+  params: Record<string, string | number | boolean | string[]>;
+};
+
 export type ProjectLyricsSegment = {
   id: string;
   text: string;
@@ -150,6 +157,8 @@ export type ProjectLyricsSegment = {
   source: "lyrics" | "title" | "manual";
   low_confidence_outlier: boolean;
   user_edited: boolean;
+  style_override?: ProjectSubtitleStyle;
+  effect_override?: ProjectSubtitleEffect;
   render_cache?: {
     signature: string;
     png_base64: string;
@@ -162,12 +171,7 @@ export type ProjectLyricsLane = {
   id: string;
   name: string;
   style: ProjectSubtitleStyle;
-  effect?: {
-    name: string;
-    start_duration_ms: number;
-    end_duration_ms: number;
-    params: Record<string, string | number>;
-  };
+  effect?: ProjectSubtitleEffect;
   segments: ProjectLyricsSegment[];
 };
 
@@ -582,6 +586,15 @@ function validateSubtitleState(value: unknown, label: string) {
       }
       booleanValue(segment.low_confidence_outlier, `${segmentLabel}.low_confidence_outlier`);
       booleanValue(segment.user_edited, `${segmentLabel}.user_edited`);
+      const hasStyleOverride = segment.style_override !== undefined;
+      const hasEffectOverride = segment.effect_override !== undefined;
+      if (hasStyleOverride !== hasEffectOverride) {
+        throw new Error(`${segmentLabel} must provide both style_override and effect_override.`);
+      }
+      if (hasStyleOverride) {
+        validateSubtitleStyle(segment.style_override, `${segmentLabel}.style_override`);
+        validateSubtitleEffect(segment.effect_override, `${segmentLabel}.effect_override`);
+      }
       if (segment.render_cache !== undefined) {
         const cache = objectValue(segment.render_cache, `${segmentLabel}.render_cache`);
         stringValue(cache.signature, `${segmentLabel}.render_cache.signature`);
@@ -625,8 +638,16 @@ function validateSubtitleEffect(value: unknown, label: string) {
   nonNegativeInteger(row.end_duration_ms, `${label}.end_duration_ms`);
   const params = objectValue(row.params, `${label}.params`);
   Object.entries(params).forEach(([name, parameter]) => {
-    if (typeof parameter !== "string" && (typeof parameter !== "number" || !Number.isFinite(parameter))) {
-      throw new Error(`${label}.params.${name} must be a finite number or string.`);
+    const scalar =
+      typeof parameter === "string" ||
+      typeof parameter === "boolean" ||
+      (typeof parameter === "number" && Number.isFinite(parameter));
+    const stringArray =
+      Array.isArray(parameter) && parameter.every((item) => typeof item === "string");
+    if (!scalar && !stringArray) {
+      throw new Error(
+        `${label}.params.${name} must be a finite number, string, boolean, or string array.`,
+      );
     }
   });
 }

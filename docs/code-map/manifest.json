@@ -1,0 +1,263 @@
+{
+  "schema_version": 2,
+  "generator": "codex:code_map_maintainer",
+  "analysis_mode": "embedded-python",
+  "engine": {
+    "name": "codex-embedded-code-map",
+    "version": "2.0.0",
+    "runtime": "python-stdlib",
+    "database": ".codex/code-map/state/graph.sqlite3",
+    "external_analysis_dependencies": []
+  },
+  "generated_at": "2026-08-10T22:46:38+09:00",
+  "repository": "songcut",
+  "mode": "verify",
+  "vcs": {
+    "type": "git",
+    "analyzed_head": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
+    "last_analyzed_commit": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
+    "branch": "codex/SCUT-036-ass-lyric-effects-integration",
+    "base": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
+    "dirty": true,
+    "tracked_diff_sha256": "01c3329dca8bc1318a30732905d8e956be4480b24f017973559a39a03acbec40",
+    "changed_paths": [
+      "docs/code-map/README.md",
+      "docs/code-map/change-impact.md",
+      "docs/code-map/manifest.json"
+    ],
+    "untracked_paths": []
+  },
+  "snapshot": {
+    "source_tree_sha256": "09c3c02ea52bbf64e266e983b8b7b0eb649ff699f5352068c938d958063887f0",
+    "file_count": 226,
+    "previous_source_tree_sha256": "09c3c02ea52bbf64e266e983b8b7b0eb649ff699f5352068c938d958063887f0"
+  },
+  "graph": {
+    "status": "ready",
+    "stats": {
+      "files": 226,
+      "nodes": 2543,
+      "edges": 9305,
+      "components": 5,
+      "flows": 18,
+      "parse_errors": 0,
+      "languages": {
+        "c_cpp": 3,
+        "javascript": 3,
+        "powershell": 2,
+        "python": 91,
+        "typescript": 127
+      },
+      "node_kinds": {
+        "Class": 159,
+        "External": 82,
+        "File": 226,
+        "Function": 1397,
+        "Method": 90,
+        "Test": 589
+      },
+      "edge_kinds": {
+        "call": 6484,
+        "decorator": 9,
+        "external_io": 289,
+        "import": 762,
+        "inherit": 9,
+        "tests": 1752
+      }
+    }
+  },
+  "outputs": [
+    "README.md",
+    "architecture.md",
+    "change-impact.md",
+    "flows.md",
+    "hotspots.md",
+    "manifest.json",
+    "modules/gui.md",
+    "modules/songcut.md",
+    "modules/tests.md",
+    "modules/third_party-uta_align.md"
+  ],
+  "components": [
+    {
+      "id": "gui",
+      "name": "gui",
+      "anchors": [
+        "gui/src/i18n.ts",
+        "gui/src/App.tsx",
+        "gui/src/components/AppDialogs.tsx",
+        "gui/src/types.ts",
+        "gui/src/components/SettingsDialog.tsx"
+      ],
+      "page": "modules/gui.md",
+      "files": 124,
+      "cohesion": 0.9615
+    },
+    {
+      "id": "songcut",
+      "name": "songcut",
+      "anchors": [
+        "songcut/api.py",
+        "gui/src/components/SubModePanel.tsx",
+        "songcut/transcription.py",
+        "songcut/subtitle_export.py",
+        "songcut/ffmpeg_tools.py"
+      ],
+      "page": "modules/songcut.md",
+      "files": 51,
+      "cohesion": 0.7233
+    },
+    {
+      "id": "third_party-uta_align",
+      "name": "third_party/uta_align",
+      "anchors": [
+        "third_party/uta_align/src/uta_align/pipeline.py",
+        "third_party/uta_align/src/uta_align/lyrics.py",
+        "third_party/uta_align/src/uta_align/fallback.py",
+        "third_party/uta_align/tests/test_candidate_consensus.py",
+        "third_party/uta_align/src/uta_align/alignment.py"
+      ],
+      "page": "modules/third_party-uta_align.md",
+      "files": 25,
+      "cohesion": 0.8104
+    },
+    {
+      "id": "tests",
+      "name": "tests",
+      "anchors": [
+        "gui/src/lib/waveformSessionCache.ts",
+        "tests/test_api.py",
+        "tests/test_smart_export.py",
+        "tests/test_subtitle_export.py",
+        "tests/test_mms_alignment.py"
+      ],
+      "page": "modules/tests.md",
+      "files": 22,
+      "cohesion": 0.0224
+    },
+    {
+      "id": "packaging",
+      "name": "packaging",
+      "anchors": [
+        "packaging/evaluate_subtitle_frame.py",
+        "packaging/e2e_scratch_proxy.js",
+        "packaging/build_dist.ps1",
+        "packaging/build_native_font_resolver.ps1"
+      ],
+      "page": null,
+      "files": 4,
+      "cohesion": 0.0
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow_87f310366eafeed8",
+      "entry_node": "node_e6dcdf7940fe14be",
+      "entry_name": "exportClips",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_acbaab781455b14f",
+      "entry_node": "node_dfd892b9fe0710f9",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_4d28b202844b5aa9",
+      "entry_node": "node_4d1b876500099160",
+      "entry_name": "checkRecoveryOnStartup",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_2b99029c15ce92cc",
+      "entry_node": "node_f57b89aafb2e8c7e",
+      "entry_name": "switch",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_0da193a90ef9fbb2",
+      "entry_node": "node_3260aae1b56fd4d6",
+      "entry_name": "send",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_3e50ab519c941b42",
+      "entry_node": "node_1059a2a2e5f7591e",
+      "entry_name": "atomicWriteJson",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_ed7fa71733f22ef7",
+      "entry_node": "node_d3d382554aca303a",
+      "entry_name": "switch",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_9cb8fa5a5e44dcfc",
+      "entry_node": "node_26da14cd0e5865d4",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_79222e1d6e0b5911",
+      "entry_node": "node_6e534a7f84f22365",
+      "entry_name": "sendMenuCommand",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_44bdc595373a0c96",
+      "entry_node": "node_781d6da74e21eeb4",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_071f16f84c039ff4",
+      "entry_node": "node_cd8e444c42f4f77c",
+      "entry_name": "updateSegment",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_8e401bcdf1521ba9",
+      "entry_node": "node_91e33e5936a9c3f1",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_ee02df1afd6d9353",
+      "entry_node": "node_85c13101aab64c6b",
+      "entry_name": "disposeScratchProxy",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_5225c9736f1f57ae",
+      "entry_node": "node_2e29a05325e1b36a",
+      "entry_name": "runEditorCommand",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_fa47ffcf8a16cc06",
+      "entry_node": "node_41fa20630f2aaa0e",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_eb35f7b7e4b96eed",
+      "entry_node": "node_754f55c725bfebc3",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_a2bdac49a6b968c7",
+      "entry_node": "node_e52372b2e44f0769",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_a4ed8a0280c4223b",
+      "entry_node": "node_790d745e4c5cb6ce",
+      "entry_name": "buildBaseOutputItems",
+      "confidence": "推定"
+    }
+  ],
+  "warnings": []
+}

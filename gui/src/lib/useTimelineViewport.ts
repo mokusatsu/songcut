@@ -116,7 +116,7 @@ export function useTimelineViewport(options: UseTimelineViewportOptions) {
   durationRef.current = safeDuration;
   onScrubRef.current = options.onScrub;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     const resize = () => setViewportWidth(Math.max(minimumWidth, viewport.clientWidth));

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local VSinger singing-stream segment extractor for Intel CPU/NPU-class machines."
 requires-python = ">=3.11"
 dependencies = [
+  "ass-lyric-effects @ https://raw.githubusercontent.com/mokusatsu/ASS_Lyric_Effects/715af13f227aa0a1d9a1f78250224292c278fcf8/source/ass_lyric_effects-3.0.0-py3-none-any.whl#sha256=e3246edcc5d64e44766d6b99faa855e7386a76b4849c63a094381c1350000f72",
   "numpy>=2.0",
   "win-safesubprocess>=0.1,<0.2",
 ]
@@ -46,7 +47,7 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["songcut", "songcut.ass_effects23", "uta_align"]
+packages = ["songcut", "uta_align"]
 py-modules = ["songcut_cli"]
 package-dir = { uta_align = "third_party/uta_align/src/uta_align" }
 

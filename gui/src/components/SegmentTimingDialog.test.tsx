@@ -1,8 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateSegmentTiming } from "@/components/SegmentTimingDialog";
+import { createSegmentStyleDraft, evaluateSegmentTiming } from "@/components/SegmentTimingDialog";
 import { createCutBoundaryPolicy } from "@/lib/boundaries";
-import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "@/lib/subtitles";
+import {
+  DEFAULT_SUBTITLE_STYLE,
+  createSubtitleBoundaryPolicy,
+  type RhythmGridPoint,
+} from "@/lib/subtitles";
+import { DEFAULT_SUBTITLE_EFFECT, type SubtitleEffectCatalog } from "@/lib/subtitleEffects";
+
+const effectCatalog = {
+  package: "ass-lyric-effects",
+  version: "3.0.0",
+  schema_version: "1.0",
+  stable_id_contract: {},
+  multiline_context_contract: {},
+  effects: ["cut", "fad", "glow"].map((effect_id) => ({
+    effect_id,
+    stable_effect_id: true,
+    name_en: effect_id,
+    name_ja: effect_id,
+    description_en: effect_id,
+    description_ja: effect_id,
+    parameters: {},
+  })),
+} satisfies SubtitleEffectCatalog;
 
 const grid: RhythmGridPoint[] = [0, 1, 1.5, 2, 2.5, 3, 4].map((time) => ({
   time,
@@ -88,5 +110,39 @@ describe("segment timing policy", () => {
     expect(evaluation.valid).toBe(true);
     expect(evaluation.start).toBe(3);
     expect(evaluation.end).toBe(4);
+  });
+});
+
+describe("Sub segment style dialog draft", () => {
+  const target = { id: "segment", start: 1, end: 2 };
+
+  it("starts an inherited segment from the current timeline settings", () => {
+    expect(createSegmentStyleDraft(
+      target,
+      { ...DEFAULT_SUBTITLE_STYLE, font_size: 72 },
+      { ...DEFAULT_SUBTITLE_EFFECT, name: "fad" },
+      effectCatalog,
+    )).toMatchObject({
+      mode: "inherit",
+      style: { font_size: 72 },
+      effect: { name: "fad" },
+    });
+  });
+
+  it("restores a persisted custom draft independently from the timeline", () => {
+    expect(createSegmentStyleDraft(
+      {
+        ...target,
+        style_override: { ...DEFAULT_SUBTITLE_STYLE, font_size: 36 },
+        effect_override: { ...DEFAULT_SUBTITLE_EFFECT, name: "glow" },
+      },
+      { ...DEFAULT_SUBTITLE_STYLE, font_size: 120 },
+      DEFAULT_SUBTITLE_EFFECT,
+      effectCatalog,
+    )).toMatchObject({
+      mode: "custom",
+      style: { font_size: 36 },
+      effect: { name: "glow" },
+    });
   });
 });

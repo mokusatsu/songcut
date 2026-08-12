@@ -1022,6 +1022,88 @@ function cleanup(processHandle, cdp) {
       "Subtitle style dialog layering or font sizing is inconsistent.",
       styleDialogMetrics
     );
+    const styleScrollArea = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕スタイル"]');
+        const root = dialog?.querySelector(".subtitle-style-scroll.scroll-area");
+        const viewport = root?.querySelector(".scroll-area-viewport");
+        const scrollbar = root?.querySelector(".scroll-area-scrollbar-vertical");
+        const editor = root?.querySelector(".subtitle-style-editor");
+        return root && viewport && editor
+          ? {
+              rootClass: root.className,
+              viewportClass: viewport.className,
+              scrollbarClass: scrollbar?.className ?? null,
+              editorOverflowY: getComputedStyle(editor).overflowY,
+              viewportClientHeight: viewport.clientHeight,
+              viewportScrollHeight: viewport.scrollHeight,
+            }
+          : false;
+      })()`,
+      10_000,
+      "Subtitle style shadcn ScrollArea"
+    );
+    assertPass(
+      styleScrollArea.rootClass.includes("scroll-area") &&
+      styleScrollArea?.viewportClass.includes("subtitle-style-scroll-viewport") &&
+        styleScrollArea.editorOverflowY !== "auto" &&
+        styleScrollArea.editorOverflowY !== "scroll",
+      "Subtitle style dialog does not use the shared shadcn ScrollArea as its scroll owner.",
+      styleScrollArea
+    );
+    const styleScrollPoint = await evaluate(
+      cdp,
+      `(() => {
+        const root = document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-style-scroll.scroll-area');
+        if (!root) return null;
+        const rect = root.getBoundingClientRect();
+        return { x: rect.right - 5, y: rect.top + rect.height / 2 };
+      })()`
+    );
+    assertPass(styleScrollPoint, "Subtitle style ScrollArea was not available for hover verification.");
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: styleScrollPoint.x, y: styleScrollPoint.y });
+    const styleScrollbarClass = await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-style-scroll .scroll-area-scrollbar-vertical')?.className || false`,
+      5000,
+      "Subtitle style shadcn vertical scrollbar on hover"
+    );
+    assertPass(
+      styleScrollbarClass.includes("scroll-area-scrollbar-vertical"),
+      "Subtitle style ScrollArea did not show its shadcn vertical scrollbar on hover.",
+      styleScrollbarClass
+    );
+    const previewLayout = await evaluate(
+      cdp,
+      `(async () => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕スタイル"]');
+        const frame = dialog?.querySelector(".subtitle-effect-preview-frame");
+        const video = frame?.querySelector("video");
+        if (!dialog || !frame || !video) return null;
+        const rect = (element) => {
+          const box = element.getBoundingClientRect();
+          return { width: box.width, height: box.height };
+        };
+        const before = { dialog: rect(dialog), frame: rect(frame), video: rect(video) };
+        void video.play().catch(() => {});
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const after = { dialog: rect(dialog), frame: rect(frame), video: rect(video) };
+        video.pause();
+        return { before, after };
+      })()`
+    );
+    assertPass(
+      previewLayout &&
+        Math.abs(previewLayout.before.dialog.width - previewLayout.after.dialog.width) < 1 &&
+        Math.abs(previewLayout.before.dialog.height - previewLayout.after.dialog.height) < 1 &&
+        Math.abs(previewLayout.before.frame.width - previewLayout.after.frame.width) < 1 &&
+        Math.abs(previewLayout.before.frame.height - previewLayout.after.frame.height) < 1 &&
+        Math.abs(previewLayout.after.video.width - previewLayout.after.frame.width) < 1 &&
+        Math.abs(previewLayout.after.video.height - previewLayout.after.frame.height) < 1,
+      "Effect preview playback changed the subtitle style dialog size.",
+      previewLayout
+    );
     const styleControls = await evaluate(
       cdp,
       `(() => {
@@ -1170,25 +1252,80 @@ function cleanup(processHandle, cdp) {
     assertPass(effectDialogOpened, "Subtitle style dialog could not be reopened.");
     await waitFor(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-section select') !== null`,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-section .radix-select-trigger') !== null`,
       10_000,
       "subtitle effect selector"
+    );
+    const effectSelectorOpened = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕スタイル"]');
+        const trigger = dialog?.querySelector(".subtitle-effect-section .radix-select-trigger");
+        if (!trigger) return false;
+        trigger.click();
+        return true;
+      })()`
+    );
+    assertPass(effectSelectorOpened, "Subtitle effect Radix selector could not be opened.");
+    const effectCatalogUi = await waitFor(
+      cdp,
+      `(() => {
+        const content = document.querySelector('.radix-select-content[data-state="open"]');
+        const items = content ? [...content.querySelectorAll("[data-effect-id]")] : [];
+        const groups = content ? content.querySelectorAll('[role="group"]') : [];
+        const video = document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-preview');
+        return content && items.length === 97 && groups.length > 1
+          ? {
+              optionCount: items.length,
+              uniqueOptionCount: new Set(items.map((item) => item.getAttribute("data-effect-id"))).size,
+              groupCount: groups.length,
+              previewUrl: video?.getAttribute("src") || "",
+            }
+          : false;
+      })()`,
+      10_000,
+      "subtitle effect Radix portal options"
+    );
+    assertPass(
+      effectCatalogUi?.optionCount === 97 &&
+        effectCatalogUi.uniqueOptionCount === 97 &&
+        effectCatalogUi.groupCount > 1 &&
+        effectCatalogUi.previewUrl.includes("mokusatsu.github.io/ASS_Lyric_Effects/preview/"),
+      "ASS_Lyric_Effects v3 catalog or Pages preview is incomplete.",
+      effectCatalogUi
     );
     const effectConfigured = await evaluate(
       cdp,
       `(() => {
-        const select = document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-section select');
-        if (!select) return false;
-        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
-        setter.call(select, "fad");
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+        const content = document.querySelector('.radix-select-content[data-state="open"]');
+        const item = content?.querySelector('[data-effect-id="fad"]');
+        if (!item) return false;
+        item.scrollIntoView({ block: "nearest" });
+        item.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          ctrlKey: false,
+          pointerType: "mouse",
+        }));
+        item.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true,
+          button: 0,
+          ctrlKey: false,
+          pointerType: "mouse",
+        }));
         return true;
       })()`
     );
     assertPass(effectConfigured, "Subtitle lane effect could not be configured.");
     await waitFor(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] input[value="300"]') !== null`,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] .subtitle-effect-preview')?.getAttribute("src")?.includes("_fad.mp4")`,
+      10_000,
+      "catalog-derived fad preview"
+    );
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="字幕スタイル"] input[value="750"]') !== null`,
       10_000,
       "subtitle effect duration controls"
     );
@@ -1219,6 +1356,201 @@ function cleanup(processHandle, cdp) {
     log("SUB_EXPORT_ONLY_EFFECT_OK", {
       effect: effectUpdatedProject.subtitle.lanes[0].effect,
       renderRequestCountAfterEffect,
+    });
+
+    const segmentStyleTarget = effectUpdatedProject.subtitle.lanes[0].segments[0];
+    const segmentStyleOpened = await evaluate(
+      cdp,
+      `(() => {
+        const target = [...document.querySelectorAll(".lyrics-segment")].find(
+          (item) => item.title.startsWith(${JSON.stringify(`${segmentStyleTarget.text}\n`)})
+        );
+        target?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        return !!target;
+      })()`
+    );
+    assertPass(segmentStyleOpened, "Sub segment settings dialog could not be opened.");
+    const segmentTabs = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const tabs = [...(dialog?.querySelectorAll('[role="tab"]') || [])];
+        return tabs.length === 2
+          ? { labels: tabs.map((tab) => tab.textContent.trim()), portalParentIsBody: dialog.parentElement?.parentElement === document.body }
+          : false;
+      })()`,
+      10_000,
+      "Sub segment Timing and Style tabs"
+    );
+    assertPass(
+      JSON.stringify(segmentTabs.labels) === JSON.stringify(["Timing", "Style"]) && segmentTabs.portalParentIsBody,
+      "Sub segment settings tabs or modal focus scope are incomplete.",
+      segmentTabs
+    );
+    const segmentStyleTabPoint = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const styleTab = [...(dialog?.querySelectorAll('[role="tab"]') || [])].find((tab) => tab.textContent.trim() === "Style");
+        if (!styleTab) return null;
+        const rect = styleTab.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`
+    );
+    assertPass(segmentStyleTabPoint, "Custom Sub segment Style tab could not be opened.");
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "none" });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] input[name="segment-style-mode"]') !== null`,
+      10_000,
+      "Sub segment Style controls"
+    );
+    const segmentStyleScroll = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const root = dialog?.querySelector(".segment-style-scroll.scroll-area");
+        const viewport = root?.querySelector(".scroll-area-viewport");
+        const scrollbar = root?.querySelector(".scroll-area-scrollbar-vertical");
+        return root && viewport && scrollbar
+          ? { viewportClass: viewport.className, scrollbarClass: scrollbar.className }
+          : null;
+      })()`
+    );
+    assertPass(
+      segmentStyleScroll?.viewportClass.includes("segment-style-scroll-viewport") &&
+        segmentStyleScroll?.scrollbarClass.includes("scroll-area-scrollbar-vertical"),
+      "Sub segment Style tab does not use the shared shadcn ScrollArea.",
+      segmentStyleScroll
+    );
+    const customModeSelected = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const radios = dialog?.querySelectorAll('input[name="segment-style-mode"]');
+        radios?.[1]?.click();
+        return !!radios?.[1];
+      })()`
+    );
+    assertPass(customModeSelected, "Custom Sub segment mode could not be selected.");
+    await waitFor(
+      cdp,
+      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] .segment-style-editor-frame')?.disabled === false`,
+      10_000,
+      "enabled custom Sub segment Style editor"
+    );
+    const segmentStyleConfigured = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const sizeLabel = [...(dialog?.querySelectorAll(".subtitle-style-fields label") || [])]
+          .find((item) => item.textContent.trim().startsWith("サイズ"));
+        const sizeInput = sizeLabel?.querySelector("input");
+        const effectTrigger = dialog?.querySelector(".subtitle-effect-section .radix-select-trigger");
+        if (!sizeInput || !effectTrigger) return false;
+        const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        inputSetter.call(sizeInput, "52");
+        sizeInput.dispatchEvent(new Event("input", { bubbles: true }));
+        sizeInput.dispatchEvent(new Event("change", { bubbles: true }));
+        effectTrigger.click();
+        return true;
+      })()`
+    );
+    assertPass(segmentStyleConfigured, "Custom Sub segment Style controls could not be configured.");
+    const segmentEffectCatalogUi = await waitFor(
+      cdp,
+      `(() => {
+        const content = document.querySelector('.radix-select-content[data-state="open"]');
+        const items = content ? [...content.querySelectorAll("[data-effect-id]")] : [];
+        const groups = content ? content.querySelectorAll('[role="group"]') : [];
+        return content && items.length === 97 && groups.length > 1
+          ? { optionCount: items.length, groupCount: groups.length }
+          : false;
+      })()`,
+      10_000,
+      "segment effect Radix portal options"
+    );
+    assertPass(
+      segmentEffectCatalogUi.optionCount === 97 && segmentEffectCatalogUi.groupCount > 1,
+      "Custom Sub segment effect catalog options are incomplete.",
+      segmentEffectCatalogUi
+    );
+    const segmentEffectConfigured = await evaluate(
+      cdp,
+      `(() => {
+        const content = document.querySelector('.radix-select-content[data-state="open"]');
+        const item = content?.querySelector('[data-effect-id="glow"]');
+        if (!item) return false;
+        item.scrollIntoView({ block: "nearest" });
+        item.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true,
+          button: 0,
+          ctrlKey: false,
+          pointerType: "mouse",
+        }));
+        item.dispatchEvent(new PointerEvent("pointerup", {
+          bubbles: true,
+          button: 0,
+          ctrlKey: false,
+          pointerType: "mouse",
+        }));
+        return true;
+      })()`
+    );
+    assertPass(segmentEffectConfigured, "Custom Sub segment glow effect could not be selected.");
+    const segmentStyleApplied = await evaluate(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
+        const button = dialog?.querySelector('.dialog-actions button[type="submit"]');
+        button?.click();
+        return !!button;
+      })()`
+    );
+    assertPass(segmentStyleApplied, "Custom Sub segment settings could not be applied.");
+    const segmentStyleUpdatedProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const lane = value.subtitle?.lanes?.[0];
+        const target = lane?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        const inherited = lane?.segments?.filter((segment) => segment.id !== segmentStyleTarget.id) || [];
+        return target?.style_override?.font_size === 52 &&
+          target?.effect_override?.name === "glow" &&
+          target.render_cache?.signature !== segmentStyleTarget.render_cache?.signature &&
+          inherited.every((segment, index) =>
+            segment.render_cache?.signature === effectUpdatedProject.subtitle.lanes[0].segments[index + 1]?.render_cache?.signature
+          );
+      },
+      5 * 60_000,
+      "custom Sub segment Style persistence and targeted cache invalidation"
+    );
+    const renderRequestCountAfterSegmentStyle = await evaluate(cdp, `window.__subtitleRenderRequests`);
+    assertPass(
+      renderRequestCountAfterSegmentStyle > renderRequestCountAfterEffect,
+      "Custom segment Style did not request a refreshed preview frame.",
+      { renderRequestCountAfterEffect, renderRequestCountAfterSegmentStyle }
+    );
+    const customStyleMarker = await waitFor(
+      cdp,
+      `(() => {
+        const label = [...document.querySelectorAll(".lyrics-label")].find(
+          (item) => item.textContent.trim() === ${JSON.stringify(segmentStyleTarget.text)}
+        );
+        const connector = label?.querySelector(".lyrics-connector");
+        return label?.classList.contains("custom-style") && connector
+          ? { customStyle: true, connectorWidth: getComputedStyle(connector).width }
+          : false;
+      })()`,
+      10_000,
+      "custom segment zigzag marker"
+    );
+    assertPass(customStyleMarker.connectorWidth === "6px", "Custom segment marker is not the zigzag variant.", customStyleMarker);
+    log("SUB_SEGMENT_STYLE_OK", {
+      segmentId: segmentStyleTarget.id,
+      style: segmentStyleUpdatedProject.subtitle.lanes[0].segments[0].style_override,
+      effect: segmentStyleUpdatedProject.subtitle.lanes[0].segments[0].effect_override,
     });
 
     const editorMetrics = await evaluate(
@@ -1275,7 +1607,7 @@ function cleanup(processHandle, cdp) {
         return true;
       })()`
     );
-    const expectedOverlaySegment = styleUpdatedProject.subtitle.lanes
+    const expectedOverlaySegment = segmentStyleUpdatedProject.subtitle.lanes
       .flatMap((lane) => lane.segments)
       .find((segment) => segment.id === firstLyrics.id);
     assertPass(
@@ -1470,6 +1802,13 @@ function cleanup(processHandle, cdp) {
     const srtFiles = fs.readdirSync(outputDir).filter((name) => name.endsWith(".srt"));
     const styleFiles = fs.readdirSync(outputDir).filter((name) => name.endsWith(".srt.style"));
     assertPass(srtFiles.length === 2 && styleFiles.length === 2, "Lane SRT/style files are incomplete.", { srtFiles, styleFiles });
+    const assFile = path.join(outputDir, `${fixtureStem}-subtitles.ass`);
+    const assText = fs.existsSync(assFile) ? fs.readFileSync(assFile, "utf8") : "";
+    assertPass(
+      assText.includes("Style: Lane1Override") && assText.includes(",52,") && assText.includes("\\fad(750,750)"),
+      "Full-fidelity ASS sidecar is missing the custom segment style or v3 effect.",
+      { assFile, exists: fs.existsSync(assFile) }
+    );
     const sourceDuration = Number(execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", input], { encoding: "utf8" }).trim());
     const outputDuration = Number(execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", outputVideo], { encoding: "utf8" }).trim());
     const sourceAudioCodec = execFileSync(path.join(repo, "third_party", "ffmpeg", "bin", "ffprobe.exe"), ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", input], { encoding: "utf8" }).trim();
@@ -1486,7 +1825,7 @@ function cleanup(processHandle, cdp) {
       })()`
     );
     assertPass(exportDialogClosed, "Completed subtitle export progress dialog could not be closed.");
-    log("SUB_EXPORT_OK", { outputVideo, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
+    log("SUB_EXPORT_OK", { outputVideo, assFile, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
 
     const finalScreenshotPath = await captureOptionalScreenshot(cdp, screenshotPath, "final Sub mode");
     log("SUB_E2E_OK", { screenshotPath: finalScreenshotPath, logPath });

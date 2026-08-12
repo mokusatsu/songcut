@@ -11,8 +11,6 @@ __pycache__/
 third_party/
 !third_party/
 third_party/*
-!third_party/ass-effects23/
-!third_party/ass-effects23/**
 !third_party/uta_align/
 !third_party/uta_align/**
 third_party/uta_align/**/__pycache__/
@@ -36,6 +34,9 @@ gui/.vite/
 gui/*.tsbuildinfo
 gui/vite.config.js
 gui/vite.config.d.ts
+
+# Regenerable local code-map analysis state
+.codex/code-map/state/
 
 # Microsoft Office temporary files
 ~$*

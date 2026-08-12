@@ -4,6 +4,7 @@ param(
   [string]$Pnpm = $env:SONGCUT_PNPM,
   [string]$Node = $env:SONGCUT_NODE,
   [string]$Git = $env:SONGCUT_GIT,
+  [string]$MSBuild = $env:SONGCUT_MSBUILD,
   [switch]$Release
 )
 
@@ -254,6 +255,24 @@ $NodeExe = Resolve-ToolPath -Name "Node.js" -Candidate $Node -CommandName "node"
 $env:PATH = "$(Split-Path -Parent $NodeExe);$env:PATH"
 $PnpmExe = Resolve-ToolPath -Name "pnpm" -Candidate $Pnpm -CommandName "pnpm.cmd" -EnvName "SONGCUT_PNPM" -ParameterName "Pnpm"
 $GitExe = Resolve-ToolPath -Name "git" -Candidate $Git -CommandName "git" -EnvName "SONGCUT_GIT" -ParameterName "Git"
+$NativeBuildScript = Join-Path $RepoRoot "packaging\build_native_font_resolver.ps1"
+$NativeDll = Join-Path $RepoRoot "build\native\windows_font_resolver\x64\Release\songcut_font_resolver.dll"
+
+if (-not (Test-Path -LiteralPath $NativeBuildScript -PathType Leaf)) {
+  throw "Native font resolver build script was not found: $NativeBuildScript"
+}
+
+$NativeBuildParameters = @{}
+if (-not [string]::IsNullOrWhiteSpace($MSBuild)) {
+  $NativeBuildParameters.MSBuild = $MSBuild
+}
+& $NativeBuildScript @NativeBuildParameters
+if ($LASTEXITCODE -ne 0) {
+  throw "Native font resolver build failed with exit code $LASTEXITCODE"
+}
+if (-not (Test-Path -LiteralPath $NativeDll -PathType Leaf)) {
+  throw "Native font resolver DLL was not produced: $NativeDll"
+}
 
 if (-not (Test-Path $VersionFile)) {
   throw "VERSION file was not found: $VersionFile"
@@ -315,6 +334,13 @@ finally {
   --collect-data uroman `
   --collect-data pykakasi `
   --collect-all win_safesubprocess `
+  --add-binary "$NativeDll;songcut_native" `
+  --collect-all ass_lyric_effects `
+  --collect-all regex `
+  --collect-all uharfbuzz `
+  --copy-metadata ass-lyric-effects `
+  --copy-metadata regex `
+  --copy-metadata uharfbuzz `
   --collect-submodules uta_align `
   --exclude-module tensorflow `
   --exclude-module transformers `

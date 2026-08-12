@@ -40,7 +40,15 @@ from .source_separation import (
     separate_vocals,
 )
 from .smart_export import estimate_smart_render, export_smart_clip, plan_smart_render
+from .subtitle_effect_catalog import (
+    SubtitleEffectCatalogError,
+    SubtitleEffectValidationError,
+    estimate_subtitle_effect_event_count,
+    get_subtitle_effect_catalog as load_subtitle_effect_catalog,
+    normalize_subtitle_effect_params,
+)
 from .subtitle_export import (
+    DEFAULT_EFFECT_DURATION_MS,
     SubtitleEffect,
     SubtitleLane,
     SubtitleSegment,
@@ -204,24 +212,45 @@ class SubtitleStyleRequest(BaseModel):
     margin_v: int = Field(default=54, ge=0, le=4000)
 
 
+class SubtitleEffectRequest(BaseModel):
+    name: str = "cut"
+    start_duration_ms: int = Field(default=DEFAULT_EFFECT_DURATION_MS, ge=0, le=60000)
+    end_duration_ms: int = Field(default=DEFAULT_EFFECT_DURATION_MS, ge=0, le=60000)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_and_normalize_params(self) -> "SubtitleEffectRequest":
+        try:
+            self.params = normalize_subtitle_effect_params(self.name, self.params)
+        except SubtitleEffectCatalogError as exc:
+            # Pydantic turns this into a concrete 422 body for request
+            # payloads, while the standalone catalog endpoint uses 503.
+            raise ValueError(str(exc)) from exc
+        return self
+
+
+class SubtitleEffectEstimateRequest(SubtitleEffectRequest):
+    duration_ms: int = Field(ge=1, le=86_400_000)
+    grapheme_count: int = Field(default=1, ge=1)
+    line_count: int = Field(default=1, ge=1)
+    budget: int | None = Field(default=None, ge=1)
+
+
 class SubtitleSegmentRequest(BaseModel):
     id: str
     text: str
     start: float = Field(ge=0)
     end: float = Field(gt=0)
+    style_override: SubtitleStyleRequest | None = None
+    effect_override: SubtitleEffectRequest | None = None
 
     @model_validator(mode="after")
     def validate_range(self) -> "SubtitleSegmentRequest":
         if self.end <= self.start:
             raise ValueError("subtitle segment end must be after start")
+        if (self.style_override is None) != (self.effect_override is None):
+            raise ValueError("subtitle segment overrides must provide both style and effect")
         return self
-
-
-class SubtitleEffectRequest(BaseModel):
-    name: str = "cut"
-    start_duration_ms: int = Field(default=300, ge=0, le=60000)
-    end_duration_ms: int = Field(default=300, ge=0, le=60000)
-    params: dict[str, str | int | float] = Field(default_factory=dict)
 
 
 class SubtitleLaneRequest(BaseModel):
@@ -299,6 +328,38 @@ def health() -> dict[str, Any]:
         payload["ffprobe"] = None
         payload["ffmpeg_error"] = ffmpeg["error"]
     return payload
+
+
+@app.get("/subtitle-effects/catalog")
+def get_subtitle_effect_catalog() -> dict[str, Any]:
+    """Return a fresh catalog from the fixed ASS Lyric Effects v3 package."""
+
+    try:
+        return load_subtitle_effect_catalog()
+    except SubtitleEffectCatalogError as exc:
+        # The dependency is intentionally not bundled into the source tree
+        # while its fixed wheel is being prepared.  Surface that boundary to
+        # clients instead of silently returning the retired 23-effect schema.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/subtitle-effects/estimate")
+def estimate_subtitle_effect(request: SubtitleEffectEstimateRequest) -> dict[str, Any]:
+    """Estimate output events and enforce only a caller-supplied budget."""
+
+    try:
+        return estimate_subtitle_effect_event_count(
+            request.name,
+            request.duration_ms,
+            grapheme_count=request.grapheme_count,
+            line_count=request.line_count,
+            params=request.params,
+            budget=request.budget,
+        )
+    except SubtitleEffectCatalogError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (SubtitleEffectValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/ffmpeg/check")
@@ -1227,6 +1288,21 @@ def _subtitle_export_job(job_id: str, request: SubtitleExportRequest) -> None:
                         text=segment.text,
                         start=segment.start,
                         end=segment.end,
+                        style_override=(
+                            subtitle_style_from_mapping(segment.style_override.model_dump())
+                            if segment.style_override is not None
+                            else None
+                        ),
+                        effect_override=(
+                            SubtitleEffect(
+                                name=segment.effect_override.name,
+                                start_duration_ms=segment.effect_override.start_duration_ms,
+                                end_duration_ms=segment.effect_override.end_duration_ms,
+                                params=segment.effect_override.params,
+                            )
+                            if segment.effect_override is not None
+                            else None
+                        ),
                     )
                     for segment in lane.segments
                 ],

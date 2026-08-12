@@ -11,6 +11,9 @@ otherwise, run commands from the repository root.
 - pnpm
 - Git
 - PowerShell
+- Visual Studio Community or Build Tools with Desktop development with C++
+  - MSVC x64 toolset
+  - Windows 10/11 SDK
 
 Bundled `ffmpeg.exe` and `ffprobe.exe` are optional for development. The app
 searches the repository/package root first, then falls back to `PATH`.
@@ -39,8 +42,15 @@ python -m pip install -e ".[gui,dev]"
 Run the Python tests with:
 
 ```powershell
+.\packaging\build_native_font_resolver.ps1
 python -m pytest
 ```
+
+Subtitle effects require the MSVC native DLL that queries DirectWrite for the
+physical font face. `build_native_font_resolver.ps1` locates MSBuild through
+Visual Studio Installer's `vswhere.exe`, builds the x64 Release DLL, and runs
+the native tests. At runtime Python loads the DLL directly; no PowerShell or
+other helper process is launched for font resolution.
 
 The repository does not include proprietary media fixtures. Tests that require
 local media should skip themselves when those files are not present.
@@ -104,6 +114,10 @@ $env:SONGCUT_GIT = (Get-Command git).Source
 .\packaging\build_dist.ps1
 ```
 
+`build_dist.ps1` builds the native font resolver before adding it to the
+PyInstaller package. If more than one Visual Studio installation exists, set
+`SONGCUT_MSBUILD` or pass `-MSBuild` to select one explicitly.
+
 The script runs the production GUI build itself. Running `pnpm run typecheck`
 and `pnpm run build` beforehand is still useful when you want an explicit
 frontend validation step before packaging.
@@ -115,7 +129,8 @@ Or pass them as parameters:
   -Python "C:\Path\To\python.exe" `
   -Node "C:\Path\To\node.exe" `
   -Pnpm "C:\Path\To\pnpm.cmd" `
-  -Git "C:\Path\To\git.exe"
+  -Git "C:\Path\To\git.exe" `
+  -MSBuild "C:\Path\To\MSBuild.exe"
 ```
 
 The default command is a normal distribution build. It updates only

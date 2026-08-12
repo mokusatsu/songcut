@@ -9,6 +9,16 @@ import {
 } from "@/lib/useSubOperations";
 import type { OperationRunner } from "@/lib/useOperationRunner";
 import type { JobRecord } from "@/types";
+import type { SubtitleEffectCatalog } from "@/lib/subtitleEffects";
+
+const effectCatalog = {
+  package: "ass-lyric-effects",
+  version: "3.0.0",
+  schema_version: "1.0",
+  stable_id_contract: {},
+  multiline_context_contract: {},
+  effects: [{ effect_id: "cut", stable_effect_id: true, name_en: "Cut", name_ja: "カット", description_en: "", description_ja: "", parameters: {} }],
+} as SubtitleEffectCatalog;
 
 function job(id: string, kind: string): JobRecord {
   return {
@@ -87,6 +97,7 @@ function options(overrides: Partial<SubOperationOptions> = {}): SubOperationOpti
     focusSegment: vi.fn(),
     onMessage: vi.fn(),
     confirm: vi.fn(() => true),
+    catalog: effectCatalog,
     ...overrides,
   };
 }
@@ -136,7 +147,25 @@ describe("Sub operation coordinator", () => {
       1280,
       720,
       state.state.lanes,
+      state.catalog,
     );
+  });
+
+  it("blocks subtitle export while the catalog is unavailable", async () => {
+    const state = options({ catalog: null });
+    const startSubtitleExport = vi.fn(async () => job("export-job", "subtitle-export"));
+    const services: SubOperationServices = {
+      startLyricsAnalysis: vi.fn(async () => job("lyrics-job", "lyrics-analysis")),
+      startSubtitleExport,
+      startSubtitleRender: vi.fn(async () => job("render-job", "subtitle-render")),
+      waitForJob: async <T,>() => ({ video: "out.mp4", output_dir: "out" }) as T,
+    };
+    const coordinator = createSubOperationCoordinator(() => state, services);
+
+    await coordinator.exportSubtitles("out", 1280, 720);
+
+    expect(startSubtitleExport).not.toHaveBeenCalled();
+    expect(state.onMessage).toHaveBeenCalledTimes(1);
   });
 
   it("ignores stale subtitle render results after invalidation", async () => {

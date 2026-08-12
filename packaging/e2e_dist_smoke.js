@@ -2141,6 +2141,17 @@ async function runJapaneseLocaleCheck(env) {
     assertPass(beforeRows[1][2] === "guide-002", "Second guide entry was not reflected in the analysis segment list.", beforeRows);
     assertPass(beforeRows[1][3] === "0:02" && beforeRows[1][4] === "0:04", "Second guided segment range was not reflected in the analysis segment list.", beforeRows);
 
+    const timingRangeVisible = await evaluate(
+      cdp,
+      `(() => {
+        const range = document.querySelector(".segment-range");
+        if (!range) return false;
+        range.scrollIntoView({ block: "nearest", inline: "center" });
+        return true;
+      })()`
+    );
+    assertPass(timingRangeVisible, "Cut segment range was not available for timing edit.");
+    await sleep(100);
     await doubleClickAt(cdp, ".segment-range");
     const timingDialog = await waitFor(
       cdp,

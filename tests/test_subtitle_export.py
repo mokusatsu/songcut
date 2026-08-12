@@ -1,6 +1,7 @@
 import base64
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -13,6 +14,8 @@ from songcut.subtitle_export import (
     SubtitleSegment,
     SubtitleStyle,
     _ffmpeg_progress_seconds,
+    _effect_context,
+    _effect_params,
     _fit_effect_durations,
     _run_ffmpeg_with_progress,
     export_subtitle_bundle,
@@ -34,6 +37,13 @@ def test_lane_srt_keeps_text_and_orders_segments() -> None:
 
     assert text.index("一行目") < text.index("二行目")
     assert "00:00:00,500 --> 00:00:01,500" in text
+
+
+def test_subtitle_effect_defaults_to_750ms_transitions() -> None:
+    effect = SubtitleEffect()
+
+    assert effect.start_duration_ms == 750
+    assert effect.end_duration_ms == 750
 
 
 def test_srt_style_uses_numpad_alignment_and_ass_color_order() -> None:
@@ -92,6 +102,43 @@ def test_combined_ass_has_one_style_per_lane_and_escapes_text() -> None:
     assert r"\{歌詞\}\\line" in text
 
 
+def test_segment_overrides_use_effective_styles_and_effect_context() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(alignment=2, font_size=48),
+        [
+            SubtitleSegment("base", "通常", 0.0, 1.0),
+            SubtitleSegment(
+                "override",
+                "上部",
+                1.0,
+                2.0,
+                style_override=SubtitleStyle(alignment=7, font_size=80, margin_l=80, margin_v=70),
+                effect_override=SubtitleEffect(
+                    name="wipe",
+                    start_duration_ms=250,
+                    end_duration_ms=400,
+                    params={"direction": "left_to_right"},
+                ),
+            ),
+        ],
+    )
+
+    text = render_ass_document([lane], play_res_x=1280, play_res_y=720, apply_effects=True)
+    style_lines = [line for line in text.splitlines() if line.startswith("Style:")]
+    dialogue_lines = [line for line in text.splitlines() if line.startswith("Dialogue:")]
+    base_style_name = dialogue_lines[0].split(",")[3]
+    override_style_name = dialogue_lines[1].split(",")[3]
+
+    assert base_style_name != override_style_name
+    assert sum(line.startswith(f"Style: {base_style_name},") for line in style_lines) == 1
+    assert sum(line.startswith(f"Style: {override_style_name},") for line in style_lines) == 1
+    assert f"Style: {override_style_name}," in style_lines[1]
+    assert ",80," in style_lines[1]
+    assert r"\clip(" in dialogue_lines[1]
+
+
 def test_effect_is_applied_only_when_export_rendering_requests_it() -> None:
     lane = SubtitleLane(
         "lyrics",
@@ -133,6 +180,52 @@ def test_glow_converts_gui_rgb_color_to_ass_bgr_override() -> None:
     )
 
     assert r"\3c&HFFD742&" in exported
+
+
+def test_effect_params_convert_every_css_color_including_palettes() -> None:
+    assert _effect_params(
+        {
+            "color_a": "#42D7FF",
+            "palette": ["#4FD8FF", "&HFF8BCE&"],
+            "charset": "アイウエオ",
+        }
+    ) == {
+        "color_a": "&HFFD742&",
+        "palette": ["&HFFD84F&", "&HFF8BCE&"],
+        "charset": "アイウエオ",
+    }
+
+
+def test_multiline_context_uses_real_grapheme_widths_and_skips_empty_line_layout() -> None:
+    resolved = SimpleNamespace(font_path=Path("C:/Fonts/test.ttc"), face_index=2)
+
+    def measure(text: str, path: str, size: float, *, face_index: int) -> tuple[float, ...]:
+        assert path == str(resolved.font_path)
+        assert size == 48
+        assert face_index == 2
+        return {"A": (18.0,), "B": (24.0,)}[text]
+
+    with (
+        mock.patch("songcut.subtitle_export.resolve_windows_font", return_value=resolved) as resolver,
+        mock.patch("songcut.subtitle_export.measure_grapheme_widths", side_effect=measure),
+    ):
+        context = _effect_context(
+            "A\n\nB",
+            SubtitleStyle(font_size=48, alignment=7, margin_l=80, margin_v=70),
+            play_res_x=1280,
+            play_res_y=720,
+        )
+
+    resolver.assert_called_once_with(
+        "Yu Gothic UI",
+        bold=False,
+        italic=False,
+        text="AB",
+    )
+    assert context.glyph_widths is None
+    assert context.line_layouts is not None
+    assert [layout.glyph_widths for layout in context.line_layouts] == [(18.0,), (24.0,)]
+    assert context.line_layouts[1].anchor_y - context.line_layouts[0].anchor_y == 104
 
 
 def test_short_segments_fit_effect_durations_without_changing_ratio() -> None:
@@ -223,6 +316,11 @@ def test_subtitle_export_validates_created_video_and_duration(tmp_path: Path) ->
     video = Path(result["video"])
     assert video.exists()
     assert video.stat().st_size > 0
+    ass = Path(result["ass"])
+    assert ass.exists()
+    assert ass.read_text(encoding="utf-8-sig") == render_ass_document(
+        [lane], play_res_x=320, play_res_y=180, apply_effects=True
+    )
 
 
 

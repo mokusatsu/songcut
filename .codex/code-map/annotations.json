@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "components": {
+    "gui": {
+      "summary": "Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、Python API との連携、プロジェクト保存・復旧を扱う。"
+    },
+    "songcut": {
+      "summary": "FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境界調整、波形生成、クリップ・字幕書き出しを提供する Python バックエンド。"
+    },
+    "third_party-uta_align": {
+      "summary": "歌詞と音声認識候補からアンカーと整列結果を構築し、候補合意、反復処理、フォールバック、整列検証を行う同梱 uta_align エンジン。"
+    },
+    "tests": {
+      "summary": "Python バックエンド、Electron/React の状態・操作・永続化、および統合契約を検証する Python と TypeScript のテスト群。"
+    },
+    "packaging": {
+      "summary": "Windows 配布物の構築、パッケージ済み GUI の E2E スモーク検証、字幕フレーム評価などを担う配布・検証補助。"
+    }
+  },
+  "flows": {}
+}

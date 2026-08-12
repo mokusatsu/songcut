@@ -236,6 +236,67 @@ describe("songcut project storage", () => {
     expect((await loadProject(cutPath)).document).toEqual(cut);
     expect((await loadProject(subPath)).document).toEqual(sub);
   });
+
+  it("keeps schema v3 compatible while validating paired segment overrides", () => {
+    const legacy = subProjectDocument(1);
+    expect(() => parseProjectText(JSON.stringify(legacy))).not.toThrow();
+
+    const custom = subProjectDocument(2);
+    const lane = custom.subtitle!.lanes[0];
+    lane.segments.push({
+      id: "custom-segment",
+      text: "Custom",
+      start: 0,
+      end: 1,
+      confidence: 1,
+      source: "manual",
+      low_confidence_outlier: false,
+      user_edited: true,
+      style_override: { ...lane.style, font_size: 48 },
+      effect_override: {
+        name: "fad",
+        start_duration_ms: 200,
+        end_duration_ms: 300,
+        params: {},
+      },
+    });
+    expect(() => parseProjectText(JSON.stringify(custom))).not.toThrow();
+
+    delete custom.subtitle!.lanes[0].segments[0].effect_override;
+    expect(() => parseProjectText(JSON.stringify(custom))).toThrow(/both style_override and effect_override/i);
+  });
+
+  it("preserves JSON-safe palette and boolean effect parameters in schema v3", () => {
+    const project = subProjectDocument(3);
+    project.subtitle!.lanes[0].effect = {
+      name: "color_wave",
+      start_duration_ms: 300,
+      end_duration_ms: 300,
+      params: {
+        palette: ["&H4FD8FF&", "&HFF8BCE&"],
+        enabled: true,
+      },
+    };
+
+    const parsed = parseProjectText(JSON.stringify(project));
+    expect(parsed.subtitle!.lanes[0].effect!.params).toEqual({
+      palette: ["&H4FD8FF&", "&HFF8BCE&"],
+      enabled: true,
+    });
+
+    const invalid = subProjectDocument(4);
+    invalid.subtitle!.lanes[0].effect = {
+      name: "color_wave",
+      start_duration_ms: 300,
+      end_duration_ms: 300,
+      params: {},
+    };
+    (invalid.subtitle!.lanes[0].effect!.params as Record<string, unknown>).palette = [
+      "&H4FD8FF&",
+      42,
+    ];
+    expect(() => parseProjectText(JSON.stringify(invalid))).toThrow(/string array/i);
+  });
 });
 
 async function tempDirectory() {

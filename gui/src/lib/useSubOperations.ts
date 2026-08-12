@@ -14,6 +14,7 @@ import { createPendingTask, failTask, type TaskSlot } from "@/lib/useTaskRegistr
 import {
   analysisLinesToSegments,
   createLyricsLane,
+  resolveSubtitleSegmentStyle,
   selectedSubtitleSegment,
   subtitleRenderSignature,
   type LyricsAnalysisResult,
@@ -22,6 +23,7 @@ import {
   type SubtitleProjectState,
 } from "@/lib/subtitles";
 import type { JobRecord } from "@/types";
+import type { SubtitleEffectCatalog } from "@/lib/subtitleEffects";
 
 export type SubOperationCoordinator = {
   readonly analysisJob: JobRecord | null;
@@ -49,6 +51,7 @@ export type SubOperationOptions = {
   focusSegment: (segment: LyricsSegment) => void;
   onMessage: (message: string) => void;
   confirm: (message: string) => boolean;
+  catalog: SubtitleEffectCatalog | null;
 };
 
 export type SubOperationServices = {
@@ -144,6 +147,7 @@ export function placeLyricsAnalysisResult(
 export function applySubtitleRenderResults(
   state: SubtitleProjectState,
   items: SubtitleRenderResultItem[],
+  catalog: SubtitleEffectCatalog,
 ): SubtitleProjectState {
   const bySegmentId = new Map(items.map((item) => [item.segment_id, item]));
   return {
@@ -155,7 +159,7 @@ export function applySubtitleRenderResults(
         if (!rendered) return segment;
         const expected = subtitleRenderSignature(
           segment.text,
-          lane.style,
+          resolveSubtitleSegmentStyle(lane, segment, catalog).style,
           rendered.width,
           rendered.height,
         );
@@ -234,6 +238,11 @@ export function createSubOperationCoordinator(
     async exportSubtitles(outputDir, width, height) {
       const options = getOptions();
       if (!options.apiBaseUrl || !options.videoPath) return;
+      if (!options.catalog) {
+        options.onMessage(tr("sub.effectCatalogExportBlocked"));
+        return;
+      }
+      const catalog = options.catalog;
       try {
         await options.operationRunner.run({
           slot: "subtitle-export",
@@ -247,6 +256,7 @@ export function createSubOperationCoordinator(
             width,
             height,
             options.state.lanes,
+            catalog,
           ),
           poll: (jobId, onProgress) => services.waitForJob<{ video: string; output_dir: string }>(
             options.apiBaseUrl,
@@ -262,6 +272,11 @@ export function createSubOperationCoordinator(
     async renderSubtitles(request) {
       const options = getOptions();
       if (!options.apiBaseUrl || !request.items.length) return;
+      const catalog = options.catalog;
+      if (!catalog) {
+        options.onMessage(tr("sub.effectCatalogPreviewBlocked"));
+        return;
+      }
       const version = ++renderVersion;
       let trackedJob = createPendingTask("subtitle-render", tr("sub.subtitleRenderPreparing"));
       options.updateTask("subtitle-render", trackedJob);
@@ -289,7 +304,7 @@ export function createSubOperationCoordinator(
         );
         if (version === renderVersion) {
           const current = getOptions();
-          current.setState((state) => applySubtitleRenderResults(state, result.items));
+          current.setState((state) => applySubtitleRenderResults(state, result.items, catalog));
           current.markStateChanged();
         }
       } catch (error) {

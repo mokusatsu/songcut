@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   createCutBoundaryPolicy,
   resolveBoundaryRange,
@@ -15,7 +17,18 @@ import {
   nearestRhythmTime,
   parseTimeInput,
 } from "@/lib/segmentTiming";
-import { createSubtitleBoundaryPolicy, type RhythmGridPoint } from "@/lib/subtitles";
+import {
+  createSubtitleBoundaryPolicy,
+  normalizeSubtitleStyle,
+  type RhythmGridPoint,
+  type SubtitleStyle,
+} from "@/lib/subtitles";
+import {
+  normalizeSubtitleEffect,
+  type SubtitleEffectCatalog,
+  type SubtitleEffectSettings,
+} from "@/lib/subtitleEffects";
+import { useSubtitleEffectCatalogContext } from "@/lib/subtitleEffectCatalog";
 import { TIME_RANGE_EPSILON } from "@/lib/timeRange";
 import { tr } from "@/i18n";
 
@@ -23,6 +36,21 @@ export type SegmentTimingTarget = {
   id: string;
   start: number;
   end: number;
+  style_override?: SubtitleStyle;
+  effect_override?: SubtitleEffectSettings;
+};
+
+export type SegmentStyleEditorProps = {
+  style: SubtitleStyle;
+  effect: SubtitleEffectSettings;
+  onChange: (style: SubtitleStyle) => void;
+  onEffectChange: (effect: SubtitleEffectSettings) => void;
+};
+
+export type SegmentStyleDraftState = {
+  mode: "inherit" | "custom";
+  style: SubtitleStyle;
+  effect: SubtitleEffectSettings;
 };
 
 type RangeMode = "duration" | "end";
@@ -36,12 +64,27 @@ export function SegmentTimingDialog(props: {
   previousEnd?: number;
   nextStart?: number;
   rhythmGrid?: readonly RhythmGridPoint[];
+  styleOptions?: {
+    inheritedStyle: SubtitleStyle;
+    inheritedEffect: SubtitleEffectSettings;
+    renderEditor: (props: SegmentStyleEditorProps) => React.ReactNode;
+  };
   onClose: () => void;
-  onApply: (start: number, end: number) => void;
+  onApply: (
+    start: number,
+    end: number,
+    styleOverride?: SubtitleStyle,
+    effectOverride?: SubtitleEffectSettings,
+  ) => void;
 }) {
+  const catalogState = useSubtitleEffectCatalogContext();
   const [rangeMode, setRangeMode] = useState<RangeMode>("duration");
   const [startInput, setStartInput] = useState("0:00.000");
   const [extentInput, setExtentInput] = useState("0:00.000");
+  const [activeTab, setActiveTab] = useState<"timing" | "style">("timing");
+  const [styleMode, setStyleMode] = useState<"inherit" | "custom">("inherit");
+  const [styleDraft, setStyleDraft] = useState<SubtitleStyle | null>(null);
+  const [effectDraft, setEffectDraft] = useState<SubtitleEffectSettings | null>(null);
   const grid = props.rhythmGrid ?? [];
   const policy = useMemo(
     () => props.mode === "cut"
@@ -53,9 +96,25 @@ export function SegmentTimingDialog(props: {
   useEffect(() => {
     if (!props.open || !props.segment) return;
     setRangeMode("duration");
+    setActiveTab("timing");
     setStartInput(formatTimeInput(props.segment.start));
     setExtentInput(formatTimeInput(props.segment.end - props.segment.start));
-  }, [props.open, props.segment]);
+    if (!props.styleOptions) return;
+    if (!catalogState.catalog) {
+      setStyleDraft(null);
+      setEffectDraft(null);
+      return;
+    }
+    const styleState = createSegmentStyleDraft(
+      props.segment,
+      props.styleOptions.inheritedStyle,
+      props.styleOptions.inheritedEffect,
+      catalogState.catalog,
+    );
+    setStyleMode(styleState.mode);
+    setStyleDraft(styleState.style);
+    setEffectDraft(styleState.effect);
+  }, [props.open, props.segment?.id, catalogState.catalog]);
 
   const evaluation = useMemo(
     () => evaluateSegmentTiming({
@@ -135,87 +194,169 @@ export function SegmentTimingDialog(props: {
   };
 
   return (
-    <Dialog open={props.open} title={tr("segmentTiming.title")} onClose={props.onClose}>
+    <Dialog
+      open={props.open}
+      title={tr(props.styleOptions ? "segmentTiming.settingsTitle" : "segmentTiming.title")}
+      className={props.styleOptions ? "segment-settings-dialog" : undefined}
+      onClose={props.onClose}
+    >
       <form
         className="segment-timing-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (evaluation.valid && evaluation.start !== null && evaluation.end !== null) {
-            props.onApply(evaluation.start, evaluation.end);
+            props.onApply(
+              evaluation.start,
+              evaluation.end,
+              styleMode === "custom" ? styleDraft ?? undefined : undefined,
+              styleMode === "custom" ? effectDraft ?? undefined : undefined,
+            );
           }
         }}
       >
-        <TimeField
-          label={tr("segmentTiming.start")}
-          value={startInput}
-          error={evaluation.startError}
-          hint={props.mode === "sub" && evaluation.proposedStart !== null && startNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedStart)
-            ? tr("segmentTiming.nearestGrid", { time: formatTimeInput(startNearest) })
-            : null}
-          onChange={setStartInput}
-          onBlur={normalizeStart}
-          onArrow={changeStartByKeyboard}
-        />
-        <fieldset className="segment-timing-mode">
-          <legend>{tr("segmentTiming.specification")}</legend>
-          <label>
-            <input
-              type="radio"
-              name="segment-timing-mode"
-              checked={rangeMode === "duration"}
-              onChange={() => {
-                if (evaluation.start !== null && evaluation.end !== null) {
-                  setExtentInput(formatTimeInput(evaluation.end - evaluation.start));
-                }
-                setRangeMode("duration");
-              }}
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "timing" | "style")}>
+          {props.styleOptions ? (
+            <TabsList className="segment-settings-tabs" aria-label={tr("segmentTiming.tabsLabel")}>
+              <TabsTrigger value="timing">{tr("segmentTiming.timingTab")}</TabsTrigger>
+              <TabsTrigger value="style">{tr("segmentTiming.styleTab")}</TabsTrigger>
+            </TabsList>
+          ) : null}
+          <TabsContent value="timing" className="segment-settings-content">
+            <TimeField
+              label={tr("segmentTiming.start")}
+              value={startInput}
+              error={evaluation.startError}
+              hint={props.mode === "sub" && evaluation.proposedStart !== null && startNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedStart)
+                ? tr("segmentTiming.nearestGrid", { time: formatTimeInput(startNearest) })
+                : null}
+              onChange={setStartInput}
+              onBlur={normalizeStart}
+              onArrow={changeStartByKeyboard}
             />
-            {tr("segmentTiming.durationMode")}
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="segment-timing-mode"
-              checked={rangeMode === "end"}
-              onChange={() => {
-                if (evaluation.end !== null) setExtentInput(formatTimeInput(evaluation.end));
-                setRangeMode("end");
-              }}
+            <fieldset className="segment-timing-mode">
+              <legend>{tr("segmentTiming.specification")}</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="segment-timing-mode"
+                  checked={rangeMode === "duration"}
+                  onChange={() => {
+                    if (evaluation.start !== null && evaluation.end !== null) {
+                      setExtentInput(formatTimeInput(evaluation.end - evaluation.start));
+                    }
+                    setRangeMode("duration");
+                  }}
+                />
+                {tr("segmentTiming.durationMode")}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="segment-timing-mode"
+                  checked={rangeMode === "end"}
+                  onChange={() => {
+                    if (evaluation.end !== null) setExtentInput(formatTimeInput(evaluation.end));
+                    setRangeMode("end");
+                  }}
+                />
+                {tr("segmentTiming.endMode")}
+              </label>
+            </fieldset>
+            <TimeField
+              label={rangeMode === "duration" ? tr("segmentTiming.duration") : tr("segmentTiming.end")}
+              value={extentInput}
+              error={evaluation.extentError}
+              hint={null}
+              onChange={setExtentInput}
+              onBlur={normalizeExtent}
+              onArrow={changeExtentByKeyboard}
             />
-            {tr("segmentTiming.endMode")}
-          </label>
-        </fieldset>
-        <TimeField
-          label={rangeMode === "duration" ? tr("segmentTiming.duration") : tr("segmentTiming.end")}
-          value={extentInput}
-          error={evaluation.extentError}
-          hint={null}
-          onChange={setExtentInput}
-          onBlur={normalizeExtent}
-          onArrow={changeExtentByKeyboard}
-        />
-        {props.mode === "sub" && evaluation.proposedEnd !== null && endNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedEnd) ? (
-          <span className="settings-field-help">
-            {tr("segmentTiming.nearestEndGrid", { time: formatTimeInput(endNearest) })}
-          </span>
-        ) : null}
-        {evaluation.rangeError ? (
-          <p className="settings-field-error segment-timing-error" role="alert">{evaluation.rangeError}</p>
-        ) : null}
-        {evaluation.start !== null && evaluation.end !== null ? (
-          <dl className="segment-timing-summary">
-            <div><dt>{tr("segmentTiming.start")}</dt><dd>{formatTimeInput(evaluation.start)}</dd></div>
-            <div><dt>{tr("segmentTiming.end")}</dt><dd>{formatTimeInput(evaluation.end)}</dd></div>
-            <div><dt>{tr("segmentTiming.duration")}</dt><dd>{formatTimeInput(evaluation.end - evaluation.start)}</dd></div>
-          </dl>
-        ) : null}
+            {props.mode === "sub" && evaluation.proposedEnd !== null && endNearest !== null && !isOnRhythmGrid(grid, evaluation.proposedEnd) ? (
+              <span className="settings-field-help">
+                {tr("segmentTiming.nearestEndGrid", { time: formatTimeInput(endNearest) })}
+              </span>
+            ) : null}
+            {evaluation.rangeError ? (
+              <p className="settings-field-error segment-timing-error" role="alert">{evaluation.rangeError}</p>
+            ) : null}
+            {evaluation.start !== null && evaluation.end !== null ? (
+              <dl className="segment-timing-summary">
+                <div><dt>{tr("segmentTiming.start")}</dt><dd>{formatTimeInput(evaluation.start)}</dd></div>
+                <div><dt>{tr("segmentTiming.end")}</dt><dd>{formatTimeInput(evaluation.end)}</dd></div>
+                <div><dt>{tr("segmentTiming.duration")}</dt><dd>{formatTimeInput(evaluation.end - evaluation.start)}</dd></div>
+              </dl>
+            ) : null}
+          </TabsContent>
+          {props.styleOptions && styleDraft && effectDraft ? (
+            <TabsContent value="style" className="segment-settings-content segment-style-content">
+              <ScrollArea
+                className="segment-style-scroll"
+                viewportClassName="segment-style-scroll-viewport"
+                scrollbars={["vertical"]}
+                type="always"
+              >
+                <div className="segment-style-scroll-content">
+                  <fieldset className="segment-style-mode">
+                    <legend>{tr("segmentTiming.styleMode")}</legend>
+                    <label>
+                      <input
+                        type="radio"
+                        name="segment-style-mode"
+                        checked={styleMode === "inherit"}
+                        onChange={() => setStyleMode("inherit")}
+                      />
+                      {tr("segmentTiming.inheritStyle")}
+                    </label>
+                    <label>
+                      <input
+                        type="radio"
+                        name="segment-style-mode"
+                        checked={styleMode === "custom"}
+                        onChange={() => setStyleMode("custom")}
+                      />
+                      {tr("segmentTiming.customStyle")}
+                    </label>
+                  </fieldset>
+                  <fieldset className="segment-style-editor-frame" disabled={styleMode === "inherit"}>
+                    {props.styleOptions.renderEditor({
+                      style: styleDraft,
+                      effect: effectDraft,
+                      onChange: setStyleDraft,
+                      onEffectChange: setEffectDraft,
+                    })}
+                  </fieldset>
+                </div>
+              </ScrollArea>
+            </TabsContent>
+          ) : null}
+        </Tabs>
         <div className="dialog-actions">
           <Button type="button" variant="secondary" onClick={props.onClose}>{tr("common.cancel")}</Button>
-          <Button type="submit" disabled={!evaluation.valid}>{tr("segmentTiming.apply")}</Button>
+          <Button
+            type="submit"
+            disabled={!evaluation.valid || (Boolean(props.styleOptions) && catalogState.status !== "ready")}
+          >
+            {tr("segmentTiming.apply")}
+          </Button>
         </div>
       </form>
     </Dialog>
   );
+}
+
+/** ダイアログを開いた時点の継承／独自モードと編集用Style／Effect draftを作る。 */
+export function createSegmentStyleDraft(
+  segment: SegmentTimingTarget,
+  inheritedStyle: SubtitleStyle | undefined,
+  inheritedEffect: SubtitleEffectSettings | undefined,
+  catalog: SubtitleEffectCatalog,
+): SegmentStyleDraftState {
+  const custom = Boolean(segment.style_override && segment.effect_override);
+  return {
+    mode: custom ? "custom" : "inherit",
+    style: normalizeSubtitleStyle(custom ? segment.style_override : inheritedStyle),
+    effect: normalizeSubtitleEffect(custom ? segment.effect_override : inheritedEffect, catalog),
+  };
 }
 
 function TimeField(props: {

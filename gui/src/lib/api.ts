@@ -14,6 +14,10 @@ import {
   type LyricsLane,
   type SubtitleRenderRequestItem,
 } from "@/lib/subtitles";
+import {
+  normalizeSubtitleEffect,
+  type SubtitleEffectCatalog,
+} from "@/lib/subtitleEffects";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
@@ -113,6 +117,11 @@ export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`);
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
+}
+
+/** `getSubtitleEffectCatalog`で全Sub editorが使うbackend catalogを取得する。 */
+export function getSubtitleEffectCatalog(baseUrl: string) {
+  return getJson<unknown>(baseUrl, "/subtitle-effects/catalog");
 }
 
 /** `deleteJson`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
@@ -258,14 +267,28 @@ export function startSubtitleExport(
   outputDir: string,
   videoWidth: number,
   videoHeight: number,
-  lanes: LyricsLane[]
+  lanes: LyricsLane[],
+  catalog: SubtitleEffectCatalog,
 ) {
   return postJson<JobRecord>(baseUrl, "/subtitle-export/jobs", {
     source_path: sourcePath,
     output_dir: outputDir,
     play_res_x: videoWidth,
     play_res_y: videoHeight,
-    lanes: lanes.map((lane) => ({ ...lane, style: normalizeSubtitleStyle(lane.style) })),
+    lanes: lanes.map((lane) => ({
+      ...lane,
+      style: normalizeSubtitleStyle(lane.style),
+      effect: normalizeSubtitleEffect(lane.effect, catalog),
+      segments: lane.segments.map((segment) => ({
+        ...segment,
+        ...(segment.style_override
+          ? { style_override: normalizeSubtitleStyle(segment.style_override) }
+          : {}),
+        ...(segment.effect_override
+          ? { effect_override: normalizeSubtitleEffect(segment.effect_override, catalog) }
+          : {}),
+      })),
+    })),
   });
 }
 

@@ -3,6 +3,7 @@ import type * as React from "react";
 import { Trash2 } from "lucide-react";
 
 import { TimelineSurface } from "@/components/TimelineSurface";
+import { SubtitleAlignmentIcon } from "@/components/SubtitleAlignmentIcon";
 import { Button } from "@/components/ui/button";
 import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import { Input } from "@/components/ui/input";
@@ -150,7 +151,16 @@ export function SubTimelineEditor(props: SubTimelineEditorProps) {
                 >
                   <div className="lyrics-lane-header">
                     <span>{lane.name}</span>
-                    <Button size="sm" variant="ghost" onClick={() => props.onStyle(lane.id)}>Style {lane.style.alignment}</Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title={`Style ${lane.style.alignment}`}
+                      aria-label={`Style ${lane.style.alignment}`}
+                      onClick={() => props.onStyle(lane.id)}
+                    >
+                      Style
+                      <SubtitleAlignmentIcon alignment={lane.style.alignment} />
+                    </Button>
                     <Button size="icon" variant="ghost" onClick={() => props.onRemoveLane(lane.id)} disabled={props.state.lanes.length <= 1}><Trash2 size={14} /></Button>
                   </div>
                   <div className="lyrics-segment-track">
@@ -336,7 +346,7 @@ function LyricsSegmentView(props: {
         />
       </button>
       <div
-        className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""}`}
+        className={`lyrics-label ${props.selected ? "selected" : ""} ${props.editing ? "editing" : ""} ${props.segment.low_confidence_outlier ? "confidence-warning" : ""} ${props.segment.style_override && props.segment.effect_override ? "custom-style" : ""}`}
         style={{ left, top: 38 + props.level * 27, width: props.labelWidth }}
         onClick={props.onSelect}
         onDoubleClick={() => {
