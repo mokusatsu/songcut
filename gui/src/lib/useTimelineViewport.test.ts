@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   timelineFocusScrollLeft,
   timelineFollowScrollLeft,
+  timelineScrubAutoScroll,
   timelineWheelScrollLeft,
 } from "@/lib/useTimelineViewport";
 
@@ -166,5 +167,56 @@ describe("timelineWheelScrollLeft", () => {
   it("clamps scrolling to the content boundaries", () => {
     expect(timelineWheelScrollLeft(790, 200, 1000, 0, 100, 0)).toBe(800);
     expect(timelineWheelScrollLeft(10, 200, 1000, 0, -100, 0)).toBe(0);
+  });
+});
+
+describe("timelineScrubAutoScroll", () => {
+  const baseInput = {
+    viewportWidth: 400,
+    contentWidth: 1200,
+    viewportLeft: 100,
+    viewportRight: 500,
+    elapsedSeconds: 0.016,
+  };
+
+  it("does not request another scratch when the pointer is at the left content limit", () => {
+    expect(
+      timelineScrubAutoScroll({
+        ...baseInput,
+        scrollLeft: 0,
+        clientX: 100,
+      })
+    ).toEqual({ scrollLeft: 0, didScroll: false });
+  });
+
+  it("moves only when an edge drag can actually advance the viewport", () => {
+    const result = timelineScrubAutoScroll({
+      ...baseInput,
+      scrollLeft: 200,
+      clientX: 499,
+    });
+    expect(result.didScroll).toBe(true);
+    expect(result.scrollLeft).toBeGreaterThan(200);
+    expect(result.scrollLeft).toBeLessThanOrEqual(800);
+  });
+
+  it("does not request another scratch after reaching the right content limit", () => {
+    expect(
+      timelineScrubAutoScroll({
+        ...baseInput,
+        scrollLeft: 800,
+        clientX: 499,
+      })
+    ).toEqual({ scrollLeft: 800, didScroll: false });
+  });
+
+  it("keeps a normal drag out of the auto-scroll path", () => {
+    expect(
+      timelineScrubAutoScroll({
+        ...baseInput,
+        scrollLeft: 200,
+        clientX: 300,
+      })
+    ).toEqual({ scrollLeft: 200, didScroll: false });
   });
 });

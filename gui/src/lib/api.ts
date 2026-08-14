@@ -11,6 +11,9 @@ import type {
 import type { BoundaryRefinementSettings } from "@/lib/boundaryRefinement";
 import {
   normalizeSubtitleStyle,
+  type AlignmentDiagnostics,
+  type DisplayElement,
+  type LyricsAnalysisArtifact,
   type LyricsLane,
   type SubtitleRenderRequestItem,
 } from "@/lib/subtitles";
@@ -18,11 +21,17 @@ import {
   normalizeSubtitleEffect,
   type SubtitleEffectCatalog,
 } from "@/lib/subtitleEffects";
+import type { SubtitleFileExportFormat } from "@/lib/subtitleFileExport";
 
 export type AnalysisDevice = "auto" | "npu" | "gpu" | "cpu";
 export type WhisperDevice = "auto" | "npu" | "gpu" | "cpu";
 export type DemucsDevice = "auto" | "npu" | "gpu" | "cpu";
 export type MmsDevice = "auto" | "gpu" | "cpu";
+export type SubtitleFileExportResult = {
+  file: string;
+  format: SubtitleFileExportFormat;
+  output_dir: string;
+};
 export type WhisperModelKey = "tiny" | "base" | "small" | "whisper-large-v3-turbo-int8-ov";
 export type LyricsAlignmentAlgorithm = "songcut-standard" | "uta-align";
 export type WhisperSettings = {
@@ -93,11 +102,17 @@ export class ApiError extends Error {
 }
 
 /** `postJson`でJSON bodyを送信し、HTTP失敗を詳細付き例外へ変換する。 */
-export async function postJson<T>(baseUrl: string, path: string, body: unknown): Promise<T> {
+export async function postJson<T>(
+  baseUrl: string,
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok) {
     const text = await response.text();
@@ -113,8 +128,10 @@ export async function postJson<T>(baseUrl: string, path: string, body: unknown):
 }
 
 /** `getJson`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
-export async function getJson<T>(baseUrl: string, path: string): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`);
+export async function getJson<T>(baseUrl: string, path: string, signal?: AbortSignal): Promise<T> {
+  const response = signal
+    ? await fetch(`${baseUrl}${path}`, { signal })
+    : await fetch(`${baseUrl}${path}`);
   if (!response.ok) throw new Error(await response.text());
   return (await response.json()) as T;
 }
@@ -260,6 +277,99 @@ export function startLyricsAnalysis(
   });
 }
 
+export type LyricsLineReanalysisSnapshot = {
+  id: string;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  alignment_source: string;
+  display_elements: DisplayElement[];
+  display_element_text?: string;
+  line_revision: number;
+  display_element_revision: number;
+  start_locked: boolean;
+  end_locked: boolean;
+  needs_reanalysis: boolean;
+};
+
+export type LyricsLineContext = {
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  alignment_source: string;
+};
+
+export type LyricsLineAnalysisInput = {
+  sourcePath: string;
+  sourceFingerprint: LyricsAnalysisArtifact["source_fingerprint"];
+  line: LyricsLineReanalysisSnapshot;
+  nextLine?: LyricsLineContext;
+  language: string;
+  demucsDevice: DemucsDevice;
+  mmsDevice: MmsDevice;
+  expectedLineRevision: number;
+  expectedDisplayElementRevision: number;
+  projectEpoch: number;
+  reanalysisEpoch: number;
+};
+
+export type LyricsLineAnalysisResult = {
+  outcome: "applied" | "conflict";
+  conflict?: string;
+  line_id: string;
+  project_epoch: number;
+  line_revision: number;
+  display_element_revision: number;
+  reanalysis_epoch: number;
+  cache_hit: boolean;
+  analysis_artifact: LyricsAnalysisArtifact;
+  line?: {
+    id: string;
+    text: string;
+    start: number;
+    end: number;
+    confidence: number;
+    display_elements: DisplayElement[];
+    display_element_text: string;
+    line_revision: number;
+    display_element_revision: number;
+    start_locked: boolean;
+    end_locked: boolean;
+    alignment_diagnostics: AlignmentDiagnostics;
+    needs_reanalysis: false;
+  };
+  reconciliation?: {
+    preserved_manual_element_ids: string[];
+    orphaned_manual_element_ids: string[];
+    dropped_auto_element_ids: string[];
+    reconciliation_conflicts: string[];
+  };
+};
+
+/** 対象歌詞行だけのStandard Align再解析jobを開始する。 */
+export function startLyricsLineAnalysis(baseUrl: string, input: LyricsLineAnalysisInput) {
+  return postJson<JobRecord>(baseUrl, "/lyrics-analysis/line-jobs", {
+    source_path: input.sourcePath,
+    source_fingerprint: input.sourceFingerprint,
+    line: input.line,
+    next_line: input.nextLine,
+    language: input.language,
+    demucs_device: input.demucsDevice,
+    mms_device: input.mmsDevice,
+    expected_line_revision: input.expectedLineRevision,
+    expected_display_element_revision: input.expectedDisplayElementRevision,
+    project_epoch: input.projectEpoch,
+    reanalysis_epoch: input.reanalysisEpoch,
+  });
+}
+
+/** queued/runningの対象行再解析jobを冪等に取り消す。 */
+export function cancelLyricsLineAnalysis(baseUrl: string, jobId: string) {
+  return deleteJson<JobRecord>(baseUrl, `/lyrics-analysis/line-jobs/${encodeURIComponent(jobId)}`);
+}
+
 /** `startSubtitleExport`に対応するバックエンドAPIを呼び出し、開始されたjobを返す。 */
 export function startSubtitleExport(
   baseUrl: string,
@@ -342,16 +452,76 @@ export async function waitForJob<T = unknown>(
   baseUrl: string,
   id: string,
   onUpdate: (job: JobRecord) => void,
-  pollIntervalMilliseconds = 800
+  pollIntervalMilliseconds = 800,
+  signal?: AbortSignal,
 ): Promise<T> {
   for (;;) {
-    const job = await getJson<JobRecord>(baseUrl, `/jobs/${id}`);
+    signal?.throwIfAborted();
+    const job = await getJson<JobRecord>(baseUrl, `/jobs/${id}`, signal);
     onUpdate(job);
     if (job.status === "completed") return job.result as T;
     if (job.status === "failed") throw new Error(job.error || "job failed");
-    if (job.status === "cancelled") throw new Error("job cancelled");
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));
+    if (job.status === "cancelled") throw new DOMException("job cancelled", "AbortError");
+    await abortableDelay(pollIntervalMilliseconds, signal);
   }
+}
+
+/** 指定時間のpoll待機をAbortSignalで中断可能にする。 */
+function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      globalThis.clearTimeout(timeout);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/** 選択Timelineを一つのSRT／LRC／ASS字幕ファイルへ統合して書き出す。 */
+export function exportSubtitleFile(
+  baseUrl: string,
+  sourcePath: string,
+  outputDir: string,
+  videoWidth: number,
+  videoHeight: number,
+  lanes: readonly LyricsLane[],
+  format: SubtitleFileExportFormat,
+) {
+  return postJson<SubtitleFileExportResult>(baseUrl, "/subtitle-files/export", {
+    source_path: sourcePath,
+    output_dir: outputDir,
+    format,
+    play_res_x: videoWidth,
+    play_res_y: videoHeight,
+    lanes: lanes.map((lane) => ({
+      id: lane.id,
+      name: lane.name,
+      style: normalizeSubtitleStyle(lane.style),
+      effect: lane.effect,
+      segments: lane.segments.map((segment) => ({
+        id: segment.id,
+        text: segment.text,
+        start: segment.start,
+        end: segment.end,
+        ...(segment.style_override
+          ? { style_override: normalizeSubtitleStyle(segment.style_override) }
+          : {}),
+        ...(segment.effect_override ? { effect_override: segment.effect_override } : {}),
+        display_elements: (segment.display_elements ?? []).map((element) => ({
+          text: element.text,
+          start: element.start,
+          end: element.end,
+        })),
+      })),
+    })),
+  });
 }
 
 export type { ScratchProxyResult };

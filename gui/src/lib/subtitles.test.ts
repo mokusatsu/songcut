@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SUBTITLE_STYLE,
   addFourBeatSegment,
+  analysisLinesToSegments,
   createLyricsLane,
   labelStackLevels,
   normalizeSubtitleState,
@@ -13,6 +14,7 @@ import {
   validateSubtitleState,
   withSubtitleSegmentStyle,
   type LyricsSegment,
+  type LyricsAnalysisResult,
   type RhythmGridPoint,
 } from "./subtitles";
 import type { SubtitleEffectCatalog } from "./subtitleEffects";
@@ -232,6 +234,147 @@ describe("subtitle effects", () => {
   });
 });
 
+describe("display element schema", () => {
+  it("keeps backend display elements and analysis revisions when creating segments", () => {
+    const element = displayElement("element-1", "歌", 0, 0.45);
+    const result: LyricsAnalysisResult = {
+      title: null,
+      duration: 1,
+      device_used: "cpu",
+      algorithm: "songcut-standard",
+      whisper_text: "歌",
+      tempo_bpm: 0,
+      beat_times: [],
+      rhythm_grid: [],
+      beat_warning: null,
+      confidence_statistics: {
+        count: 1,
+        minimum: 1,
+        maximum: 1,
+        mean: 1,
+        median: 1,
+        q1: 1,
+        q3: 1,
+        lower_outlier_bound: 1,
+        low_outlier_indexes: [],
+      },
+      lines: [{
+        index: 0,
+        text: "歌",
+        start: 0,
+        end: 1,
+        confidence: 0.9,
+        source: "lyrics",
+        matched_characters: 1,
+        exact_characters: 1,
+        total_characters: 1,
+        low_confidence_outlier: false,
+        display_elements: [element, displayElement("element-2", "", 0.45, 1)],
+        display_element_text: "歌",
+        line_revision: 3,
+        display_element_revision: 4,
+        alignment_diagnostics: ["coverage"],
+        needs_reanalysis: false,
+      }],
+      elapsed_seconds: 0.1,
+    };
+
+    const segments = analysisLinesToSegments(result);
+    expect(segments[0]).toMatchObject({
+      line_revision: 3,
+      display_element_revision: 4,
+      display_elements: result.lines[0].display_elements,
+      display_element_text: "歌",
+    });
+    expect(segments[0].display_elements).not.toBe(result.lines[0].display_elements);
+  });
+
+  it("accepts a complete partition and rejects gaps, zero durations, and duplicate IDs", () => {
+    const lane = createLyricsLane();
+    lane.segments = [{
+      ...segment("line", 10, 12),
+      display_elements: [
+        displayElement("element-1", "歌", 10, 11),
+        displayElement("element-2", "", 11, 12),
+      ],
+      line_revision: 1,
+      display_element_revision: 1,
+      display_element_boundary_locked: true,
+      start_locked: false,
+      end_locked: false,
+      alignment_diagnostics: { coverage: 1, accepted: true },
+      needs_reanalysis: false,
+    }];
+    const valid = validateSubtitleState({
+      lanes: [lane],
+      active_lane_id: lane.id,
+      selected_segment_id: lane.segments[0].id,
+      tempo_bpm: 0,
+      beat_times: [],
+      rhythm_grid: [],
+      beat_warning: null,
+      confidence_statistics: null,
+    });
+    expect(valid?.lanes[0].segments[0].display_elements).toHaveLength(2);
+    expect(valid?.lanes[0].segments[0].display_element_boundary_locked).toBe(true);
+
+    const gap = structuredClone(lane);
+    gap.segments[0].display_elements![1].start = 11.1;
+    expect(validateSubtitleState({
+      lanes: [gap], active_lane_id: gap.id, selected_segment_id: null,
+      tempo_bpm: 0, beat_times: [], rhythm_grid: [], beat_warning: null, confidence_statistics: null,
+    })).toBeNull();
+
+    const zero = structuredClone(lane);
+    zero.segments[0].display_elements![0].end = 10;
+    expect(validateSubtitleState({
+      lanes: [zero], active_lane_id: zero.id, selected_segment_id: null,
+      tempo_bpm: 0, beat_times: [], rhythm_grid: [], beat_warning: null, confidence_statistics: null,
+    })).toBeNull();
+
+    const duplicate = structuredClone(lane);
+    duplicate.segments[0].display_elements![1].stable_id = "element-1";
+    expect(validateSubtitleState({
+      lanes: [duplicate], active_lane_id: duplicate.id, selected_segment_id: null,
+      tempo_bpm: 0, beat_times: [], rhythm_grid: [], beat_warning: null, confidence_statistics: null,
+    })).toBeNull();
+
+    const invalidLock = structuredClone(lane) as unknown as {
+      id: string;
+      segments: Array<Record<string, unknown>>;
+    };
+    invalidLock.segments[0].display_element_boundary_locked = "yes";
+    expect(validateSubtitleState({
+      lanes: [invalidLock], active_lane_id: invalidLock.id, selected_segment_id: null,
+      tempo_bpm: 0, beat_times: [], rhythm_grid: [], beat_warning: null, confidence_statistics: null,
+    })).toBeNull();
+  });
+
+  it("preserves artifact metadata while rejecting malformed fingerprints", () => {
+    const lane = createLyricsLane();
+    const artifact = {
+      cache_key: "cache-key",
+      cache_format: "demucs-vocals-wav",
+      source_fingerprint: { algorithm: "sha256-head-tail-1m-v1", value: "a".repeat(64) },
+      demucs_model: "htdemucs",
+      preprocess_version: "v1",
+      sample_rate: 16_000,
+      channels: 1,
+      expires_at: "2026-08-13T00:00:00.000Z",
+    } as const;
+    const value = {
+      lanes: [lane], active_lane_id: lane.id, selected_segment_id: null,
+      tempo_bpm: 0, beat_times: [], rhythm_grid: [], beat_warning: null,
+      confidence_statistics: null, analysis_artifact: artifact,
+    };
+    expect(validateSubtitleState(value)?.analysis_artifact).toEqual(artifact);
+    expect(validateSubtitleState({
+      ...value,
+      analysis_artifact: { ...artifact, source_fingerprint: { ...artifact.source_fingerprint, value: "bad" } },
+    })).toBeNull();
+  });
+});
+
 describe("segment style overrides", () => {
   it("inherits lane settings until a complete custom Style and Effect pair is applied", () => {
     const lane = createLyricsLane();
@@ -319,5 +462,28 @@ function segment(id: string, start: number, end: number): LyricsSegment {
     source: "lyrics",
     low_confidence_outlier: false,
     user_edited: false,
+  };
+}
+
+function displayElement(stableId: string, text: string, start: number, end: number) {
+  return {
+    stable_id: stableId,
+    text,
+    start,
+    end,
+    confidence: 0.9,
+    source: text ? "mms-ctc" as const : "blank" as const,
+    source_start: text ? 0 : 1,
+    source_end: text ? 1 : 1,
+    pronunciation: text ? "ka" : "",
+    token_start: text ? 0 : 1,
+    token_end: text ? 1 : 1,
+    origin_key: stableId,
+    manual_start: false,
+    manual_end: false,
+    manual_structure: false,
+    parent_revision: 1,
+    conflict: null,
+    orphaned_manual: false,
   };
 }

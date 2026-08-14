@@ -118,7 +118,7 @@ describe("Cut operation coordinator", () => {
     };
     const coordinator = createCutOperationCoordinator(() => state, services);
 
-    await coordinator.runAnalysis(true);
+    await coordinator.runAnalysis(true, "confirmed guide");
 
     expect(state.updateTask).toHaveBeenCalledWith("transcription", null);
     expect(state.applyAnalysisResult).toHaveBeenCalledWith(
@@ -130,7 +130,14 @@ describe("Cut operation coordinator", () => {
       state.videoPath,
       [expect.objectContaining({ id: detected.id, checked: true })],
       state.whisperSettings,
-      state.guideText,
+      "confirmed guide",
+    );
+    expect(services.startAnalysis).toHaveBeenCalledWith(
+      state.apiBaseUrl,
+      state.videoPath,
+      "confirmed guide",
+      state.analysisDevice,
+      state.boundaryRefinementSettings,
     );
     expect(state.applyTranscripts).toHaveBeenCalledWith([transcript]);
   });

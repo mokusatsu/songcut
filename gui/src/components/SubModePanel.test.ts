@@ -6,35 +6,37 @@ function source(relativePath: string): string {
 }
 
 const subPanelSource = source("./SubModePanel.tsx");
+const subtitleStyleSource = source("./SubtitleStyleEditor.tsx");
+const subTimelineSource = source("./SubTimelineEditor.tsx");
 const styleSource = source("../styles.css");
 const radixSelectSource = source("./ui/radix-select.tsx");
 const subModeE2eSource = source("../../../packaging/e2e_sub_mode.js");
 
 describe("SCUT-039 subtitle effect settings contract", () => {
   it("keeps type description, duration, and parameters in separate rows", () => {
-    const typeRow = subPanelSource.indexOf('className="subtitle-effect-type-row"');
-    const durationRow = subPanelSource.indexOf('className="subtitle-effect-duration-row"');
-    const parameterGrid = subPanelSource.indexOf('className="subtitle-effect-parameter-grid"');
+    const typeRow = subtitleStyleSource.indexOf('className="subtitle-effect-type-row"');
+    const durationRow = subtitleStyleSource.indexOf('className="subtitle-effect-duration-row"');
+    const parameterGrid = subtitleStyleSource.indexOf('className="subtitle-effect-parameter-grid"');
 
     expect(typeRow).toBeGreaterThanOrEqual(0);
     expect(durationRow).toBeGreaterThan(typeRow);
     expect(parameterGrid).toBeGreaterThan(durationRow);
-    expect(subPanelSource).not.toContain("parameterDescription(");
+    expect(subtitleStyleSource).not.toContain("parameterDescription(");
     expect(styleSource).toContain(".subtitle-effect-type-row");
     expect(styleSource).toContain(".subtitle-effect-duration-row");
     expect(styleSource).toContain(".subtitle-effect-parameter-grid");
   });
 
   it("uses the grouped Radix selector while preserving catalog URLs as button links", () => {
-    expect(subPanelSource).toContain("<RadixSelectGroup");
-    expect(subPanelSource).toContain("<RadixSelectItem");
-    expect(subPanelSource).toContain("onValueChange={(name) => patchEffect");
-    expect(subPanelSource).toContain('className="button button-secondary button-sm subtitle-effect-link"');
-    expect(subPanelSource).toContain("effectDefinition.preview_url");
-    expect(subPanelSource).toContain("effectDefinition.catalog_page_url_en");
-    expect(subPanelSource).toContain("effectDefinition.catalog_page_url_ja");
-    expect(subPanelSource).toContain('className="subtitle-effect-link-actions"');
-    expect(subPanelSource).toContain("data-effect-id={item.effect_id}");
+    expect(subtitleStyleSource).toContain("<RadixSelectGroup");
+    expect(subtitleStyleSource).toContain("<RadixSelectItem");
+    expect(subtitleStyleSource).toContain("onValueChange={(name) => patchEffect");
+    expect(subtitleStyleSource).toContain('className="button button-secondary button-sm subtitle-effect-link"');
+    expect(subtitleStyleSource).toContain("effectDefinition.preview_url");
+    expect(subtitleStyleSource).toContain("effectDefinition.catalog_page_url_en");
+    expect(subtitleStyleSource).toContain("effectDefinition.catalog_page_url_ja");
+    expect(subtitleStyleSource).toContain('className="subtitle-effect-link-actions"');
+    expect(subtitleStyleSource).toContain("data-effect-id={item.effect_id}");
     expect(radixSelectSource).toContain("SelectPrimitive.Viewport");
     expect(radixSelectSource).toContain("SelectPrimitive.ScrollUpButton");
     expect(radixSelectSource).toContain("SelectPrimitive.ScrollDownButton");
@@ -49,10 +51,10 @@ describe("SCUT-039 subtitle effect settings contract", () => {
   });
 
   it("keeps the editable color value alongside the picker without fixed overflow", () => {
-    expect(subPanelSource).toContain('type="color"');
-    expect(subPanelSource).toContain('type="text"');
-    expect(subPanelSource).toContain('aria-label={tr("sub.bold")}');
-    expect(subPanelSource).toContain('aria-label={tr("sub.italic")}');
+    expect(subtitleStyleSource).toContain('type="color"');
+    expect(subtitleStyleSource).toContain('type="text"');
+    expect(subtitleStyleSource).toContain('aria-label={tr("sub.bold")}');
+    expect(subtitleStyleSource).toContain('aria-label={tr("sub.italic")}');
     expect(styleSource).toContain(".color-control .input[type=\"text\"]");
     expect(styleSource).toContain("width: 88px;");
     expect(styleSource).toContain("height: auto;");
@@ -81,5 +83,31 @@ describe("SCUT-039 subtitle effect settings contract", () => {
     expect(subPanelSource).toContain('viewportClassName="subtitle-style-scroll-viewport"');
     expect(subPanelSource).toContain('scrollbars={["vertical"]}');
     expect(subPanelSource).toContain('type="always"');
+  });
+
+  it("removes the segment timing dialog and double-click launch route", () => {
+    expect(subPanelSource).not.toContain("SegmentTimingDialog");
+    expect(subPanelSource).not.toContain("onEditTiming");
+    expect(subTimelineSource).not.toContain("onEditTiming");
+  });
+
+  it("lays out Saved Styles as two full-width operation rows", () => {
+    expect(subtitleStyleSource.match(/className="subtitle-style-preset-row"/g) ?? []).toHaveLength(2);
+    expect(styleSource).toMatch(
+      /\.subtitle-style-presets\s*\{\s*grid-template-columns: minmax\(0, 1fr\);/,
+    );
+    expect(styleSource).toMatch(
+      /\.subtitle-style-preset-row\s*\{[\s\S]*?width: 100%;/,
+    );
+  });
+
+  it("places Export Sub immediately after the built-in subtitle export action", () => {
+    const builtInExport = subPanelSource.indexOf("exportAction={{");
+    const fileExport = subPanelSource.indexOf("<FileOutput");
+
+    expect(subPanelSource).toContain("SubtitleFileExportDialog");
+    expect(subPanelSource).toContain("exportSubtitleFile:");
+    expect(builtInExport).toBeGreaterThanOrEqual(0);
+    expect(fileExport).toBeGreaterThan(builtInExport);
   });
 });

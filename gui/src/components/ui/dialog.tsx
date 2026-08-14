@@ -1,4 +1,4 @@
-import { useRef, type PropsWithChildren } from "react";
+import { useRef, type PropsWithChildren, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "./button";
 import { NormalFocusScope, useDialogFocus } from "./editor-focus";
@@ -10,13 +10,14 @@ type DialogProps = PropsWithChildren<{
   title: string;
   onClose: () => void;
   className?: string;
+  initialFocusRef?: RefObject<HTMLElement>;
 }>;
 
 /** `Dialog`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
-export function Dialog({ open, title, onClose, className, children }: DialogProps) {
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
-  useDialogFocus({ open, dialogRef, initialFocusRef: closeButtonRef });
+export function Dialog({ open, title, onClose, className, initialFocusRef, children }: DialogProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  useDialogFocus({ open, dialogRef, initialFocusRef: initialFocusRef ?? closeButtonRef });
 
   if (!open) return null;
   return createPortal(

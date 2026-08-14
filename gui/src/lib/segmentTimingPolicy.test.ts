@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createSegmentStyleDraft, evaluateSegmentTiming } from "@/components/SegmentTimingDialog";
 import { createCutBoundaryPolicy } from "@/lib/boundaries";
+import { createSegmentStyleDraft, evaluateSegmentTiming } from "@/lib/segmentTiming";
 import {
   DEFAULT_SUBTITLE_STYLE,
   createSubtitleBoundaryPolicy,
@@ -113,7 +113,7 @@ describe("segment timing policy", () => {
   });
 });
 
-describe("Sub segment style dialog draft", () => {
+describe("Sub segment style inspector draft", () => {
   const target = { id: "segment", start: 1, end: 2 };
 
   it("starts an inherited segment from the current timeline settings", () => {

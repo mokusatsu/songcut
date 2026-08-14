@@ -8,7 +8,7 @@ import tempfile
 import win_safesubprocess as subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Literal, Mapping, Sequence
 
 from ass_lyric_effects import (
     CONTEXT_REQUIRED_EFFECTS,
@@ -58,6 +58,22 @@ class SubtitleSegment:
 
 
 @dataclass(frozen=True)
+class SubtitleDisplayElement:
+    """LRCへ出力する表示素の本文と絶対タイミングを保持する。"""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
+class SubtitleFileSegment(SubtitleSegment):
+    """字幕ファイル出力時だけ必要な表示素タイミングを持つ字幕行。"""
+
+    display_elements: tuple[SubtitleDisplayElement, ...] = ()
+
+
+@dataclass(frozen=True)
 class SubtitleEffect:
     name: str = Effect.CUT.value
     start_duration_ms: int = DEFAULT_EFFECT_DURATION_MS
@@ -101,6 +117,87 @@ def render_lane_srt(segments: Sequence[SubtitleSegment]) -> str:
         for index, segment in enumerate(sorted(segments, key=lambda item: (item.start, item.end)), start=1)
     ]
     return "\n\n".join(blocks) + ("\n" if blocks else "")
+
+
+def render_merged_srt(lanes: Sequence[SubtitleLane]) -> str:
+    """選択Timelineの全字幕行を時刻順の単一SRTへ統合する。"""
+
+    return render_lane_srt([segment for lane in lanes for segment in lane.segments])
+
+
+def format_lrc_timestamp(seconds: float) -> str:
+    """秒をLRCのcentisecond時刻表記へ丸めて整形する。"""
+
+    centiseconds = max(0, int(math.floor(float(seconds) * 100 + 0.5)))
+    minutes, remainder = divmod(centiseconds, 6000)
+    whole_seconds, hundredths = divmod(remainder, 100)
+    return f"{minutes:02d}:{whole_seconds:02d}.{hundredths:02d}"
+
+
+def render_lrc_document(lanes: Sequence[SubtitleLane]) -> str:
+    """選択Timelineを表示素タイミング付きの単一LRCへ統合する。"""
+
+    ordered_segments = sorted(
+        (
+            (lane_index, segment_index, segment)
+            for lane_index, lane in enumerate(lanes)
+            for segment_index, segment in enumerate(lane.segments)
+        ),
+        key=lambda item: (item[2].start, item[2].end, item[0], item[1], item[2].id),
+    )
+    lines: list[str] = []
+    for _lane_index, _segment_index, segment in ordered_segments:
+        elements = _lrc_display_elements(segment)
+        body = "".join(
+            f"<{format_lrc_timestamp(element.start)}>{element.text}"
+            for element in elements
+        )
+        lines.append(
+            f"[{format_lrc_timestamp(segment.start)}]{body}<{format_lrc_timestamp(segment.end)}>"
+        )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def export_subtitle_file(
+    source: Path,
+    output_dir: Path,
+    lanes: Sequence[SubtitleLane],
+    *,
+    export_format: Literal["srt", "lrc", "ass"],
+    play_res_x: int,
+    play_res_y: int,
+) -> dict[str, str]:
+    """選択Timelineを一つの字幕ファイルへ書き出す。"""
+
+    active_lanes = [lane for lane in lanes if lane.segments]
+    if not active_lanes:
+        raise ValueError("at least one non-empty subtitle lane is required")
+    if export_format == "srt":
+        text = render_merged_srt(active_lanes)
+    elif export_format == "lrc":
+        text = render_lrc_document(active_lanes)
+    elif export_format == "ass":
+        text = render_ass_document(
+            active_lanes,
+            play_res_x=play_res_x,
+            play_res_y=play_res_y,
+            apply_effects=True,
+        )
+    else:  # Defensive guard for callers outside the validated REST request.
+        raise ValueError(f"unsupported subtitle export format: {export_format}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_stem = safe_filename_stem(source.stem, fallback="video")
+    target = output_dir / f"{source_stem}-subtitles.{export_format}"
+    target.write_text(text, encoding="utf-8-sig", newline="\n")
+    return {"file": str(target), "format": export_format, "output_dir": str(output_dir)}
+
+
+def _lrc_display_elements(segment: SubtitleSegment) -> tuple[SubtitleDisplayElement, ...]:
+    """未解析行を一つの表示素としてLRCへ安全にフォールバックする。"""
+
+    if isinstance(segment, SubtitleFileSegment) and segment.display_elements:
+        return tuple(sorted(segment.display_elements, key=lambda item: (item.start, item.end)))
+    return (SubtitleDisplayElement(text=segment.text, start=segment.start, end=segment.end),)
 
 
 def render_srt_style_document(

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
+  ChevronLeft,
+  ChevronRight,
   FileVideo2,
   FolderOpen,
 } from "lucide-react";
@@ -9,20 +11,70 @@ import { Dialog } from "@/components/ui/dialog";
 import { clamp, formatTime } from "@/lib/time";
 import {
   cancelScratchProxy,
+  cancelLyricsLineAnalysis,
   checkFfmpeg,
+  exportSubtitleFile,
   getExportPlan,
   probeVideo,
   releaseScratchProxy,
   startScratchProxy,
+  startLyricsLineAnalysis,
   waitForJob
 } from "@/lib/api";
-import type { AnalysisDevice, WhisperSettings } from "@/lib/api";
+import type {
+  AnalysisDevice,
+  LyricsLineAnalysisInput,
+  LyricsLineAnalysisResult,
+  WhisperSettings,
+} from "@/lib/api";
+import type { SubtitleFileExportFormat } from "@/lib/subtitleFileExport";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
-import { MEDIA_ERR_DECODE, planVideoDecodeRecovery, type VideoDecodeRecovery } from "@/lib/mediaDecodeRecovery";
 import { CutModePanel } from "@/components/CutModePanel";
-import { CutSegmentTimingDialog } from "@/components/CutSegmentTimingDialog";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
+import { SubVideoPreview } from "@/components/SubVideoPreview";
+import { DisplayElementZoomDialog, displayElementZoomRange } from "@/components/DisplayElementZoomDialog";
+import { SegmentInspector } from "@/components/SegmentInspector";
+import { SubSegmentStyleInspector } from "@/components/SubSegmentStyleInspector";
+import {
+  SubTimelineMoveInspector,
+  type SubTimelineMoveOption,
+} from "@/components/SubTimelineMoveInspector";
+import {
+  retimeDisplayElementsForLine,
+  retimeSegmentForLineBoundaryPreview,
+  type DisplayElementUpdate,
+} from "@/lib/displayElements";
+import {
+  createDisplayElementZoomSession,
+  displayElementZoomSessionIsValid,
+  resolveDisplayElementZoomTarget,
+  updateDisplayElementZoomSessionRevision,
+  type DisplayElementZoomSession,
+} from "@/lib/displayElementZoomSession";
+import {
+  closeDisplayElementZoomPlayback,
+  openDisplayElementZoomPlayback,
+  seekDisplayElementZoomPlayback,
+  toggleDisplayElementZoomPlayback as toggleDisplayElementZoomMedia,
+} from "@/lib/displayElementZoomPlayback";
+import {
+  LineReanalysisCoordinator,
+  type LineReanalysisState,
+  type LineReanalysisStatus,
+  type ScheduledLineReanalysis,
+} from "@/lib/lineReanalysisCoordinator";
+import {
+  reconcileSegmentSelection,
+  resolveSegmentSelection,
+  type SegmentSelectionModifiers,
+} from "@/lib/segmentSelection";
+import {
+  moveSubtitleSegments,
+  removeSubtitleSegments,
+  selectedSubtitleSegments,
+} from "@/lib/subtitleLaneOperations";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EditorFocusProvider, useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import {
@@ -53,6 +105,13 @@ import type {
 import { useProjectPersistence } from "@/lib/useProjectPersistence";
 import { applyFilenameTemplate, DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
+import { MediaPlaybackCoordinator } from "@/lib/mediaPlaybackCoordinator";
+import { MEDIA_ERR_DECODE, planVideoDecodeRecovery, type VideoDecodeRecovery } from "@/lib/mediaDecodeRecovery";
+import {
+  logMediaDiagnostic,
+  type MediaDiagnosticDetails,
+  type MediaDiagnosticTarget
+} from "@/lib/mediaDiagnostics";
 import { createPendingTask, failTask, useTaskRegistry } from "@/lib/useTaskRegistry";
 import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
 import { useModeOperations } from "@/lib/useModeOperations";
@@ -65,17 +124,20 @@ import {
   ExportProgressDialog,
   FfmpegCheckDialog,
   FFMPEG_DOWNLOAD_URL,
-  jobKindLabel,
   ModelDownloadProgressDialog,
   OutputDialog,
   SegmentManagementDialog,
-  TaskStatusPanel,
   TimestampCommentDialogs,
   WhisperDownloadProgressDialog,
   type ExportPlanState,
   type OutputItem,
   type SegmentManagementReview,
 } from "@/components/AppDialogs";
+import {
+  jobKindLabel,
+  ProjectInformation,
+  type TaskStatusMetaItem,
+} from "@/components/ProjectInformation";
 import {
   selectScratchPreviewSource,
   shouldCreateScratchProxy
@@ -124,13 +186,16 @@ import {
   readModePreferences,
   readScratchAudioProxyEnabled as readStoredScratchAudioProxyEnabled,
   readScratchPreviewMilliseconds as readStoredScratchPreviewMilliseconds,
+  readSubPreviewVisibility,
   readVideoSplitPercent as readStoredVideoSplitPercent,
   writeBoundaryNudgeSecondsInput,
   writeBoundarySecondsInput,
   writeCreateSourceFolder,
   writeScratchAudioProxyEnabled,
   writeScratchPreviewMilliseconds,
+  writeSubPreviewVisibility,
   writeVideoSplitPercent,
+  type SubPreviewVisibility,
 } from "@/lib/settingsScopes";
 import {
   applyTimestampCommentToGuide,
@@ -162,10 +227,24 @@ import {
   createDefaultSubtitleState,
   normalizeSubtitleState,
   nudgeSegmentBoundary,
+  selectedSubtitleSegment as findSelectedSubtitleSegment,
   updateSegmentBoundary,
+  withSubtitleSegmentStyle,
+  type LyricsLane,
+  type DisplayElement,
   type LyricsSegment,
   type SubtitleProjectState,
 } from "@/lib/subtitles";
+import { formatTimeInput } from "@/lib/segmentTiming";
+import {
+  beginPlaybackRange,
+  cancelPlaybackRange,
+  createPlaybackRangeState,
+  preservePlaybackRangeOnPause,
+  resolvePlaybackRangeTime,
+  setPlaybackRangeLoop,
+} from "@/lib/playbackRange";
+import type { SubtitleEffectSettings } from "@/lib/subtitleEffects";
 import type {
   AnalysisResult,
   ExportCandidate,
@@ -189,6 +268,11 @@ function listSystemFonts() {
   return window.songcut.listSystemFonts();
 }
 
+/** 二つの文字列集合が同じ要素を持つか判定する。 */
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
 type RelinkConflict = {
   selectedPath: string;
   identity: SourceIdentity;
@@ -197,6 +281,13 @@ type RelinkConflict = {
   existing: ProjectOpenResult | null;
   damaged: boolean;
 };
+
+type AppLineReanalysisPayload = Omit<
+  LyricsLineAnalysisInput,
+  "expectedLineRevision" | "expectedDisplayElementRevision" | "projectEpoch" | "reanalysisEpoch"
+> & { laneId: string };
+
+type LineReanalysisStatusView = { status: LineReanalysisStatus; error?: string };
 
 type SwitchSaveFailure = {
   target: { kind: "video" | "project"; path: string };
@@ -212,6 +303,7 @@ export default function App(props: {
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoDecodeRecoveryRef = useRef<VideoDecodeRecovery | null>(null);
   const videoDecodeRecoveryAttemptRef = useRef<number | null>(null);
+  const videoPlaybackIntentRef = useRef(false);
   const [mode, setMode] = useState<AppMode>("cut");
   const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
   const subtitleStateRef = useRef<SubtitleProjectState>(subtitleState);
@@ -219,17 +311,22 @@ export default function App(props: {
   const [localePreference, setLocalePreference] = useState<UiLanguagePreference>(props.initialLocaleSettings.preference);
   const [localeRestartRequired, setLocaleRestartRequired] = useState(false);
   const scratchProxyAudioRef = useRef<HTMLAudioElement>(null);
-  const playbackStopAtRef = useRef<number | null>(null);
+  const playbackRangeRef = useRef(createPlaybackRangeState());
+  const displayElementZoomTokenRef = useRef(0);
+  const displayElementZoomSessionRef = useRef<DisplayElementZoomSession | null>(null);
   const scratchPreviewTimeRef = useRef<number | null>(null);
   const scratchPreviewTimerRef = useRef<number | null>(null);
   const scratchPreviewGenerationRef = useRef(0);
   const scratchPreviewMediaRef = useRef<HTMLMediaElement | null>(null);
+  const mediaPlaybackCoordinatorRef = useRef<MediaPlaybackCoordinator | null>(null);
+  if (mediaPlaybackCoordinatorRef.current === null) {
+    mediaPlaybackCoordinatorRef.current = new MediaPlaybackCoordinator();
+  }
   const scratchProxyReadyRef = useRef(false);
   const scratchProxyJobIdRef = useRef<string | null>(null);
   const scratchProxyIdRef = useRef<string | null>(null);
   const scratchProxyConfigurationGenerationRef = useRef(0);
   const videoLoadGenerationRef = useRef(0);
-  const videoPlaybackIntentRef = useRef(false);
   const scratchAudioProxyEnabledRef = useRef(true);
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
@@ -237,6 +334,15 @@ export default function App(props: {
   const projectBaseRef = useRef<ProjectDocumentV1 | null>(null);
   const videoPathRef = useRef("");
   const projectReadOnlyRef = useRef(false);
+  const apiBaseUrlRef = useRef("");
+  const whisperSettingsRef = useRef<WhisperSettings>({ ...DEFAULT_WHISPER_SETTINGS });
+  const lineReanalysisProjectEpochRef = useRef(0);
+  const lineReanalysisProjectIdentityRef = useRef<string | null>(null);
+  const lineReanalysisMessagesRef = useRef(new Map<string, string>());
+  const lineReanalysisCoordinatorRef = useRef<LineReanalysisCoordinator<
+    AppLineReanalysisPayload,
+    LyricsLineAnalysisResult
+  > | null>(null);
   const recoveryCheckedRef = useRef(false);
   const taskRegistry = useTaskRegistry();
   const [waveformSessionCache] = useState(() => createWaveformSessionCache());
@@ -247,12 +353,19 @@ export default function App(props: {
   const [videoElementGeneration, setVideoElementGeneration] = useState(0);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [guideText, setGuideText] = useState("");
+  const pendingCutAnalysisGuideTextRef = useRef<string | null>(null);
   const [timestampCommentFlow, setTimestampCommentFlow] = useState<TimestampCommentFlow>(closeTimestampCommentFlow);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [exportCandidates, setExportCandidates] = useState<ExportCandidate[]>([]);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
-  const [cutTimingSegmentId, setCutTimingSegmentId] = useState<string | null>(null);
+  const [selectedCutSegmentIds, setSelectedCutSegmentIds] = useState<Set<string>>(() => new Set());
+  const [selectedSubtitleSegmentIds, setSelectedSubtitleSegmentIds] = useState<Set<string>>(() => new Set());
+  const [displayElementZoomSession, setDisplayElementZoomSession] = useState<DisplayElementZoomSession | null>(null);
+  const [displayElementZoomLoop, setDisplayElementZoomLoop] = useState(false);
+  const [segmentInspectorCollapsed, setSegmentInspectorCollapsed] = useState(false);
+  const [inspectorFonts, setInspectorFonts] = useState<string[] | null>(null);
+  const [inspectorFontError, setInspectorFontError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [boundarySecondsInput, setBoundarySecondsInput] = useState(readBoundarySecondsInput);
@@ -262,13 +375,14 @@ export default function App(props: {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [videoDecodeErrorOpen, setVideoDecodeErrorOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("common");
+  const [videoDecodeErrorOpen, setVideoDecodeErrorOpen] = useState(false);
   const [boundaryDiagnosticOpen, setBoundaryDiagnosticOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
   const [scratchProxyState, setScratchProxyState] = useState<ScratchProxyState>("idle");
   const [zoomIndex, setZoomIndex] = useState(0);
   const [waveformDisplayModes, setWaveformDisplayModes] = useState<WaveformDisplayModes>(readStoredWaveformDisplayModes);
+  const [subPreviewVisibility, setSubPreviewVisibility] = useState<SubPreviewVisibility>(readStoredSubPreviewVisibility);
   const [cutWaveformAmplitudeProfile, setCutWaveformAmplitudeProfile] =
     useState<CutWaveformAmplitudeProfile>(readStoredCutWaveformAmplitudeProfile);
   const [segmentFocusRequest, setSegmentFocusRequest] = useState(0);
@@ -306,6 +420,7 @@ export default function App(props: {
   const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
   const [filenameTemplate, setFilenameTemplate] = useState(DEFAULT_FILENAME_TEMPLATE);
   const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
+  const [lineReanalysisStatuses, setLineReanalysisStatuses] = useState<Record<string, LineReanalysisStatusView>>({});
 
   const {
     whisperStatus,
@@ -333,6 +448,8 @@ export default function App(props: {
   projectBaseRef.current = projectBase;
   videoPathRef.current = videoPath;
   projectReadOnlyRef.current = projectReadOnly;
+  apiBaseUrlRef.current = apiBaseUrl;
+  whisperSettingsRef.current = whisperSettings;
   const progressiveWaveform = useProgressiveWaveform(
     apiBaseUrl,
     (nextJob) => taskRegistry.updateTask("waveform", nextJob),
@@ -353,9 +470,17 @@ export default function App(props: {
     () => segments.find((segment) => segment.id === selectedSegmentId) ?? segments[0] ?? null,
     [segments, selectedSegmentId]
   );
-  const cutTimingSegment = useMemo(
-    () => segments.find((segment) => segment.id === cutTimingSegmentId) ?? null,
-    [cutTimingSegmentId, segments],
+  const inspectorCutSegment = useMemo(
+    () => selectedSegmentId ? segments.find((segment) => segment.id === selectedSegmentId) ?? null : null,
+    [segments, selectedSegmentId],
+  );
+  const selectedCutSegments = useMemo(
+    () => segments.filter((segment) => selectedCutSegmentIds.has(segment.id)),
+    [segments, selectedCutSegmentIds],
+  );
+  const visibleCutSelectedIds = useMemo(
+    () => new Set(selectedCutSegments.map((segment) => segment.id)),
+    [selectedCutSegments],
   );
   const selectedSegmentIndex = selectedSegment ? segments.findIndex((segment) => segment.id === selectedSegment.id) : -1;
   const selectedBoundaryDiagnostic = useMemo(() => {
@@ -379,6 +504,21 @@ export default function App(props: {
   const selectedSubtitleIndex = activeSubtitleSegments.findIndex(
     (segment) => segment.id === subtitleState.selected_segment_id
   );
+  const inspectorSubtitleSelection = findSelectedSubtitleSegment(subtitleState);
+  const selectedSubtitleItems = useMemo(
+    () => selectedSubtitleSegments(subtitleState, selectedSubtitleSegmentIds),
+    [selectedSubtitleSegmentIds, subtitleState],
+  );
+  const visibleSubtitleSelectedIds = useMemo(
+    () => new Set(selectedSubtitleItems.map(({ segment }) => segment.id)),
+    [selectedSubtitleItems],
+  );
+  const orderedSubtitleSegmentIds = useMemo(
+    () => subtitleState.lanes.flatMap((lane) => [...lane.segments]
+      .sort((left, right) => left.start - right.start || left.end - right.end || left.id.localeCompare(right.id))
+      .map((segment) => segment.id)),
+    [subtitleState.lanes],
+  );
   const subtitleSegmentCount = subtitleState.lanes.reduce((count, lane) => count + lane.segments.length, 0);
   const visibleTranscriptSegment = useMemo(
     () => (transcriptSegment ? segments.find((segment) => segment.id === transcriptSegment.id) ?? transcriptSegment : null),
@@ -388,6 +528,94 @@ export default function App(props: {
     () => applyFilenameTemplate(buildBaseOutputItems().filter((item) => item.checked), filenameTemplate),
     [segments, exportCandidates, filenameTemplate]
   );
+
+  const reportMediaDiagnostic = useCallback(
+    (target: MediaDiagnosticTarget, event: string, media: HTMLMediaElement, details: MediaDiagnosticDetails = {}) => {
+      logMediaDiagnostic(target, event, media, details);
+    },
+    []
+  );
+
+  useEffect(() => {
+    const registrations: Array<{ target: MediaDiagnosticTarget; media: HTMLMediaElement | null }> = [
+      { target: "video", media: videoRef.current },
+      { target: "scratch-proxy-audio", media: scratchProxyAudioRef.current }
+    ];
+    const eventNames = [
+      "loadedmetadata",
+      "canplay",
+      "play",
+      "playing",
+      "pause",
+      "waiting",
+      "stalled",
+      "seeking",
+      "seeked",
+      "ended",
+      "error",
+      "abort",
+      "emptied"
+    ];
+    const cleanups: Array<() => void> = [];
+
+    for (const { target, media } of registrations) {
+      if (!media) continue;
+      reportMediaDiagnostic(target, "diagnostic-attached", media);
+      const listener = (event: Event) => reportMediaDiagnostic(target, event.type, media);
+      for (const eventName of eventNames) media.addEventListener(eventName, listener);
+      cleanups.push(() => {
+        for (const eventName of eventNames) media.removeEventListener(eventName, listener);
+      });
+    }
+
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [reportMediaDiagnostic, videoUrl]);
+
+  useEffect(() => {
+    setSelectedCutSegmentIds((current) => {
+      if (!selectedSegmentId || !segments.some((segment) => segment.id === selectedSegmentId)) {
+        return current.size ? new Set() : current;
+      }
+      if (!current.has(selectedSegmentId)) return new Set([selectedSegmentId]);
+      const reconciled = reconcileSegmentSelection({
+        orderedIds: segments.map((segment) => segment.id),
+        selectedIds: current,
+        primaryId: selectedSegmentId,
+      }).selectedIds;
+      return sameStringSet(current, reconciled) ? current : reconciled;
+    });
+  }, [segments, selectedSegmentId]);
+
+  useEffect(() => {
+    setSelectedSubtitleSegmentIds((current) => {
+      const primaryId = subtitleState.selected_segment_id;
+      if (!primaryId || !orderedSubtitleSegmentIds.includes(primaryId)) {
+        return current.size ? new Set() : current;
+      }
+      if (!current.has(primaryId)) return new Set([primaryId]);
+      const reconciled = reconcileSegmentSelection({
+        orderedIds: orderedSubtitleSegmentIds,
+        selectedIds: current,
+        primaryId,
+      }).selectedIds;
+      return sameStringSet(current, reconciled) ? current : reconciled;
+    });
+  }, [orderedSubtitleSegmentIds, subtitleState.selected_segment_id]);
+
+  useEffect(() => {
+    if (!selectedSubtitleItems.length || inspectorFonts || inspectorFontError) return;
+    let cancelled = false;
+    listSystemFonts()
+      .then((fonts) => {
+        if (!cancelled) setInspectorFonts(fonts);
+      })
+      .catch((error) => {
+        if (!cancelled) setInspectorFontError(String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [inspectorFontError, inspectorFonts, selectedSubtitleItems.length]);
   /** `openOutputReview`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
   function openOutputReview() {
     setExportPlanState({ status: "idle", plan: null, error: null });
@@ -497,8 +725,9 @@ export default function App(props: {
   const whisperBusy = taskRegistry.runningTasks.some((task) =>
     ["analysis", "lyrics-analysis", "transcription", "export", "subtitle-export", "download-whisper", "download-demucs", "download-mms"].includes(task.kind)
   );
-  const taskStatus = (
-    <TaskStatusPanel
+  const renderTaskStatus = (modeMeta?: TaskStatusMetaItem[]) => (
+    <ProjectInformation
+      mode={mode}
       runningTasks={taskRegistry.runningTaskEntries}
       failedTasks={taskRegistry.failedTaskEntries}
       latestTerminalTask={taskRegistry.latestTerminalTask}
@@ -507,6 +736,7 @@ export default function App(props: {
       scratchProxyState={scratchProxyState}
       waveformPhase={progressiveWaveform.phase}
       waveformProgress={progressiveWaveform.progress}
+      modeMeta={modeMeta}
       onDismiss={(slot) => taskRegistry.updateTask(slot, null)}
       onWaveformRetry={
         sourceAvailable && videoPath && progressiveWaveform.phase === "failed"
@@ -532,6 +762,212 @@ export default function App(props: {
     if (projectBase && !projectReadOnly) setProjectRevision((revision) => revision + 1);
   }
 
+  if (!lineReanalysisCoordinatorRef.current) {
+    lineReanalysisCoordinatorRef.current = new LineReanalysisCoordinator({
+      capture: captureLineReanalysis,
+      start: async (snapshot, context) => {
+        const baseUrl = apiBaseUrlRef.current;
+        if (!baseUrl) throw new Error("Lyrics line analysis API is unavailable.");
+        const job = await startLyricsLineAnalysis(baseUrl, {
+          ...snapshot.payload,
+          expectedLineRevision: snapshot.lineRevision,
+          expectedDisplayElementRevision: snapshot.displayElementRevision,
+          projectEpoch: snapshot.projectEpoch,
+          reanalysisEpoch: snapshot.reanalysisEpoch,
+        });
+        context.registerJobId(job.id);
+        const result = await waitForJob<LyricsLineAnalysisResult>(
+          baseUrl,
+          job.id,
+          () => undefined,
+          800,
+          context.signal,
+        );
+        return {
+          projectEpoch: result.project_epoch,
+          rowId: result.line_id,
+          lineRevision: result.line_revision,
+          displayElementRevision: result.display_element_revision,
+          reanalysisEpoch: result.reanalysis_epoch,
+          value: result,
+        };
+      },
+      cancelJob: (jobId) => cancelLyricsLineAnalysis(apiBaseUrlRef.current, jobId),
+      apply: applyLineReanalysisResult,
+      onStatus: (rowId, status, error) => {
+        const detail = error ?? lineReanalysisMessagesRef.current.get(rowId);
+        setLineReanalysisStatuses((current) => {
+          if (status === "idle") {
+            const { [rowId]: _removed, ...rest } = current;
+            return rest;
+          }
+          return { ...current, [rowId]: { status, ...(detail ? { error: detail } : {}) } };
+        });
+      },
+    });
+  }
+  const lineReanalysisCoordinator = lineReanalysisCoordinatorRef.current;
+
+  const lineReanalysisProjectIdentity = `${projectPath}\u0000${projectBase?.source.fingerprint.value ?? ""}`;
+  useEffect(() => {
+    const previous = lineReanalysisProjectIdentityRef.current;
+    lineReanalysisProjectIdentityRef.current = lineReanalysisProjectIdentity;
+    if (previous === null || previous === lineReanalysisProjectIdentity) return;
+    lineReanalysisProjectEpochRef.current += 1;
+    lineReanalysisCoordinator.cancelAll();
+    lineReanalysisMessagesRef.current.clear();
+    setLineReanalysisStatuses({});
+  }, [lineReanalysisCoordinator, lineReanalysisProjectIdentity]);
+
+  useEffect(() => {
+    const session = displayElementZoomSessionRef.current;
+    if (!session) return;
+    if (!displayElementZoomSessionIsValid(
+      subtitleState,
+      session,
+      lineReanalysisProjectIdentity,
+      lineReanalysisProjectEpochRef.current,
+    )) closeDisplayElementZoom();
+  }, [displayElementZoomSession, lineReanalysisProjectIdentity, subtitleState]);
+
+  useEffect(() => {
+    lineReanalysisCoordinator.retainRows(new Set(
+      subtitleState.lanes.flatMap((lane) => lane.segments.map((segment) => segment.id)),
+    ));
+  }, [lineReanalysisCoordinator, subtitleState.lanes]);
+
+  useEffect(() => () => lineReanalysisCoordinator.dispose(), [lineReanalysisCoordinator]);
+
+  /** Projectまたは音源の切替前に、対象行再解析を一括取消してepochを更新する。 */
+  function beginLineReanalysisProjectChange(nextProjectPath: string, document: ProjectDocumentV1) {
+    lineReanalysisProjectEpochRef.current += 1;
+    lineReanalysisCoordinator.cancelAll();
+    lineReanalysisMessagesRef.current.clear();
+    setLineReanalysisStatuses({});
+    lineReanalysisProjectIdentityRef.current = `${nextProjectPath}\u0000${document.source.fingerprint.value}`;
+  }
+
+  /** 最新Project状態から指定歌詞行の再解析snapshotを構築する。 */
+  function captureLineReanalysis(rowId: string): LineReanalysisState<AppLineReanalysisPayload> | null {
+    const state = subtitleStateRef.current;
+    const project = projectBaseRef.current;
+    const sourcePath = videoPathRef.current;
+    const settings = whisperSettingsRef.current;
+    if (
+      state.analysis_algorithm !== "songcut-standard"
+      || !project
+      || !sourcePath
+      || !apiBaseUrlRef.current
+    ) return null;
+    const lane = state.lanes.find((candidate) => candidate.segments.some((segment) => segment.id === rowId));
+    const segment = lane?.segments.find((candidate) => candidate.id === rowId);
+    if (!lane || !segment || segment.source !== "lyrics") return null;
+    const ordered = [...lane.segments].sort((left, right) => left.start - right.start);
+    const index = ordered.findIndex((candidate) => candidate.id === rowId);
+    const next = ordered.slice(index + 1).find((candidate) => candidate.source === "lyrics" && candidate.confidence >= 0.45);
+    const lineRevision = segment.line_revision ?? 0;
+    const displayElementRevision = segment.display_element_revision ?? 0;
+    return {
+      projectEpoch: lineReanalysisProjectEpochRef.current,
+      rowId,
+      lineRevision,
+      displayElementRevision,
+      needsReanalysis: Boolean(segment.needs_reanalysis),
+      payload: {
+        laneId: lane.id,
+        sourcePath,
+        sourceFingerprint: { ...project.source.fingerprint },
+        line: {
+          id: segment.id,
+          text: segment.text,
+          start: segment.start,
+          end: segment.end,
+          confidence: segment.confidence,
+          alignment_source: segment.user_edited ? "manual" : "whisper-chunk",
+          display_elements: (segment.display_elements ?? []).map((element) => ({ ...element })),
+          display_element_text: segment.display_element_text,
+          line_revision: lineRevision,
+          display_element_revision: displayElementRevision,
+          start_locked: Boolean(segment.start_locked),
+          end_locked: Boolean(segment.end_locked),
+          needs_reanalysis: true,
+        },
+        ...(next ? {
+          nextLine: {
+            text: next.text,
+            start: next.start,
+            end: next.end,
+            confidence: next.confidence,
+            alignment_source: next.user_edited ? "manual" : "whisper-chunk",
+          },
+        } : {}),
+        language: settings.language,
+        demucsDevice: settings.demucsDevice,
+        mmsDevice: settings.mmsDevice,
+      },
+    };
+  }
+
+  /** revisionとepochが一致する対象行へだけ再解析結果を反映する。 */
+  function applyLineReanalysisResult(
+    snapshot: ScheduledLineReanalysis<AppLineReanalysisPayload>,
+    result: LyricsLineAnalysisResult,
+  ): "idle" | "conflict" {
+    if (result.outcome === "conflict" || !result.line) {
+      lineReanalysisMessagesRef.current.set(snapshot.rowId, result.conflict ?? "Manual display element conflict.");
+      return "conflict";
+    }
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((candidate) => candidate.id === snapshot.payload.laneId);
+    const segment = lane?.segments.find((candidate) => candidate.id === snapshot.rowId);
+    if (
+      !lane
+      || !segment
+      || (segment.line_revision ?? 0) !== snapshot.lineRevision
+      || (segment.display_element_revision ?? 0) !== snapshot.displayElementRevision
+    ) {
+      lineReanalysisMessagesRef.current.set(snapshot.rowId, "The lyric line changed before the result was applied.");
+      return "conflict";
+    }
+    const line = result.line;
+    const next: SubtitleProjectState = {
+      ...current,
+      analysis_artifact: {
+        ...result.analysis_artifact,
+        source_fingerprint: { ...result.analysis_artifact.source_fingerprint },
+      },
+      lanes: current.lanes.map((candidate) => candidate.id === lane.id
+        ? {
+            ...candidate,
+            segments: candidate.segments.map((item) => item.id === segment.id
+              ? {
+                  ...item,
+                  text: line.text,
+                  start: line.start,
+                  end: line.end,
+                  confidence: line.confidence,
+                  display_elements: line.display_elements.map((element) => ({ ...element })),
+                  display_element_text: line.display_element_text,
+                  line_revision: line.line_revision,
+                  display_element_revision: line.display_element_revision,
+                  start_locked: line.start_locked,
+                  end_locked: line.end_locked,
+                  alignment_diagnostics: line.alignment_diagnostics,
+                  needs_reanalysis: false,
+                }
+              : item),
+          }
+        : candidate),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    lineReanalysisMessagesRef.current.delete(snapshot.rowId);
+    if (projectBaseRef.current && !projectReadOnlyRef.current) {
+      setProjectRevision((revision) => revision + 1);
+    }
+    return "idle";
+  }
+
   const { cut: cutOperations, sub: subOperations } = useModeOperations({
     runner: {
       updateTask: taskRegistry.updateTask,
@@ -552,7 +988,9 @@ export default function App(props: {
         setAnalysis(result);
         setSegments(nextSegments);
         setExportCandidates(result.export_candidates);
-        setSelectedSegmentId(nextSegments[0]?.id ?? null);
+        const nextSelectedId = nextSegments[0]?.id ?? null;
+        setSelectedSegmentId(nextSelectedId);
+        setSelectedCutSegmentIds(nextSelectedId ? new Set([nextSelectedId]) : new Set());
       },
       applyTranscripts,
       updateProjectOperation: (updater) => setProjectOperation(updater),
@@ -727,6 +1165,7 @@ export default function App(props: {
             return;
           }
           await persistence.clearRecovery();
+          lineReanalysisCoordinator.cancelAll();
           await window.songcut.confirmClose();
         } catch (error) {
           setMessage(`Could not save before closing: ${String(error)}`);
@@ -734,7 +1173,7 @@ export default function App(props: {
         }
       })();
     });
-  }, [persistence.flush, persistence.clearRecovery]);
+  }, [lineReanalysisCoordinator, persistence.flush, persistence.clearRecovery]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -745,12 +1184,18 @@ export default function App(props: {
         setCurrentTime(scratchTime);
         return;
       }
-      const stopAt = playbackStopAtRef.current;
-      if (stopAt !== null && video.currentTime >= stopAt - 0.02) {
-        playbackStopAtRef.current = null;
-        video.pause();
-        video.currentTime = stopAt;
-        setCurrentTime(stopAt);
+      const decision = resolvePlaybackRangeTime(playbackRangeRef.current, video.currentTime);
+      playbackRangeRef.current = decision.state;
+      if (decision.kind === "stop") {
+        pauseMedia(video);
+        video.currentTime = decision.time;
+        setCurrentTime(decision.time);
+        return;
+      }
+      if (decision.kind === "loop") {
+        video.currentTime = decision.time;
+        setCurrentTime(decision.time);
+        void requestMediaPlayback(video, true);
         return;
       }
       setCurrentTime(video.currentTime);
@@ -758,21 +1203,25 @@ export default function App(props: {
     const onPlay = () => {
       videoPlaybackIntentRef.current = true;
       if (scratchPreviewTimeRef.current !== null) {
-        playbackStopAtRef.current = null;
+        playbackRangeRef.current = cancelPlaybackRange(playbackRangeRef.current);
         return;
       }
-      if (playbackStopAtRef.current === null) {
-        playbackStopAtRef.current = segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
+      if (playbackRangeRef.current.session === null) {
+        playbackRangeRef.current = beginPlaybackRange(
+          playbackRangeRef.current,
+          video.currentTime,
+          segmentStopAtForTime(selectedSegmentRef.current, video.currentTime),
+        );
       }
       setPlaying(true);
     };
     const onPause = () => {
-      playbackStopAtRef.current = null;
+      playbackRangeRef.current = preservePlaybackRangeOnPause(playbackRangeRef.current);
       setPlaying(false);
     };
     const onEnded = () => {
       videoPlaybackIntentRef.current = false;
-      playbackStopAtRef.current = null;
+      playbackRangeRef.current = cancelPlaybackRange(playbackRangeRef.current);
       setPlaying(false);
     };
     const onError = () => {
@@ -787,6 +1236,7 @@ export default function App(props: {
         resumePlayback,
       });
       if (recoveryPlan.kind === "ignore") {
+        reportMediaDiagnostic("video", "decode-recovery-skipped", video, { reason: recoveryPlan.reason });
         if (error?.code === MEDIA_ERR_DECODE) setVideoDecodeErrorOpen(true);
         else setMessage(`Playback error: ${error?.message || `media error ${error?.code ?? "unknown"}`}`);
         return;
@@ -794,6 +1244,10 @@ export default function App(props: {
 
       videoDecodeRecoveryAttemptRef.current = recoveryPlan.recovery.sourceLoadGeneration;
       videoDecodeRecoveryRef.current = recoveryPlan.recovery;
+      reportMediaDiagnostic("video", "decode-recovery-request", video, {
+        errorCode: error?.code ?? null,
+        resumePlayback: recoveryPlan.recovery.resumePlayback,
+      });
       scratchPreviewGenerationRef.current += 1;
       if (scratchPreviewTimerRef.current !== null) {
         window.clearTimeout(scratchPreviewTimerRef.current);
@@ -802,9 +1256,9 @@ export default function App(props: {
       scratchPreviewTimeRef.current = null;
       const scratchMedia = scratchPreviewMediaRef.current;
       scratchPreviewMediaRef.current = null;
-      if (scratchMedia && scratchMedia !== video) scratchMedia.pause();
-      video.pause();
-      playbackStopAtRef.current = null;
+      if (scratchMedia && scratchMedia !== video) pauseMedia(scratchMedia);
+      pauseMedia(video);
+      playbackRangeRef.current = cancelPlaybackRange(playbackRangeRef.current);
       setPlaying(false);
       setCurrentTime(recoveryPlan.recovery.restoreTime);
       setVideoDecodeErrorOpen(true);
@@ -829,8 +1283,9 @@ export default function App(props: {
       }
       scratchPreviewGenerationRef.current += 1;
       scratchPreviewTimeRef.current = null;
-      scratchPreviewMediaRef.current?.pause();
+      pauseMedia(scratchPreviewMediaRef.current);
       scratchPreviewMediaRef.current = null;
+      playbackRangeRef.current = cancelPlaybackRange(playbackRangeRef.current);
     };
   }, [videoElementGeneration, videoUrl]);
 
@@ -841,12 +1296,14 @@ export default function App(props: {
 
     const restore = () => {
       if (videoDecodeRecoveryRef.current !== recovery) return;
-      const duration = Number.isFinite(video.duration) ? video.duration : recovery.restoreTime;
-      const restoreTime = Math.max(0, Math.min(recovery.restoreTime, duration));
+      const restoreTime = clampMediaTime(video, recovery.restoreTime);
       video.currentTime = restoreTime;
       setCurrentTime(restoreTime);
+      reportMediaDiagnostic("video", "decode-recovery-rebuilt", video, {
+        resumePlayback: recovery.resumePlayback,
+      });
       videoDecodeRecoveryRef.current = null;
-      if (recovery.resumePlayback) void video.play().catch(() => undefined);
+      if (recovery.resumePlayback) void requestMediaPlayback(video, true);
     };
 
     if (video.readyState >= HTMLMediaElement.HAVE_METADATA) restore();
@@ -936,6 +1393,14 @@ export default function App(props: {
 
     // Cut/Sub projects share the same loaded media and therefore the same scratch
     // audio proxy. Keep that global media task alive while only the sidecar changes.
+    if ((sourcePath ?? "") !== videoPathRef.current) {
+      videoLoadGenerationRef.current += 1;
+      videoDecodeRecoveryRef.current = null;
+      videoDecodeRecoveryAttemptRef.current = null;
+      videoPlaybackIntentRef.current = false;
+      setVideoDecodeErrorOpen(false);
+    }
+    beginLineReanalysisProjectChange(nextProjectPath, document);
     projectBaseRef.current = document;
     videoPathRef.current = sourcePath ?? "";
     projectReadOnlyRef.current = false;
@@ -969,10 +1434,16 @@ export default function App(props: {
     showWaveformForDocument(document, sourcePath);
     setSegments(hydrated.mode === "cut" ? hydrated.segments : []);
     setExportCandidates(hydrated.mode === "cut" ? hydrated.exportCandidates : []);
-    setSelectedSegmentId(
-      hydrated.mode === "cut"
-        ? hydrated.selectedSegmentId ?? hydrated.segments[0]?.id ?? null
-        : null
+    const hydratedCutSelectionId = hydrated.mode === "cut"
+      ? hydrated.selectedSegmentId ?? hydrated.segments[0]?.id ?? null
+      : null;
+    const hydratedSubtitleSelectionId = hydrated.mode === "sub"
+      ? hydrated.subtitle.selected_segment_id
+      : null;
+    setSelectedSegmentId(hydratedCutSelectionId);
+    setSelectedCutSegmentIds(hydratedCutSelectionId ? new Set([hydratedCutSelectionId]) : new Set());
+    setSelectedSubtitleSegmentIds(
+      hydratedSubtitleSelectionId ? new Set([hydratedSubtitleSelectionId]) : new Set(),
     );
     setCurrentTime(hydrated.currentTime);
     setZoomIndex(clamp(hydrated.zoomIndex, 0, zoomLevels.length - 1));
@@ -1028,6 +1499,10 @@ export default function App(props: {
     }
     const generation = videoLoadGenerationRef.current + 1;
     videoLoadGenerationRef.current = generation;
+    videoDecodeRecoveryRef.current = null;
+    videoDecodeRecoveryAttemptRef.current = null;
+    videoPlaybackIntentRef.current = false;
+    setVideoDecodeErrorOpen(false);
     progressiveWaveform.cancel();
     taskRegistry.clearTasks([
       "analysis",
@@ -1073,6 +1548,7 @@ export default function App(props: {
     }
     scratchProxyConfigurationGenerationRef.current += 1;
     void disposeScratchProxy(apiBaseUrl);
+    beginLineReanalysisProjectChange(nextProjectPath, document);
     projectBaseRef.current = document;
     videoPathRef.current = filePath;
     projectReadOnlyRef.current = false;
@@ -1093,6 +1569,8 @@ export default function App(props: {
     setSegments([]);
     setExportCandidates([]);
     setSelectedSegmentId(null);
+    setSelectedCutSegmentIds(new Set());
+    setSelectedSubtitleSegmentIds(new Set());
     setTranscriptSegment(null);
     setSegmentManagementReview(null);
     setCurrentTime(0);
@@ -1362,7 +1840,7 @@ export default function App(props: {
     if (scratchPreviewMediaRef.current === proxyAudio) finishScratchPreview();
     scratchProxyReadyRef.current = false;
     if (proxyAudio) {
-      proxyAudio.pause();
+      pauseMedia(proxyAudio);
       proxyAudio.removeAttribute("src");
       proxyAudio.load();
     }
@@ -1404,17 +1882,29 @@ export default function App(props: {
   }
 
   /** `analyze`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
-  async function analyze() {
+  async function analyze(nextGuideText: string) {
+    pendingCutAnalysisGuideTextRef.current = nextGuideText;
+    if (nextGuideText !== guideText) {
+      setGuideText(nextGuideText);
+      markProjectChanged();
+    }
     if (whisperSettings.enabled && !selectedWhisperModel?.ready) {
       setWhisperPreflightOpen(true);
       return;
     }
-    await runAnalysis(whisperSettings.enabled);
+    await runAnalysis(whisperSettings.enabled, nextGuideText);
   }
 
   /** `runAnalysis`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
-  async function runAnalysis(transcribeAfter: boolean) {
-    await cutModeSession.operations.runAnalysis(transcribeAfter);
+  async function runAnalysis(transcribeAfter: boolean, guideTextOverride?: string) {
+    const guideTextSnapshot = guideTextOverride ?? pendingCutAnalysisGuideTextRef.current ?? guideText;
+    try {
+      await cutModeSession.operations.runAnalysis(transcribeAfter, guideTextSnapshot);
+    } finally {
+      if (pendingCutAnalysisGuideTextRef.current === guideTextSnapshot) {
+        pendingCutAnalysisGuideTextRef.current = null;
+      }
+    }
   }
 
   /** `runTranscription`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
@@ -1466,6 +1956,7 @@ export default function App(props: {
         return;
       }
     }
+    lineReanalysisCoordinator.cancelAll();
     await window.songcut.confirmClose();
   }
 
@@ -1526,6 +2017,210 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** 右インスペクターで確定した時刻を、選択中modeの既存更新経路へ一度だけ適用する。 */
+  function commitInspectorTiming(start: number, end: number) {
+    if (mode === "cut") {
+      const segment = inspectorCutSegment;
+      if (!segment || (segment.start === start && segment.end === end)) return;
+      updateSegment(segment.id, {
+        start,
+        end,
+        duration: end - start,
+        start_timecode: formatTimeInput(start),
+        end_timecode: formatTimeInput(end),
+        user_edited: true,
+      });
+      seek(start);
+      return;
+    }
+
+    const selection = inspectorSubtitleSelection;
+    if (!selection) return;
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((candidate) => candidate.id === selection.laneId);
+    const segment = lane?.segments.find((candidate) => candidate.id === selection.segment.id);
+    if (!lane || !segment) return;
+    if (segment.start === start && segment.end === end) {
+      lineReanalysisCoordinator.exitWithoutChange(segment.id);
+      return;
+    }
+    const retimed = retimeDisplayElementsForLine(segment, start, end);
+    if (retimed === null) {
+      setMessage(tr("segmentInspector.manualBoundaryConflict"));
+      lineReanalysisCoordinator.exitWithoutChange(segment.id);
+      return;
+    }
+    const hasElements = Boolean(segment.display_elements?.length);
+    const displayElementRevision = hasElements ? (segment.display_element_revision ?? 0) + 1 : segment.display_element_revision;
+    const supportsReanalysis = current.analysis_algorithm === "songcut-standard" && segment.source === "lyrics";
+    const next: SubtitleProjectState = {
+      ...current,
+      active_lane_id: lane.id,
+      selected_segment_id: segment.id,
+      lanes: current.lanes.map((candidate) => candidate.id === lane.id
+        ? {
+            ...candidate,
+            segments: candidate.segments.map((item) => item.id === segment.id
+              ? {
+                  ...item,
+                  start,
+                  end,
+                  user_edited: true,
+                  line_revision: (item.line_revision ?? 0) + 1,
+                  start_locked: item.start_locked || start !== item.start,
+                  end_locked: item.end_locked || end !== item.end,
+                  needs_reanalysis: supportsReanalysis ? true : item.needs_reanalysis,
+                  ...(hasElements && displayElementRevision !== undefined ? {
+                    display_element_revision: displayElementRevision,
+                    display_elements: retimed.map((element) => ({
+                      ...element,
+                      parent_revision: displayElementRevision,
+                    })),
+                  } : {}),
+                }
+              : item).sort((left, right) => left.start - right.start),
+          }
+        : candidate),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    markProjectChanged();
+    if (supportsReanalysis) lineReanalysisCoordinator.commit(segment.id);
+    else lineReanalysisCoordinator.exitWithoutChange(segment.id);
+    seek(start);
+  }
+
+  /** 確定した歌詞本文を一度だけ保存し、対象行の再解析を予約する。 */
+  function commitSubtitleText(laneId: string, segmentId: string, originalText: string, text: string) {
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((candidate) => candidate.id === laneId);
+    const segment = lane?.segments.find((candidate) => candidate.id === segmentId);
+    if (!lane || !segment) return;
+    if (text === segment.text || segment.text !== originalText) {
+      lineReanalysisCoordinator.exitWithoutChange(segmentId);
+      return;
+    }
+    const supportsReanalysis = current.analysis_algorithm === "songcut-standard" && segment.source === "lyrics";
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((candidate) => candidate.id === laneId
+        ? {
+            ...candidate,
+            segments: candidate.segments.map((item) => item.id === segmentId
+              ? {
+                  ...item,
+                  text,
+                  user_edited: true,
+                  line_revision: (item.line_revision ?? 0) + 1,
+                  needs_reanalysis: supportsReanalysis ? true : item.needs_reanalysis,
+                }
+              : item),
+          }
+        : candidate),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    markProjectChanged();
+    if (supportsReanalysis) lineReanalysisCoordinator.commit(segmentId);
+    else lineReanalysisCoordinator.exitWithoutChange(segmentId);
+  }
+
+  /** 取消された歌詞行境界編集を開始時snapshotへ復元する。 */
+  function cancelSubtitleBoundaryEdit(laneId: string, segmentId: string, startSegment: LyricsSegment) {
+    const current = subtitleStateRef.current;
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((lane) => lane.id === laneId
+        ? {
+            ...lane,
+            segments: lane.segments.map((segment) => segment.id === segmentId ? startSegment : segment),
+          }
+        : lane),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    lineReanalysisCoordinator.exitWithoutChange(segmentId);
+  }
+
+  /** 有効な歌詞行境界編集を確定し、対象行の再解析を予約する。 */
+  function commitSubtitleBoundaryEdit(laneId: string, segmentId: string, startSegment: LyricsSegment) {
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((candidate) => candidate.id === laneId);
+    const segment = lane?.segments.find((candidate) => candidate.id === segmentId);
+    if (!lane || !segment) return;
+    if (segment.start === startSegment.start && segment.end === startSegment.end) {
+      lineReanalysisCoordinator.exitWithoutChange(segmentId);
+      return;
+    }
+    const retimed = retimeDisplayElementsForLine(startSegment, segment.start, segment.end);
+    if (retimed === null) {
+      setMessage(tr("segmentInspector.manualBoundaryConflict"));
+      cancelSubtitleBoundaryEdit(laneId, segmentId, startSegment);
+      return;
+    }
+    const hasElements = Boolean(startSegment.display_elements?.length);
+    const displayElementRevision = hasElements
+      ? (startSegment.display_element_revision ?? 0) + 1
+      : startSegment.display_element_revision;
+    const supportsReanalysis = current.analysis_algorithm === "songcut-standard" && segment.source === "lyrics";
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((candidate) => candidate.id === laneId
+        ? {
+            ...candidate,
+            segments: candidate.segments.map((item) => item.id === segmentId
+              ? {
+                  ...item,
+                  line_revision: (startSegment.line_revision ?? 0) + 1,
+                  start_locked: startSegment.start_locked || item.start !== startSegment.start,
+                  end_locked: startSegment.end_locked || item.end !== startSegment.end,
+                  needs_reanalysis: supportsReanalysis ? true : item.needs_reanalysis,
+                  ...(hasElements && displayElementRevision !== undefined ? {
+                    display_element_revision: displayElementRevision,
+                    display_elements: retimed.map((element) => ({
+                      ...element,
+                      parent_revision: displayElementRevision,
+                    })),
+                  } : {}),
+                }
+              : item),
+          }
+        : candidate),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    markProjectChanged();
+    if (supportsReanalysis) lineReanalysisCoordinator.commit(segmentId);
+    else lineReanalysisCoordinator.exitWithoutChange(segmentId);
+  }
+
+  /** Subセグメントの継承／独自Styleを対で更新し、片方だけのoverrideを作らない。 */
+  function commitInspectorSubtitleStyle(
+    segmentIds: ReadonlySet<string>,
+    style: LyricsSegment["style_override"],
+    effect: LyricsSegment["effect_override"],
+  ) {
+    const catalog = subtitleEffectCatalogState.catalog;
+    if (!catalog || !segmentIds.size) return;
+    const current = subtitleStateRef.current;
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((lane) =>
+        ({
+          ...lane,
+          segments: lane.segments.map((segment) =>
+            segmentIds.has(segment.id)
+              ? withSubtitleSegmentStyle(segment, style, effect, catalog)
+              : segment
+          ),
+        })
+      ),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    markProjectChanged();
+  }
+
   /** `previewSegmentUpdate`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function previewSegmentUpdate(id: string, patch: Partial<Segment>) {
     setSegments((current) => current.map((segment) => (segment.id === id ? { ...segment, ...patch } : segment)));
@@ -1539,6 +2234,7 @@ export default function App(props: {
     setSegments(next.segments);
     setExportCandidates(next.exportCandidates);
     setSelectedSegmentId(pair.segment.id);
+    setSelectedCutSegmentIds(new Set([pair.segment.id]));
     setSegmentFocusRequest((request) => request + 1);
     seek(pair.segment.start);
     markProjectChanged();
@@ -1553,12 +2249,48 @@ export default function App(props: {
 
   /** `selectSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSubtitleSegment(laneId: string, segment: LyricsSegment) {
-    setSubtitleState((current) => ({
+    const current = subtitleStateRef.current;
+    const next: SubtitleProjectState = {
       ...current,
       active_lane_id: laneId,
       selected_segment_id: segment.id,
-    }));
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    setSelectedSubtitleSegmentIds(new Set([segment.id]));
     focusSubtitleSegment(segment);
+    markProjectChanged();
+  }
+
+  /** modifier付きクリックをSubの複数選択へ反映する。 */
+  function selectSubtitleSegmentWithModifiers(
+    laneId: string,
+    segment: LyricsSegment,
+    modifiers: SegmentSelectionModifiers,
+  ) {
+    const current = subtitleStateRef.current;
+    const orderedIds = current.lanes.flatMap((lane) => [...lane.segments]
+      .sort((left, right) => left.start - right.start || left.end - right.end || left.id.localeCompare(right.id))
+      .map((item) => item.id));
+    const selection = resolveSegmentSelection({
+      orderedIds,
+      selectedIds: selectedSubtitleSegmentIds,
+      primaryId: current.selected_segment_id,
+      targetId: segment.id,
+      modifiers,
+    });
+    const primary = current.lanes
+      .flatMap((lane) => lane.segments.map((item) => ({ laneId: lane.id, segment: item })))
+      .find((item) => item.segment.id === selection.primaryId) ?? null;
+    const next: SubtitleProjectState = {
+      ...current,
+      active_lane_id: primary?.laneId ?? current.active_lane_id,
+      selected_segment_id: selection.primaryId,
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    setSelectedSubtitleSegmentIds(selection.selectedIds);
+    if (primary) focusSubtitleSegment(primary.segment);
     markProjectChanged();
   }
 
@@ -1578,32 +2310,50 @@ export default function App(props: {
           : item
       ),
     }));
+    setSelectedSubtitleSegmentIds(new Set([segment.id]));
     focusSubtitleSegment(segment);
     markProjectChanged();
   }
 
   /** `removeSelectedSubtitleSegment`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
   function removeSelectedSubtitleSegment() {
-    const id = subtitleState.selected_segment_id;
-    if (!id) return;
-    const lane = subtitleState.lanes.find((item) => item.segments.some((segment) => segment.id === id));
-    if (!lane) return;
-    const ordered = [...lane.segments].sort((left, right) => left.start - right.start);
-    const selectedIndex = ordered.findIndex((segment) => segment.id === id);
-    const remaining = ordered.filter((segment) => segment.id !== id);
-    const replacement = remaining[Math.min(Math.max(0, selectedIndex), Math.max(0, remaining.length - 1))] ?? null;
-    setSubtitleState((current) => ({
-      ...current,
-      active_lane_id: lane.id,
-      selected_segment_id: replacement?.id ?? null,
-      lanes: current.lanes.map((lane) => ({
-        ...lane,
-        segments: lane.segments.filter((segment) => segment.id !== id),
-      })),
-    }));
-    if (replacement) focusSubtitleSegment(replacement);
+    const current = subtitleStateRef.current;
+    const fallbackId = current.selected_segment_id;
+    const selectedIds = new Set(
+      [...selectedSubtitleSegmentIds].filter((id) => current.lanes.some((lane) => (
+        lane.segments.some((segment) => segment.id === id)
+      ))),
+    );
+    if (!selectedIds.size && fallbackId) selectedIds.add(fallbackId);
+    if (!selectedIds.size) return;
+    const result = removeSubtitleSegments({ state: current, selectedIds });
+    for (const id of result.removedIds) lineReanalysisCoordinator.remove(id);
+    subtitleStateRef.current = result.state;
+    setSubtitleState(result.state);
+    setSelectedSubtitleSegmentIds(
+      result.replacement ? new Set([result.replacement.segment.id]) : new Set(),
+    );
+    if (result.replacement) focusSubtitleSegment(result.replacement.segment);
     else setSubtitleFocusRequest((request) => request + 1);
     markProjectChanged();
+  }
+
+  /** 選択中Subセグメントを指定Timelineへまとめて移動する。 */
+  function moveSelectedSubtitleSegments(targetLaneId: string) {
+    const current = subtitleStateRef.current;
+    const result = moveSubtitleSegments({
+      state: current,
+      selectedIds: selectedSubtitleSegmentIds,
+      targetLaneId,
+    });
+    if (!result.ok) {
+      setMessage(tr(`segmentInspector.moveReason.${result.reason}`));
+      return;
+    }
+    subtitleStateRef.current = result.state;
+    setSubtitleState(result.state);
+    markProjectChanged();
+    setMessage(tr("segmentInspector.moved", { count: result.movedCount }));
   }
 
   /** `selectAdjacentSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
@@ -1668,16 +2418,21 @@ export default function App(props: {
 
   /** `requestRemoveSelectedSegment`の一連の処理を実行し、進捗・成功・失敗を呼び出し元へ反映する。 */
   function requestRemoveSelectedSegment() {
-    if (!selectedSegmentId) return;
-    const segment = segments.find((item) => item.id === selectedSegmentId);
-    if (!segment) return;
+    const selectedIds = new Set(
+      [...selectedCutSegmentIds].filter((id) => segments.some((segment) => segment.id === id)),
+    );
+    if (!selectedIds.size && selectedSegmentId) selectedIds.add(selectedSegmentId);
+    const targets = segments.filter((segment) => selectedIds.has(segment.id));
+    if (!targets.length) return;
     setSegmentManagementReview({
       kind: "remove",
-      title: tr("segments.removeTitle"),
-      message: tr("segments.removeMessage"),
-      confirmLabel: tr("segments.remove"),
-      segmentIds: [segment.id],
-      items: buildSegmentReviewItems([segment]),
+      title: tr(targets.length === 1 ? "segments.removeTitle" : "segments.removeSelectedTitle"),
+      message: tr(targets.length === 1 ? "segments.removeMessage" : "segments.removeSelectedMessage", {
+        count: targets.length,
+      }),
+      confirmLabel: tr(targets.length === 1 ? "segments.remove" : "segments.removeMany"),
+      segmentIds: targets.map((segment) => segment.id),
+      items: buildSegmentReviewItems(targets),
     });
   }
 
@@ -1740,6 +2495,7 @@ export default function App(props: {
     setSegments(next.segments);
     setExportCandidates(next.exportCandidates);
     setSelectedSegmentId(replacement?.id ?? null);
+    setSelectedCutSegmentIds(replacement ? new Set([replacement.id]) : new Set());
     setSegmentFocusRequest((request) => request + 1);
     if (transcriptSegment && removedIds.has(transcriptSegment.id)) setTranscriptSegment(null);
     if (replacement && selectedSegmentId && removedIds.has(selectedSegmentId)) seek(replacement.start);
@@ -1773,8 +2529,25 @@ export default function App(props: {
   /** `selectSegment`の候補と条件から、利用すべき値または操作を決定する。 */
   function selectSegment(segment: Segment) {
     setSelectedSegmentId(segment.id);
+    setSelectedCutSegmentIds(new Set([segment.id]));
     setSegmentFocusRequest((request) => request + 1);
     seek(segment.start);
+  }
+
+  /** modifier付きクリックをCutの複数選択へ反映する。 */
+  function selectCutSegment(segment: Segment, modifiers: SegmentSelectionModifiers) {
+    const selection = resolveSegmentSelection({
+      orderedIds: segments.map((item) => item.id),
+      selectedIds: selectedCutSegmentIds,
+      primaryId: selectedSegmentId,
+      targetId: segment.id,
+      modifiers,
+    });
+    setSelectedSegmentId(selection.primaryId);
+    setSelectedCutSegmentIds(selection.selectedIds);
+    setSegmentFocusRequest((request) => request + 1);
+    const primary = segments.find((item) => item.id === selection.primaryId);
+    if (primary) seek(primary.start);
   }
 
   /** `selectAdjacentSegment`の候補と条件から、利用すべき値または操作を決定する。 */
@@ -1813,6 +2586,41 @@ export default function App(props: {
     markProjectChanged();
   }
 
+  /** `pauseMedia`の保留再生を無効化し、現在の媒体を停止する。 */
+  function pauseMedia(media: HTMLMediaElement | null | undefined) {
+    if (!media) return;
+    const target: MediaDiagnosticTarget = media === scratchProxyAudioRef.current ? "scratch-proxy-audio" : "video";
+    if (target === "video") videoPlaybackIntentRef.current = false;
+    reportMediaDiagnostic(target, "pause-request", media);
+    mediaPlaybackCoordinatorRef.current?.pause(media);
+  }
+
+  /** `requestMediaPlayback`の再生失敗を現在要求だけ利用者へ通知する。 */
+  function requestMediaPlayback(media: HTMLMediaElement, reportFailure: boolean) {
+    const target: MediaDiagnosticTarget = media === scratchProxyAudioRef.current ? "scratch-proxy-audio" : "video";
+    if (target === "video" && reportFailure) videoPlaybackIntentRef.current = true;
+    reportMediaDiagnostic(target, "play-request", media, { reportFailure });
+    return mediaPlaybackCoordinatorRef.current!.request(media).then((result) => {
+      const details: MediaDiagnosticDetails = result.status === "failed"
+        ? { result: result.status, error: String(result.error) }
+        : { result: result.status };
+      reportMediaDiagnostic(target, "play-result", media, details);
+      if (result.status === "started" && reportFailure) {
+        const startedAt = media.currentTime;
+        window.setTimeout(() => {
+          reportMediaDiagnostic(target, "play-progress-check", media, {
+            advanced: media.currentTime > startedAt + 0.02
+          });
+        }, 750);
+      }
+      if (reportFailure && result.status === "failed") {
+        setPlaying(false);
+        setMessage(`Playback could not start: ${String(result.error)}`);
+      }
+      return result.status === "started";
+    });
+  }
+
   /** `cancelScratchPreview`の入力が要求された条件やschemaを満たすか検証する。 */
   function cancelScratchPreview(restorePosition: boolean) {
     scratchPreviewGenerationRef.current += 1;
@@ -1824,9 +2632,9 @@ export default function App(props: {
     scratchPreviewTimeRef.current = null;
     const activeMedia = scratchPreviewMediaRef.current;
     scratchPreviewMediaRef.current = null;
-    activeMedia?.pause();
+    pauseMedia(activeMedia);
     if (activeMedia) activeMedia.dataset.scratchPreviewActive = "false";
-    if (activeMedia !== scratchProxyAudioRef.current) scratchProxyAudioRef.current?.pause();
+    if (activeMedia !== scratchProxyAudioRef.current) pauseMedia(scratchProxyAudioRef.current);
     if (target === null) return;
     const video = videoRef.current;
     if (!video) return;
@@ -1848,7 +2656,12 @@ export default function App(props: {
     finishScratchPreview();
     video.currentTime = clamp(time, 0, duration || 0);
     setCurrentTime(video.currentTime);
-    playbackStopAtRef.current = video.paused ? null : segmentStopAtForTime(selectedSegmentRef.current, video.currentTime);
+    reportMediaDiagnostic("video", "seek-request", video);
+    playbackRangeRef.current = beginPlaybackRange(
+      playbackRangeRef.current,
+      video.currentTime,
+      video.paused ? null : segmentStopAtForTime(selectedSegmentRef.current, video.currentTime),
+    );
   }
 
   /** `playFrom`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
@@ -1859,14 +2672,20 @@ export default function App(props: {
     const target = clamp(time, 0, duration || 0);
     video.currentTime = target;
     setCurrentTime(target);
-    playbackStopAtRef.current = stopAt ?? segmentStopAtForTime(selectedSegmentRef.current, target);
-    void video.play();
+    reportMediaDiagnostic("video", "seek-request", video, { source: "play-from" });
+    playbackRangeRef.current = beginPlaybackRange(
+      playbackRangeRef.current,
+      target,
+      stopAt ?? segmentStopAtForTime(selectedSegmentRef.current, target),
+    );
+    void requestMediaPlayback(video, true);
   }
 
   /** `playVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playVideo() {
     finishScratchPreview();
-    void videoRef.current?.play();
+    const video = videoRef.current;
+    if (video) void requestMediaPlayback(video, true);
   }
 
   /** `pauseVideo`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
@@ -1875,7 +2694,7 @@ export default function App(props: {
       finishScratchPreview();
       return;
     }
-    videoRef.current?.pause();
+    pauseMedia(videoRef.current);
   }
 
   /** `scratchPreview`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
@@ -1889,13 +2708,17 @@ export default function App(props: {
     } else if (!video.paused) {
       video.currentTime = target;
       setCurrentTime(target);
-      playbackStopAtRef.current = segmentStopAtForTime(selectedSegmentRef.current, target);
+      playbackRangeRef.current = beginPlaybackRange(
+        playbackRangeRef.current,
+        target,
+        segmentStopAtForTime(selectedSegmentRef.current, target),
+      );
       return;
     }
 
     const generation = scratchPreviewGenerationRef.current + 1;
     scratchPreviewGenerationRef.current = generation;
-    playbackStopAtRef.current = null;
+    playbackRangeRef.current = cancelPlaybackRange(playbackRangeRef.current);
     scratchPreviewTimeRef.current = target;
     video.currentTime = target;
     setCurrentTime(target);
@@ -1915,17 +2738,22 @@ export default function App(props: {
       proxyAudio.playbackRate = video.playbackRate;
       proxyAudio.currentTime = clampMediaTime(proxyAudio, target);
     }
-    void media
-      .play()
-      .then(() => {
-        if (scratchPreviewGenerationRef.current !== generation || scratchPreviewTimeRef.current === null) return;
-        scratchPreviewTimerRef.current = window.setTimeout(() => {
-          if (scratchPreviewGenerationRef.current === generation) finishScratchPreview();
-        }, scratchPreviewMilliseconds);
-      })
-      .catch(() => {
+    reportMediaDiagnostic(
+      previewSource === "proxy" ? "scratch-proxy-audio" : "video",
+      "scratch-preview-request",
+      media,
+      { generation, source: previewSource }
+    );
+    void requestMediaPlayback(media, false).then((started) => {
+      if (!started) {
         if (scratchPreviewGenerationRef.current === generation) finishScratchPreview();
-      });
+        return;
+      }
+      if (scratchPreviewGenerationRef.current !== generation || scratchPreviewTimeRef.current === null) return;
+      scratchPreviewTimerRef.current = window.setTimeout(() => {
+        if (scratchPreviewGenerationRef.current === generation) finishScratchPreview();
+      }, scratchPreviewMilliseconds);
+    });
   }
 
   /** `openSettings`の対象を利用可能にし、画面表示に必要な状態を同期する。 */
@@ -2012,6 +2840,7 @@ export default function App(props: {
     if (nextTime === null) return;
 
     setSelectedSegmentId(segment.id);
+    setSelectedCutSegmentIds(new Set([segment.id]));
     const patch = target.edge === "start"
       ? { start: nextTime, user_edited: true }
       : { end: nextTime, user_edited: true };
@@ -2026,7 +2855,7 @@ export default function App(props: {
     hasSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
     hasMultipleSegments: segments.length > 1,
     canAddSegment: Boolean(projectBase),
-    canDeleteSelectedSegment: Boolean(selectedSegmentId && segments.some((segment) => segment.id === selectedSegmentId)),
+    canDeleteSelectedSegment: selectedCutSegments.length > 0,
     canSelectPreviousSegment,
     canSelectNextSegment,
     canJumpBoundary: segments.length > 0,
@@ -2035,18 +2864,18 @@ export default function App(props: {
   };
   const subCapabilities = {
     hasSegments: subtitleSegmentCount > 0,
-    hasSelectedSegment: selectedSubtitleIndex >= 0,
+    hasSelectedSegment: selectedSubtitleItems.length > 0,
     hasMultipleSegments: subtitleSegmentCount > 1,
     canAddSegment: Boolean(
       activeSubtitleLane && addFourBeatSegment(activeSubtitleLane, subtitleState.selected_segment_id, subtitleState.rhythm_grid)
     ),
-    canDeleteSelectedSegment: Boolean(selectedSubtitleSegment()),
+    canDeleteSelectedSegment: selectedSubtitleItems.length > 0,
     canSelectPreviousSegment: selectedSubtitleIndex > 0,
     canSelectNextSegment:
       selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1,
     canJumpBoundary: subtitleSegmentCount > 0,
     canPlayBoundary: Boolean(selectedSubtitleSegment() && videoUrl),
-    canNudgeBoundary: Boolean(selectedSubtitleSegment() && subtitleState.rhythm_grid.length),
+    canNudgeBoundary: Boolean(selectedSubtitleItems.length === 1 && subtitleState.rhythm_grid.length),
   };
   const commonMedia = {
     sourceAvailable,
@@ -2407,7 +3236,9 @@ export default function App(props: {
     transcriptSegment?.id
     ,
     mode,
-    subtitleState
+    subtitleState,
+    selectedCutSegmentIds,
+    selectedSubtitleSegmentIds,
   ]);
 
   useEffect(() => {
@@ -2428,9 +3259,341 @@ export default function App(props: {
     duration,
     segments,
     selectedSegment,
+    selectedCutSegmentIds,
+    selectedSubtitleSegmentIds,
     mode,
     subtitleState,
   ]);
+
+  const inspectorToggleFocusProps = useEditorActionFocusProps<HTMLButtonElement>();
+  const inspectorSegment = mode === "cut" ? inspectorCutSegment : inspectorSubtitleSelection?.segment ?? null;
+  const inspectorStyle = mode === "sub"
+    && inspectorSubtitleSelection
+    && selectedSubtitleItems.length
+    && subtitleEffectCatalogState.catalog
+    ? (
+        <SubSegmentStyleInspector
+          lanes={subtitleState.lanes}
+          selections={selectedSubtitleItems}
+          primary={inspectorSubtitleSelection}
+          catalog={subtitleEffectCatalogState.catalog}
+          fonts={inspectorFonts}
+          fontListError={inspectorFontError}
+          onCommit={(style, effect) => commitInspectorSubtitleStyle(
+            visibleSubtitleSelectedIds,
+            style,
+            effect,
+          )}
+        />
+    )
+    : undefined;
+  const displayElementInspectorLabels = {
+    empty: tr("segmentInspector.displayElementsEmpty"),
+    blank: tr("segmentInspector.blank"),
+    zoomEdit: tr("segmentInspector.zoomDisplayElements"),
+    zoomDisabled: tr("segmentInspector.zoomDisplayElementsDisabled"),
+    lockBoundaries: tr("segmentInspector.lockDisplayElementBoundaries"),
+    unlockBoundaries: tr("segmentInspector.unlockDisplayElementBoundaries"),
+    mergeRight: tr("segmentInspector.mergeRight"),
+    mergeDisabled: tr("segmentInspector.mergeDisabled"),
+    addBlankLeft: tr("segmentInspector.addBlankLeft"),
+    addBlankRight: tr("segmentInspector.addBlankRight"),
+    addBlankDisabled: tr("segmentInspector.addBlankDisabled"),
+    deleteElement: tr("segmentInspector.deleteDisplayElement"),
+    deleteDisabled: tr("segmentInspector.deleteDisplayElementDisabled"),
+    deleteConfirm: tr("segmentInspector.deleteDisplayElementConfirm"),
+    editText: tr("segmentInspector.editDisplayElementText"),
+    timeline: tr("segmentInspector.displayElementTimeline"),
+    list: tr("segmentInspector.displayElementList"),
+    boundary: tr("segmentInspector.displayElementBoundary"),
+  };
+
+  /** 指定Lyrics行の表示素だけを更新し、必要ならrevision保存と局所再解析のmanual制約更新を行う。 */
+  function updateDisplayElementsForTarget(
+    laneId: string,
+    segmentId: string,
+    elements: DisplayElement[],
+    update?: DisplayElementUpdate,
+    expected?: DisplayElementZoomSession,
+  ) {
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((candidate) => candidate.id === laneId);
+    const segment = lane?.segments.find((candidate) => candidate.id === segmentId);
+    if (!segment) return false;
+    if (expected && !displayElementZoomSessionIsValid(
+      current,
+      expected,
+      lineReanalysisProjectIdentityRef.current ?? "",
+      lineReanalysisProjectEpochRef.current,
+    )) return false;
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((candidate) => candidate.id === laneId
+        ? {
+            ...candidate,
+            segments: candidate.segments.map((item) => item.id === segmentId
+                ? {
+                  ...item,
+                  display_elements: elements,
+                  ...(update ? {
+                    display_element_revision: update.revision,
+                    display_element_boundary_locked: update.boundaryLocked,
+                  } : {}),
+                }
+              : item),
+          }
+        : candidate),
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    if (update) {
+      markProjectChanged();
+      lineReanalysisCoordinator.manualConstraintChanged(segmentId);
+    }
+    return true;
+  }
+
+  /** 表示素編集による行境界ロックだけを切り替え、表示素revisionや再解析状態は変更しない。 */
+  function updateDisplayElementBoundaryLockForTarget(
+    laneId: string,
+    segmentId: string,
+    locked: boolean,
+    expected?: DisplayElementZoomSession,
+  ) {
+    const current = subtitleStateRef.current;
+    if (expected && !displayElementZoomSessionIsValid(
+      current,
+      expected,
+      lineReanalysisProjectIdentityRef.current ?? "",
+      lineReanalysisProjectEpochRef.current,
+    )) return false;
+    let changed = false;
+    const next: SubtitleProjectState = {
+      ...current,
+      lanes: current.lanes.map((lane) => ({
+        ...lane,
+        segments: lane.segments.map((segment) => {
+          if (lane.id !== laneId || segment.id !== segmentId) return segment;
+          if (segment.display_element_boundary_locked === locked) return segment;
+          changed = true;
+          return { ...segment, display_element_boundary_locked: locked };
+        }),
+      })),
+    };
+    if (!changed) return true;
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
+    markProjectChanged();
+    return true;
+  }
+
+  /** `requestSubtitleFileExport`で選択Timelineを一つの字幕ファイルとして書き出す。 */
+  async function requestSubtitleFileExport(format: SubtitleFileExportFormat, laneIds: readonly string[]) {
+    if (!videoInfo || !videoPath || !apiBaseUrl) return false;
+    const lanes = subtitleState.lanes.filter((lane) => laneIds.includes(lane.id) && lane.segments.length > 0);
+    if (!lanes.length) return false;
+    const outputDir = await window.songcut.selectOutputDirectory();
+    if (!outputDir) return false;
+    try {
+      const result = await exportSubtitleFile(
+        apiBaseUrl,
+        videoPath,
+        outputDir,
+        videoInfo.video.width || 1920,
+        videoInfo.video.height || 1080,
+        lanes,
+        format,
+      );
+      setMessage(tr("sub.subtitleFileExportComplete", { file: result.file }));
+      return true;
+    } catch (error) {
+      setMessage(tr("sub.subtitleFileExportFailed", { detail: String(error) }));
+      return false;
+    }
+  }
+
+  const updateInspectorDisplayElements = (
+    elements: DisplayElement[],
+    update?: DisplayElementUpdate,
+  ) => {
+    const selection = inspectorSubtitleSelection;
+    if (!selection) return;
+    updateDisplayElementsForTarget(selection.laneId, selection.segment.id, elements, update);
+  };
+  const selectedLineReanalysisStatus = inspectorSubtitleSelection
+    ? lineReanalysisStatuses[inspectorSubtitleSelection.segment.id]
+    : undefined;
+  const selectedLineReanalysisStatusText = selectedLineReanalysisStatus
+    ? tr(`segmentInspector.reanalysis.${selectedLineReanalysisStatus.status}`)
+    : undefined;
+  const inspectorDisplayElements = mode === "sub"
+    && selectedSubtitleItems.length === 1
+    && inspectorSubtitleSelection
+    ? {
+        segment: inspectorSubtitleSelection.segment,
+        currentTime,
+        labels: displayElementInspectorLabels,
+        onPreview: (elements: DisplayElement[]) => updateInspectorDisplayElements(elements),
+        onCancel: (elements: DisplayElement[]) => {
+          updateInspectorDisplayElements(elements);
+          lineReanalysisCoordinator.exitWithoutChange(inspectorSubtitleSelection.segment.id);
+        },
+        onCommit: (update: DisplayElementUpdate) => updateInspectorDisplayElements(update.elements, update),
+        onBoundaryLockChange: (locked: boolean) => updateDisplayElementBoundaryLockForTarget(
+          inspectorSubtitleSelection.laneId,
+          inspectorSubtitleSelection.segment.id,
+          locked,
+        ),
+        status: selectedLineReanalysisStatus?.status === "idle" ? undefined : selectedLineReanalysisStatus?.status,
+        statusText: selectedLineReanalysisStatusText,
+        statusError: selectedLineReanalysisStatus?.error,
+        onEditingEnter: () => lineReanalysisCoordinator.enter(inspectorSubtitleSelection.segment.id),
+        onEditingExitWithoutChange: () => lineReanalysisCoordinator.exitWithoutChange(
+          inspectorSubtitleSelection.segment.id,
+        ),
+        onOpenZoom: openDisplayElementZoom,
+      }
+    : undefined;
+  const displayElementZoomTarget = resolveDisplayElementZoomTarget(subtitleState, displayElementZoomSession);
+  const displayElementZoomStatus = displayElementZoomTarget
+    ? lineReanalysisStatuses[displayElementZoomTarget.id]
+    : undefined;
+  const displayElementZoomWaveform = useMemo(
+    () => progressiveWaveform.waveform.length > 0
+      ? progressiveWaveform.waveform
+      : progressiveWaveform.chunks.flat(),
+    [progressiveWaveform.chunks, progressiveWaveform.waveform],
+  );
+
+  /** 現在の単一Lyrics行を固定targetとする表示素ズーム編集sessionを開く。 */
+  function openDisplayElementZoom() {
+    const selection = inspectorSubtitleSelection;
+    if (
+      selectedSubtitleItems.length !== 1
+      || !selection?.segment.display_elements?.length
+      || selection.segment.end <= selection.segment.start
+    ) return;
+    finishScratchPreview();
+    const video = videoRef.current;
+    const range = displayElementZoomRange(selection.segment, duration);
+    const playback = openDisplayElementZoomPlayback(
+      video,
+      playbackRangeRef.current,
+      range.start,
+      range.end,
+      currentTime,
+    );
+    playbackRangeRef.current = playback.state;
+    setCurrentTime(playback.time);
+    lineReanalysisProjectIdentityRef.current = lineReanalysisProjectIdentity;
+    const session = createDisplayElementZoomSession({
+      token: displayElementZoomTokenRef.current + 1,
+      laneId: selection.laneId,
+      segment: selection.segment,
+      projectEpoch: lineReanalysisProjectEpochRef.current,
+      projectIdentity: lineReanalysisProjectIdentity,
+    });
+    if (!session) return;
+    displayElementZoomTokenRef.current = session.token;
+    displayElementZoomSessionRef.current = session;
+    setDisplayElementZoomSession(session);
+    setDisplayElementZoomLoop(false);
+  }
+
+  /** 表示素ズームsessionを取消し、mediaを停止したまま最後の再生位置を維持する。 */
+  function closeDisplayElementZoom() {
+    const session = displayElementZoomSessionRef.current;
+    displayElementZoomTokenRef.current += 1;
+    displayElementZoomSessionRef.current = null;
+    setDisplayElementZoomSession(null);
+    playbackRangeRef.current = closeDisplayElementZoomPlayback(videoRef.current, playbackRangeRef.current);
+    if (session) lineReanalysisCoordinator.exitWithoutChange(session.segmentId);
+  }
+
+  /** 表示素ズームsession内だけで絶対時刻をseekし、既存range playbackを更新する。 */
+  function seekDisplayElementZoom(time: number) {
+    const session = displayElementZoomSessionRef.current;
+    const video = videoRef.current;
+    if (!session || !video) return;
+    finishScratchPreview();
+    const range = displayElementZoomRange(session, duration);
+    const playback = seekDisplayElementZoomPlayback(
+      video,
+      playbackRangeRef.current,
+      range.start,
+      range.end,
+      time,
+      displayElementZoomLoop,
+    );
+    playbackRangeRef.current = playback.state;
+    setCurrentTime(playback.time);
+  }
+
+  /** 表示素ズームsessionの再生／一時停止を対象行範囲内だけで切り替える。 */
+  function toggleDisplayElementZoomPlayback() {
+    const session = displayElementZoomSessionRef.current;
+    const video = videoRef.current;
+    if (!session || !video || !sourceAvailable) return;
+    finishScratchPreview();
+    const range = displayElementZoomRange(session, duration);
+    const playback = toggleDisplayElementZoomMedia(
+      video,
+      playbackRangeRef.current,
+      range.start,
+      range.end,
+      displayElementZoomLoop,
+    );
+    playbackRangeRef.current = playback.state;
+    setCurrentTime(playback.time);
+  }
+
+  /** 表示素ズームsessionのloop設定をUIとgeneration-aware rangeへ同時反映する。 */
+  function updateDisplayElementZoomLoop(loop: boolean) {
+    setDisplayElementZoomLoop(loop);
+    playbackRangeRef.current = setPlaybackRangeLoop(playbackRangeRef.current, loop);
+  }
+  const selectedTimelineLaneIds = new Set(selectedSubtitleItems.map((item) => item.laneId));
+  const currentTimelineLabel = selectedTimelineLaneIds.size === 1
+    ? subtitleState.lanes.find((lane) => lane.id === [...selectedTimelineLaneIds][0])?.name
+      ?? tr("segmentInspector.timelineUnavailable")
+    : tr("segmentInspector.mixedTimelines");
+  const timelineMoveOptions: SubTimelineMoveOption[] = subtitleState.lanes.map((lane) => {
+    const result = moveSubtitleSegments({
+      state: subtitleState,
+      selectedIds: visibleSubtitleSelectedIds,
+      targetLaneId: lane.id,
+    });
+    return {
+      id: lane.id,
+      name: lane.name,
+      disabled: !result.ok,
+      ...(!result.ok ? { disabledReason: tr(`segmentInspector.moveReason.${result.reason}`) } : {}),
+    };
+  });
+  const inspectorTimeline = mode === "sub" && selectedSubtitleItems.length ? (
+    <SubTimelineMoveInspector
+      selectionKey={selectedSubtitleItems.map(({ segment }) => segment.id).join("|")}
+      currentTimeline={currentTimelineLabel}
+      options={timelineMoveOptions}
+      labels={{
+        current: tr("segmentInspector.currentTimeline"),
+        target: tr("segmentInspector.targetTimeline"),
+        move: tr("segmentInspector.move"),
+        unavailable: tr("segmentInspector.timelineUnavailable"),
+      }}
+      onMove={moveSelectedSubtitleSegments}
+    />
+  ) : undefined;
+
+  /** Sub動画プレビューの一方の表示設定を更新し、mode localStorageへ即時保存する。 */
+  function updateSubPreviewVisibility(
+    key: keyof SubPreviewVisibility,
+    visible: boolean,
+  ) {
+    const next = { ...subPreviewVisibility, [key]: visible };
+    setSubPreviewVisibility(next);
+    writeSubPreviewVisibility(window.localStorage, next);
+  }
 
   return (
     <EditorFocusProvider rootRef={editorRootRef}>
@@ -2439,7 +3602,11 @@ export default function App(props: {
         ref={editorRootRef}
         tabIndex={-1}
         data-editor-focus-root
-        className={dropActive ? "app drop-active" : "app"}
+        className={[
+          "app",
+          dropActive ? "drop-active" : "",
+          segmentInspectorCollapsed ? "segment-inspector-collapsed" : "",
+        ].filter(Boolean).join(" ")}
         style={{ "--video-split": `${split}%` } as React.CSSProperties}
         onDragOver={(event) => {
           event.preventDefault();
@@ -2471,12 +3638,32 @@ export default function App(props: {
             </Button>
           </div>
         )}
-        {mode === "sub" ? (
+        {mode === "sub" && subPreviewVisibility.subtitlePreviewVisible ? (
           <SubtitleOverlay
             state={subtitleState}
             currentTime={currentTime}
             videoWidth={videoInfo?.video.width || 1920}
             videoHeight={videoInfo?.video.height || 1080}
+          />
+        ) : null}
+        {mode === "sub" ? (
+          <SubVideoPreview
+            state={subtitleState}
+            selectedSegmentIds={selectedSubtitleSegmentIds}
+            currentTime={currentTime}
+            playing={playing}
+            mediaRef={videoRef}
+            videoWidth={videoInfo?.video.width || 1920}
+            videoHeight={videoInfo?.video.height || 1080}
+            subtitleVisible={subPreviewVisibility.subtitlePreviewVisible}
+            displayElementsVisible={subPreviewVisibility.displayElementPreviewVisible}
+            labels={{
+              controls: tr("videoPreview.controls"),
+              subtitle: tr("videoPreview.subtitle"),
+              displayElements: tr("videoPreview.displayElements"),
+            }}
+            onSubtitleVisibleChange={(visible) => updateSubPreviewVisibility("subtitlePreviewVisible", visible)}
+            onDisplayElementsVisibleChange={(visible) => updateSubPreviewVisibility("displayElementPreviewVisible", visible)}
           />
         ) : null}
       </section>
@@ -2512,19 +3699,17 @@ export default function App(props: {
             apiReady={Boolean(apiBaseUrl)}
             checkedCount={checkedCount}
             onLoad={selectVideo}
-            onAnalyze={() => void analyze().catch((error) => setMessage(String(error)))}
+            onAnalyze={(nextGuideText) => void analyze(nextGuideText).catch((error) => setMessage(String(error)))}
             onExport={openOutputReview}
             onExportTimestamp={() => setTimestampExportOpen(true)}
             onSettings={() => openSettings("cut")}
             guideText={guideText}
-            onGuideTextChange={(value) => {
-              setGuideText(value);
-              markProjectChanged();
-            }}
-            taskStatus={taskStatus}
+            renderTaskStatus={renderTaskStatus}
             timeline={{
               segments,
-              selectedSegment,
+              selectedSegment: selectedCutSegments.length === 1 ? inspectorCutSegment : null,
+              selectedIds: visibleCutSelectedIds,
+              onSelect: selectCutSegment,
               waveformAmplitudeProfile: cutWaveformAmplitudeProfile,
               onBoundaryPreview: (edge, time) => {
                 if (!selectedSegment) return;
@@ -2540,12 +3725,12 @@ export default function App(props: {
                 }
               },
               onChangeCommitted: markProjectChanged,
-              onEditTiming: () => selectedSegment && setCutTimingSegmentId(selectedSegment.id),
             }}
             segments={{
               segments,
-              selectedId: selectedSegment?.id ?? null,
-              onSelect: cutModeSession.controller.actions.select,
+              selectedId: selectedSegmentId,
+              selectedIds: visibleCutSelectedIds,
+              onSelect: selectCutSegment,
               onToggle: (segment, checked) => updateSegment(segment.id, { checked }),
               onTitleChange: (segment, title) => updateSegment(segment.id, { title }),
               onTranscript: setTranscriptSegment,
@@ -2556,6 +3741,7 @@ export default function App(props: {
           <SubModePanel
             view={subModeSession.view}
             state={subtitleState}
+            selectedSegmentIds={visibleSubtitleSelectedIds}
             capabilities={{
               canAddSegment: subModeSession.controller.capabilities.canAddSegment,
               canDeleteSelectedSegment: subModeSession.controller.capabilities.canDeleteSelectedSegment,
@@ -2571,49 +3757,221 @@ export default function App(props: {
               prepareAnalysis: prepareSubAnalysis,
               analyzeLyrics: subModeSession.operations.analyzeLyrics,
               exportSubtitles: requestSubtitleExport,
+              exportSubtitleFile: requestSubtitleFileExport,
               renderSubtitles: subModeSession.operations.renderSubtitles,
               invalidateSubtitleRender: subModeSession.operations.invalidateSubtitleRender,
               listSystemFonts,
               confirmRemoveLane: () => window.confirm(tr("sub.removeLaneConfirm")),
-              selectSegment: (laneId, segment) => subModeSession.controller.actions.select(segment, laneId),
+              selectSegment: selectSubtitleSegmentWithModifiers,
               addSegment: subModeSession.controller.actions.add,
               removeSelectedSegment: subModeSession.controller.actions.remove,
               showMessage: setMessage,
             }}
-            taskStatus={taskStatus}
+            renderTaskStatus={renderTaskStatus}
             onStateChange={(state) => {
+              subtitleStateRef.current = state;
               setSubtitleState(state);
               markProjectChanged();
             }}
             onBoundaryPreview={(laneId, segmentId, edge, time) => {
-              setSubtitleState((current) => ({
-                ...current,
-                lanes: current.lanes.map((lane) =>
-                  lane.id === laneId
-                    ? updateSegmentBoundary(lane, segmentId, edge, time, current.rhythm_grid)
-                    : lane
-                ),
-              }));
+              setSubtitleState((current) => {
+                const next = {
+                  ...current,
+                  lanes: current.lanes.map((lane) => {
+                    if (lane.id !== laneId) return lane;
+                    const sourceSegment = lane.segments.find((segment) => segment.id === segmentId);
+                    if (!sourceSegment) return lane;
+                    const previewLane = updateSegmentBoundary(
+                      lane,
+                      segmentId,
+                      edge,
+                      time,
+                      current.rhythm_grid,
+                    );
+                    const previewSegment = previewLane.segments.find((segment) => segment.id === segmentId);
+                    if (!previewSegment || previewSegment === sourceSegment) return lane;
+                    const validPreview = retimeSegmentForLineBoundaryPreview(sourceSegment, previewSegment);
+                    if (!validPreview) return lane;
+                    return {
+                      ...previewLane,
+                      segments: previewLane.segments.map((segment) => (
+                        segment.id === segmentId ? validPreview : segment
+                      )),
+                    };
+                  }),
+                };
+                subtitleStateRef.current = next;
+                return next;
+              });
             }}
-            onBoundaryCancel={(laneId, segmentId, startSegment) => {
-              setSubtitleState((current) => ({
-                ...current,
-                lanes: current.lanes.map((lane) =>
-                  lane.id === laneId
-                    ? {
-                        ...lane,
-                        segments: lane.segments.map((segment) =>
-                          segment.id === segmentId ? startSegment : segment
-                        ),
-                      }
-                    : lane
-                ),
-              }));
-            }}
-            onBoundaryCommit={markProjectChanged}
+            onBoundaryEditingEnter={(_laneId, segmentId) => lineReanalysisCoordinator.enter(segmentId)}
+            onBoundaryCancel={cancelSubtitleBoundaryEdit}
+            onBoundaryCommit={commitSubtitleBoundaryEdit}
+            onTextEditingEnter={(_laneId, segmentId) => lineReanalysisCoordinator.enter(segmentId)}
+            onTextCommit={commitSubtitleText}
+            onTextEditingExitWithoutChange={(_laneId, segmentId) => (
+              lineReanalysisCoordinator.exitWithoutChange(segmentId)
+            )}
           />
         )}
       </section>
+      <aside className="segment-inspector-shell" aria-label={tr("segmentInspector.title")}>
+        <button
+          {...inspectorToggleFocusProps}
+          type="button"
+          className="segment-inspector-toggle"
+          aria-expanded={!segmentInspectorCollapsed}
+          aria-controls="segment-inspector-content"
+          aria-label={tr(segmentInspectorCollapsed ? "segmentInspector.expand" : "segmentInspector.collapse")}
+          title={tr(segmentInspectorCollapsed ? "segmentInspector.expand" : "segmentInspector.collapse")}
+          onClick={() => setSegmentInspectorCollapsed((collapsed) => !collapsed)}
+        >
+          {segmentInspectorCollapsed ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+        </button>
+        {!segmentInspectorCollapsed ? (
+          <div id="segment-inspector-content" className="segment-inspector-content">
+            <h2 className="segment-inspector-heading">{tr("segmentInspector.title")}</h2>
+            <ScrollArea
+              className="segment-inspector-scroll"
+              viewportClassName="segment-inspector-scroll-viewport"
+              scrollbars={["vertical"]}
+              type="always"
+            >
+              <SegmentInspector
+                mode={mode}
+                segment={inspectorSegment}
+                selectionCount={mode === "cut" ? selectedCutSegments.length : selectedSubtitleItems.length}
+                mediaDuration={duration}
+                previousEnd={mode === "sub" && selectedSubtitleIndex > 0
+                  ? activeSubtitleSegments[selectedSubtitleIndex - 1].end
+                  : undefined}
+                nextStart={mode === "sub" && selectedSubtitleIndex >= 0 && selectedSubtitleIndex < activeSubtitleSegments.length - 1
+                  ? activeSubtitleSegments[selectedSubtitleIndex + 1].start
+                  : undefined}
+                rhythmGrid={mode === "sub" ? subtitleState.rhythm_grid : undefined}
+                labels={{
+                  noSelection: tr("segmentInspector.selectPrompt"),
+                  multipleSelection: tr("segmentInspector.multipleSelection"),
+                  timeline: tr("segmentInspector.timeline"),
+                  timing: tr("segmentInspector.timing"),
+                  style: tr("segmentInspector.style"),
+                  displayElements: tr("segmentInspector.displayElements"),
+                  start: tr("segmentTiming.start"),
+                  end: tr("segmentTiming.end"),
+                  duration: tr("segmentTiming.duration"),
+                  specification: tr("segmentTiming.specification"),
+                  durationMode: tr("segmentTiming.durationMode"),
+                  endMode: tr("segmentTiming.endMode"),
+                }}
+                onTimingCommit={commitInspectorTiming}
+                onTimingEditingEnter={mode === "sub" && inspectorSubtitleSelection
+                  ? () => lineReanalysisCoordinator.enter(inspectorSubtitleSelection.segment.id)
+                  : undefined}
+                onTimingEditingExitWithoutChange={mode === "sub" && inspectorSubtitleSelection
+                  ? () => lineReanalysisCoordinator.exitWithoutChange(inspectorSubtitleSelection.segment.id)
+                  : undefined}
+                style={inspectorStyle}
+                timeline={inspectorTimeline}
+                displayElementInspector={inspectorDisplayElements}
+              />
+            </ScrollArea>
+          </div>
+        ) : null}
+      </aside>
+      <DisplayElementZoomDialog
+        open={Boolean(displayElementZoomSession && displayElementZoomTarget)}
+        segment={displayElementZoomTarget}
+        currentTime={currentTime}
+        playing={playing}
+        mediaRef={videoRef}
+        mediaDuration={duration}
+        loop={displayElementZoomLoop}
+        canPlayback={sourceAvailable}
+        waveform={displayElementZoomWaveform}
+        waveformDisplayMode={waveformDisplayModes.sub}
+        labels={{
+          title: tr("displayElementZoom.title"),
+          rangeStart: tr("displayElementZoom.rangeStart"),
+          play: tr("displayElementZoom.play"),
+          pause: tr("displayElementZoom.pause"),
+          loopPlayback: tr("displayElementZoom.loopPlayback"),
+          waveform: tr("displayElementZoom.waveform"),
+          waveformUnavailable: tr("displayElementZoom.waveformUnavailable"),
+          playbackUnavailable: tr("displayElementZoom.playbackUnavailable"),
+          currentTime: tr("displayElementZoom.currentTime"),
+          endTime: tr("displayElementZoom.endTime"),
+        }}
+        inspectorLabels={displayElementInspectorLabels}
+        onClose={closeDisplayElementZoom}
+        onPlayPause={toggleDisplayElementZoomPlayback}
+        onSeek={seekDisplayElementZoom}
+        onLoopChange={updateDisplayElementZoomLoop}
+        onPreview={(elements) => {
+          const session = displayElementZoomSession;
+          if (!session || displayElementZoomSessionRef.current?.token !== session.token) return;
+          if (!updateDisplayElementsForTarget(
+            session.laneId,
+            session.segmentId,
+            elements,
+            undefined,
+            session,
+          )) closeDisplayElementZoom();
+        }}
+        onCancel={(elements) => {
+          const session = displayElementZoomSession;
+          if (!session) return;
+          updateDisplayElementsForTarget(
+            session.laneId,
+            session.segmentId,
+            elements,
+            undefined,
+            session,
+          );
+          lineReanalysisCoordinator.exitWithoutChange(session.segmentId);
+        }}
+        onCommit={(update) => {
+          const session = displayElementZoomSession;
+          if (!session || displayElementZoomSessionRef.current?.token !== session.token) return;
+          if (!updateDisplayElementsForTarget(
+            session.laneId,
+            session.segmentId,
+            update.elements,
+            update,
+            session,
+          )) {
+            closeDisplayElementZoom();
+            return;
+          }
+          const nextSession = updateDisplayElementZoomSessionRevision(session, update.revision);
+          displayElementZoomSessionRef.current = nextSession;
+          setDisplayElementZoomSession(nextSession);
+        }}
+        onBoundaryLockChange={(locked) => {
+          const session = displayElementZoomSession;
+          if (!session || displayElementZoomSessionRef.current?.token !== session.token) return;
+          if (!updateDisplayElementBoundaryLockForTarget(
+            session.laneId,
+            session.segmentId,
+            locked,
+            session,
+          )) closeDisplayElementZoom();
+        }}
+        onEditingEnter={() => {
+          const session = displayElementZoomSession;
+          if (session && displayElementZoomSessionRef.current?.token === session.token) {
+            lineReanalysisCoordinator.enter(session.segmentId);
+          }
+        }}
+        onEditingExitWithoutChange={() => {
+          const session = displayElementZoomSession;
+          if (session) lineReanalysisCoordinator.exitWithoutChange(session.segmentId);
+        }}
+        status={displayElementZoomStatus?.status === "idle" ? undefined : displayElementZoomStatus?.status}
+        statusText={displayElementZoomStatus
+          ? tr(`segmentInspector.reanalysis.${displayElementZoomStatus.status}`)
+          : undefined}
+        statusError={displayElementZoomStatus?.error}
+      />
       <Dialog
         open={Boolean(visibleTranscriptSegment)}
         title={visibleTranscriptSegment ? segmentDialogTitle(visibleTranscriptSegment) : ""}
@@ -2703,16 +4061,6 @@ export default function App(props: {
         pending={ffmpegCheckPending}
         result={ffmpegCheckResult}
         onClose={() => setFfmpegCheckOpen(false)}
-      />
-      <CutSegmentTimingDialog
-        segment={cutTimingSegment}
-        mediaDuration={duration}
-        onClose={() => setCutTimingSegmentId(null)}
-        onApply={(segmentId, patch, start) => {
-          updateSegment(segmentId, patch);
-          setCutTimingSegmentId(null);
-          seek(start);
-        }}
       />
       <Dialog
         open={videoDecodeErrorOpen}
@@ -2873,12 +4221,22 @@ export default function App(props: {
         complete={tr("dialogs.mmsDownloadComplete")}
         onClose={() => setMmsDownloadOpen(false)}
       />
-      <Dialog open={whisperPreflightOpen} title={tr("dialogs.whisperNotReady")} onClose={() => setWhisperPreflightOpen(false)}>
+      <Dialog
+        open={whisperPreflightOpen}
+        title={tr("dialogs.whisperNotReady")}
+        onClose={() => {
+          pendingCutAnalysisGuideTextRef.current = null;
+          setWhisperPreflightOpen(false);
+        }}
+      >
         <p className="dialog-message">
           {tr("dialogs.whisperMissing", { model: whisperSettings.model })}
         </p>
         <div className="dialog-actions">
-          <Button variant="secondary" onClick={() => setWhisperPreflightOpen(false)}>
+          <Button variant="secondary" onClick={() => {
+            pendingCutAnalysisGuideTextRef.current = null;
+            setWhisperPreflightOpen(false);
+          }}>
             {tr("common.cancel")}
           </Button>
           <Button
@@ -2898,7 +4256,10 @@ export default function App(props: {
                   setWhisperDownloadOpen(false);
                   return runAnalysis(true);
                 })
-                .catch((error) => setMessage(String(error)));
+                .catch((error) => {
+                  pendingCutAnalysisGuideTextRef.current = null;
+                  setMessage(String(error));
+                });
             }}
           >
             {tr("dialogs.downloadAnalyze")}
@@ -3198,6 +4559,15 @@ function readStoredWaveformDisplayModes(): WaveformDisplayModes {
     };
   } catch {
     return { ...DEFAULT_WAVEFORM_DISPLAY_MODES };
+  }
+}
+
+/** Sub動画プレビューのmode設定をlocalStorageから安全に復元する。 */
+function readStoredSubPreviewVisibility(): SubPreviewVisibility {
+  try {
+    return readSubPreviewVisibility(window.localStorage);
+  } catch {
+    return { subtitlePreviewVisible: true, displayElementPreviewVisible: true };
   }
 }
 

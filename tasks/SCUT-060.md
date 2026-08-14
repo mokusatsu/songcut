@@ -51,7 +51,7 @@
 
 ## 実施証拠
 
-- `gui/src/App.tsx`でvideo限定の`MEDIA_ERR_DECODE`を記録し、同一ソース世代につき一度だけ再生状態を停止してReact keyによる`<video>`再構築を行う。最後の有効な位置と再生意図を復元し、利用者へ復旧Dialogを表示する。
+- `gui/src/App.tsx`でvideo限定の`MEDIA_ERR_DECODE`を記録し、同一ソース世代につき一度だけCoordinatorを無効化してReact keyによる`<video>`再構築を行う。最後の有効な位置と再生意図を復元し、利用者へ復旧Dialogを表示する。
 - `gui/src/lib/mediaDecodeRecovery.ts`とVitestで、非decode errorの無視と一世代一回の再構築を固定した。
 - Settingsの共通タブに「デコーダー復旧」／「ソフトウェアデコーダーで再読み込み」を追加した。選択は保存せず、現在の起動だけ`--songcut-software-decoder`を付ける。
 - Electron mainはready前に`disable-accelerated-video-decode`を付与する。ポータブルランチャーはElectron子プロセスのexit code 75と一回限りの要求ファイルで再起動し、同じPython APIサーバーを維持する。resume payloadは一回だけ消費し、launcher logではマスクする。

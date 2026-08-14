@@ -35,8 +35,12 @@ export type CutExportRequest = {
 };
 
 export type CutOperationCoordinator = {
-  runAnalysis: (transcribeAfter: boolean) => Promise<void>;
-  runTranscription: (candidateSegments?: Segment[], resumeInterrupted?: boolean) => Promise<void>;
+  runAnalysis: (transcribeAfter: boolean, guideTextOverride?: string) => Promise<void>;
+  runTranscription: (
+    candidateSegments?: Segment[],
+    resumeInterrupted?: boolean,
+    guideTextOverride?: string,
+  ) => Promise<void>;
   exportClips: (request: CutExportRequest) => Promise<void>;
   watchBackgroundTranscription: (jobId: string) => () => void;
 };
@@ -91,8 +95,10 @@ export function createCutOperationCoordinator(
   const runTranscription: CutOperationCoordinator["runTranscription"] = async (
     candidateSegments,
     resumeInterrupted = true,
+    guideTextOverride,
   ) => {
     const options = getOptions();
+    const guideText = guideTextOverride ?? options.guideText;
     const segments = candidateSegments ?? options.segments;
     if (!options.apiBaseUrl || !options.videoPath || !segments.length) return;
     if (backgroundTranscriptionActive) return;
@@ -126,7 +132,7 @@ export function createCutOperationCoordinator(
           options.videoPath,
           targets,
           settings,
-          options.guideText,
+          guideText,
         ),
         poll: (jobId, onProgress) =>
           services.waitForJob<{ transcripts?: Transcript[] }>(options.apiBaseUrl, jobId, onProgress),
@@ -183,8 +189,9 @@ export function createCutOperationCoordinator(
 
   coordinator = {
     runTranscription,
-    async runAnalysis(transcribeAfter) {
+    async runAnalysis(transcribeAfter, guideTextOverride) {
       const options = getOptions();
+      const guideText = guideTextOverride ?? options.guideText;
       if (!options.apiBaseUrl || !options.videoPath) return;
       if (options.operationRunner.isRunning()) return;
       options.updateTask("transcription", null);
@@ -196,7 +203,7 @@ export function createCutOperationCoordinator(
         start: () => services.startAnalysis(
           options.apiBaseUrl,
           options.videoPath,
-          options.guideText,
+          guideText,
           options.analysisDevice,
           options.boundaryRefinementSettings,
         ),
@@ -210,7 +217,7 @@ export function createCutOperationCoordinator(
       });
       if (result && transcribeAfter && result.segments.length) {
         const nextSegments = result.segments.map((segment) => ({ ...segment, checked: true }));
-        await coordinator.runTranscription(nextSegments, false);
+        await coordinator.runTranscription(nextSegments, false, guideText);
       }
     },
     async exportClips(request) {

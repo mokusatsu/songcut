@@ -19,6 +19,7 @@ const appSource = source("../App.tsx");
 const cutPanelSource = source("../components/CutModePanel.tsx");
 const subPanelSource = source("../components/SubModePanel.tsx");
 const subTimelineSource = source("../components/SubTimelineEditor.tsx");
+const segmentInspectorSource = source("../components/SegmentInspector.tsx");
 const modeOperationsSource = source("./useModeOperations.ts");
 const modelPreparationSource = source("./useModelPreparation.ts");
 const subOperationsSource = source("./useSubOperations.ts");
@@ -134,6 +135,17 @@ describe("SCUT-024..028 commonization contracts", () => {
     expect(cutPanelSource).not.toContain("resolveBoundaryTime");
   });
 
+  it("shares one persistent segment inspector without mode-specific timing dialogs", () => {
+    expect(appSource).toContain("<SegmentInspector");
+    expect(segmentInspectorSource).toContain('mode: SegmentInspectorMode');
+    expect(segmentInspectorSource).toContain('data-section="timing"');
+    expect(segmentInspectorSource).toContain('data-section="style"');
+    expect(segmentInspectorSource).not.toContain("<Tabs");
+    expect(cutPanelSource).not.toContain("onEditTiming");
+    expect(subPanelSource).not.toContain("SegmentTimingDialog");
+    expect(subTimelineSource).not.toContain("onEditTiming");
+  });
+
   it("separates Sub timeline editing and keeps panel intent wiring in the composition root", () => {
     expect(subPanelSource).toContain('from "@/components/SubTimelineEditor"');
     expect(subPanelSource).toContain("<SubTimelineEditor");
@@ -145,7 +157,7 @@ describe("SCUT-024..028 commonization contracts", () => {
     expect(appSource).not.toContain('from "@/lib/subModePanelAdapter"');
     expect(appSource).not.toContain("createSubModePanelAdapter(");
     expect(appSource).toContain("analyzeLyrics: subModeSession.operations.analyzeLyrics");
-    expect(appSource).toContain("selectSegment: (laneId, segment) => subModeSession.controller.actions.select(segment, laneId)");
+    expect(appSource).toContain("selectSegment: selectSubtitleSegmentWithModifiers");
     expect(subPanelSource).not.toContain('from "@/lib/api"');
   });
 

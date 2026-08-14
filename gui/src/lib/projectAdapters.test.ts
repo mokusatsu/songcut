@@ -156,4 +156,104 @@ describe("mode project adapters", () => {
     expect("subtitle" in cutHydrated).toBe(false);
     expect(hydrateProjectDocument(legacy).mode).toBe("cut");
   });
+
+  it("round-trips optional display elements and analysis artifacts in schema v3", () => {
+    const subBase = createSubProjectDocument("C:\\media\\adapter.mp4.sub.songcut", source, videoInfo);
+    const state = subState(subBase);
+    state.subtitle.analysis_artifact = {
+      cache_key: "lyrics-cache-1",
+      cache_format: "demucs-vocals-wav",
+      source_fingerprint: { algorithm: "sha256-head-tail-1m-v1", value: "c".repeat(64) },
+      demucs_model: "htdemucs",
+      preprocess_version: "v1",
+      sample_rate: 16_000,
+      channels: 1,
+      expires_at: "2026-08-13T00:00:00.000Z",
+    };
+    state.subtitle.analysis_algorithm = "songcut-standard";
+    const lane = state.subtitle.lanes[0];
+    lane.segments = [{
+      id: "line-1",
+      text: "歌",
+      start: 0,
+      end: 1,
+      confidence: 1,
+      source: "lyrics",
+      low_confidence_outlier: false,
+      user_edited: false,
+      display_elements: [
+        {
+          stable_id: "element-1",
+          text: "歌",
+          start: 0,
+          end: 0.5,
+          confidence: 1,
+          source: "mms-ctc",
+          source_start: 0,
+          source_end: 1,
+          pronunciation: "ka",
+          token_start: 0,
+          token_end: 1,
+          origin_key: "line-1:0",
+          manual_start: false,
+          manual_end: false,
+          manual_structure: false,
+          parent_revision: 1,
+          conflict: null,
+          orphaned_manual: false,
+        },
+        {
+          stable_id: "element-2",
+          text: "",
+          start: 0.5,
+          end: 1,
+          confidence: 1,
+          source: "blank",
+          source_start: 1,
+          source_end: 1,
+          pronunciation: "",
+          token_start: 1,
+          token_end: 1,
+          origin_key: "blank:line-1:0",
+          manual_start: false,
+          manual_end: false,
+          manual_structure: false,
+          parent_revision: 1,
+          conflict: null,
+          orphaned_manual: false,
+        },
+      ],
+      line_revision: 2,
+      display_element_revision: 3,
+      display_element_boundary_locked: true,
+      start_locked: false,
+      end_locked: true,
+      alignment_diagnostics: { coverage: 1, accepted: true },
+      display_element_text: "歌",
+      needs_reanalysis: false,
+    }];
+
+    const composed = composeSubProjectDocument(subBase, state);
+    expect(() => assertProjectDocument(composed)).not.toThrow();
+    const hydrated = hydrateSubProjectDocument(composed);
+    expect(hydrated.subtitle.analysis_artifact).toEqual(state.subtitle.analysis_artifact);
+    expect(hydrated.subtitle.analysis_algorithm).toBe("songcut-standard");
+    expect(hydrated.subtitle.lanes[0].segments[0].display_elements).toEqual(
+      state.subtitle.lanes[0].segments[0].display_elements,
+    );
+    expect(hydrated.subtitle.lanes[0].segments[0].line_revision).toBe(2);
+    expect(hydrated.subtitle.lanes[0].segments[0].display_element_boundary_locked).toBe(true);
+    expect(hydrated.subtitle.lanes[0].segments[0].start_locked).toBe(false);
+    expect(hydrated.subtitle.lanes[0].segments[0].end_locked).toBe(true);
+    expect(hydrated.subtitle.lanes[0].segments[0].display_element_text).toBe("歌");
+
+    const legacy = createSubProjectDocument("C:\\media\\legacy.mp4.sub.songcut", source, videoInfo);
+    delete legacy.subtitle?.analysis_artifact;
+    delete legacy.subtitle?.analysis_algorithm;
+    const legacyHydrated = hydrateSubProjectDocument(legacy);
+    expect(legacyHydrated.subtitle).not.toHaveProperty("analysis_artifact");
+    expect(legacyHydrated.subtitle).not.toHaveProperty("analysis_algorithm");
+    expect(legacyHydrated.subtitle.lanes[0].segments[0]).toBeUndefined();
+    expect(() => assertProjectDocument(legacy)).not.toThrow();
+  });
 });

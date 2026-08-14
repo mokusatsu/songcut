@@ -5,11 +5,11 @@ import logging
 import os
 import sys
 import threading
-import tempfile
 import time
+import tempfile
 import urllib.error
-import uuid
 import urllib.request
+import uuid
 from pathlib import Path
 
 import uvicorn
@@ -23,6 +23,67 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 SOFTWARE_DECODER_RESTART_EXIT_CODE = 75
 SOFTWARE_DECODER_RESTART_REQUEST_ENV = "SONGCUT_LAUNCHER_RESTART_REQUEST"
 SOFTWARE_DECODER_RESUME_ARG_PREFIX = "--songcut-software-decoder-resume="
+
+
+def _set_windows_dll_directory(path: str | None) -> None:
+    """Set the process DLL search directory used by Windows child processes."""
+    import ctypes
+
+    set_dll_directory = ctypes.WinDLL("kernel32", use_last_error=True).SetDllDirectoryW
+    set_dll_directory.argtypes = [ctypes.c_wchar_p]
+    set_dll_directory.restype = ctypes.c_bool
+    if not set_dll_directory(path):
+        raise ctypes.WinError(ctypes.get_last_error())
+
+
+def spawn_external_process(args: list[str], **kwargs: object) -> subprocess.Popen:
+    """Spawn a non-PyInstaller process without leaking the frozen DLL search path."""
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if sys.platform != "win32" or not getattr(sys, "frozen", False) or not bundle_dir:
+        return subprocess.Popen(args, **kwargs)
+
+    _set_windows_dll_directory(None)
+    process: subprocess.Popen | None = None
+    try:
+        process = subprocess.Popen(args, **kwargs)
+        return process
+    finally:
+        try:
+            _set_windows_dll_directory(os.fspath(bundle_dir))
+        except Exception:
+            if process is not None and process.poll() is None:
+                process.terminate()
+            raise
+
+
+def distribution_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def configure_logging(root: Path) -> Path:
+    log_dir = root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "songcut-launcher.log"
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        encoding="utf-8",
+    )
+    return log_path
+
+
+def configure_standard_streams(log_path: Path) -> None:
+    """Give console-oriented libraries writable streams in a windowed PyInstaller build."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    stream = log_path.open("a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
 
 
 def create_software_decoder_restart_request_path() -> Path:
@@ -56,36 +117,6 @@ def redact_electron_args_for_logging(args: list[str]) -> list[str]:
         else arg
         for arg in args
     ]
-
-
-def distribution_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
-
-
-def configure_logging(root: Path) -> Path:
-    log_dir = root / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / "songcut-launcher.log"
-    logging.basicConfig(
-        filename=log_path,
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        encoding="utf-8",
-    )
-    return log_path
-
-
-def configure_standard_streams(log_path: Path) -> None:
-    """Give console-oriented libraries writable streams in a windowed PyInstaller build."""
-    if sys.stdout is not None and sys.stderr is not None:
-        return
-    stream = log_path.open("a", encoding="utf-8", buffering=1)
-    if sys.stdout is None:
-        sys.stdout = stream
-    if sys.stderr is None:
-        sys.stderr = stream
 
 
 def configure_environment(root: Path, base_url: str) -> dict[str, str]:
@@ -168,7 +199,7 @@ def run(argv: list[str] | None = None) -> int:
             electron_args = [str(electron_exe), *electron_launch_args, str(app_dir)]
             logging.info("Launching Electron: %s", redact_electron_args_for_logging(electron_args))
             with log_path.open("a", encoding="utf-8") as log_file:
-                electron_process = subprocess.Popen(
+                electron_process = spawn_external_process(
                     electron_args,
                     cwd=root,
                     env=electron_env,

@@ -76,6 +76,46 @@ export function timelineWheelScrollLeft(
   return clamp(scrollLeft + rawDelta * multiplier, 0, maximum);
 }
 
+type TimelineScrubAutoScrollInput = {
+  scrollLeft: number;
+  viewportWidth: number;
+  contentWidth: number;
+  clientX: number;
+  viewportLeft: number;
+  viewportRight: number;
+  elapsedSeconds: number;
+};
+
+type TimelineScrubAutoScrollResult = {
+  scrollLeft: number;
+  didScroll: boolean;
+};
+
+/** `timelineScrubAutoScroll`で波形端部の自動スクロールを計算し、実際に移動したかを返す。 */
+export function timelineScrubAutoScroll(input: TimelineScrubAutoScrollInput): TimelineScrubAutoScrollResult {
+  const edgeZone = 64;
+  const maxSpeed = 900;
+  const leftDistance = input.clientX - input.viewportLeft;
+  const rightDistance = input.viewportRight - input.clientX;
+  let speed = 0;
+  if (leftDistance < edgeZone) {
+    const ratio = clamp((edgeZone - Math.max(0, leftDistance)) / edgeZone, 0, 1);
+    speed = -maxSpeed * ratio * ratio;
+  } else if (rightDistance < edgeZone) {
+    const ratio = clamp((edgeZone - Math.max(0, rightDistance)) / edgeZone, 0, 1);
+    speed = maxSpeed * ratio * ratio;
+  }
+  if (speed === 0) return { scrollLeft: input.scrollLeft, didScroll: false };
+
+  const maximum = Math.max(0, input.contentWidth - input.viewportWidth);
+  const elapsedSeconds = Math.min(0.05, Math.max(0, input.elapsedSeconds));
+  const scrollLeft = clamp(input.scrollLeft + speed * elapsedSeconds, 0, maximum);
+  return {
+    scrollLeft,
+    didScroll: Math.abs(scrollLeft - input.scrollLeft) > 0.001,
+  };
+}
+
 type TimelineFocusRange = {
   start: number;
   end: number;
@@ -183,7 +223,7 @@ export function useTimelineViewport(options: UseTimelineViewportOptions) {
     dragClientXRef.current = null;
   };
 
-  const autoScrollScrub = () => {
+  const autoScrollScrub = (notifyScrub: boolean) => {
     const viewport = viewportRef.current;
     const clientX = dragClientXRef.current;
     if (!viewport || clientX === null) {
@@ -191,37 +231,35 @@ export function useTimelineViewport(options: UseTimelineViewportOptions) {
       return;
     }
     const rect = viewport.getBoundingClientRect();
-    const edgeZone = 64;
-    const maxSpeed = 900;
-    const leftDistance = clientX - rect.left;
-    const rightDistance = rect.right - clientX;
-    let speed = 0;
-    if (leftDistance < edgeZone) {
-      const ratio = clamp((edgeZone - Math.max(0, leftDistance)) / edgeZone, 0, 1);
-      speed = -maxSpeed * ratio * ratio;
-    } else if (rightDistance < edgeZone) {
-      const ratio = clamp((edgeZone - Math.max(0, rightDistance)) / edgeZone, 0, 1);
-      speed = maxSpeed * ratio * ratio;
-    }
-    if (speed === 0) {
-      lastAutoScrollTimeRef.current = null;
-      return;
-    }
     const now = window.performance.now();
     const previous = lastAutoScrollTimeRef.current ?? now - 16;
-    const deltaSeconds = Math.min(0.05, Math.max(0, (now - previous) / 1000));
+    const result = timelineScrubAutoScroll({
+      scrollLeft: viewport.scrollLeft,
+      viewportWidth: viewport.clientWidth,
+      contentWidth: viewport.scrollWidth,
+      clientX,
+      viewportLeft: rect.left,
+      viewportRight: rect.right,
+      elapsedSeconds: (now - previous) / 1000,
+    });
+    if (!result.didScroll) {
+      const insideViewport = clientX >= rect.left + 64 && clientX <= rect.right - 64;
+      if (insideViewport) lastAutoScrollTimeRef.current = null;
+      return;
+    }
     lastAutoScrollTimeRef.current = now;
-    const maximum = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-    viewport.scrollLeft = clamp(viewport.scrollLeft + speed * deltaSeconds, 0, maximum);
-    onScrubRef.current(timeFromClientX(clientX));
+    viewport.scrollLeft = result.scrollLeft;
+    if (notifyScrub) onScrubRef.current(timeFromClientX(clientX));
   };
 
   const scrubFromClientX = (clientX: number) => {
     dragClientXRef.current = clientX;
     if (autoScrollTimerRef.current === null) {
-      autoScrollTimerRef.current = window.setInterval(autoScrollScrub, 16);
+      autoScrollTimerRef.current = window.setInterval(() => autoScrollScrub(true), 16);
     }
-    autoScrollScrub();
+    // A direct pointer input always emits exactly once.  The auto-scroll pass
+    // only updates the viewport so an edge hit cannot start a duplicate scratch.
+    autoScrollScrub(false);
     onScrubRef.current(timeFromClientX(clientX));
   };
 

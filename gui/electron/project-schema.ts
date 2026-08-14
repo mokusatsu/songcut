@@ -148,6 +148,50 @@ export type ProjectSubtitleEffect = {
   params: Record<string, string | number | boolean | string[]>;
 };
 
+/** Standard Align が生成し、Sub の行内に保存する表示素。 */
+export type ProjectDisplayElement = {
+  index?: number;
+  stable_id: string;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: "blank" | "mms-ctc" | "mms-ctc-interpolated" | "line-proportional" | "manual";
+  source_start: number;
+  source_end: number;
+  pronunciation: string;
+  token_start: number;
+  token_end: number;
+  origin_key: string;
+  manual_start: boolean;
+  manual_end: boolean;
+  manual_structure: boolean;
+  parent_revision: number;
+  conflict: "boundary_conflict" | "text_conflict" | "orphaned_manual" | "stale" | "manual_conflict" | null;
+  orphaned_manual: boolean;
+  [key: string]: unknown;
+};
+
+/** 歌詞行の Standard Align 診断値。backend の追加 scalar を保持する。 */
+export type ProjectAlignmentDiagnostics = string[] | Record<string, string | number | boolean | null>;
+
+/** 再解析で共有する vocals artifact の識別情報（実体 path／binary は保持しない）。 */
+export type ProjectLyricsAnalysisArtifact = {
+  cache_key: string;
+  cache_format?: string;
+  cache_version?: string | number;
+  source_fingerprint: {
+    algorithm: string;
+    value: string;
+  };
+  demucs_model?: string;
+  preprocess_version?: string;
+  sample_rate?: number;
+  channels?: number;
+  expires_at?: string | number;
+  [key: string]: unknown;
+};
+
 export type ProjectLyricsSegment = {
   id: string;
   text: string;
@@ -165,6 +209,15 @@ export type ProjectLyricsSegment = {
     width: number;
     height: number;
   };
+  display_elements?: ProjectDisplayElement[];
+  line_revision?: number;
+  display_element_revision?: number;
+  display_element_boundary_locked?: boolean;
+  start_locked?: boolean;
+  end_locked?: boolean;
+  alignment_diagnostics?: ProjectAlignmentDiagnostics;
+  display_element_text?: string;
+  needs_reanalysis?: boolean;
 };
 
 export type ProjectLyricsLane = {
@@ -189,6 +242,8 @@ export type ProjectSubtitleState = {
   }>;
   beat_warning: string | null;
   confidence_statistics: Record<string, unknown> | null;
+  analysis_artifact?: ProjectLyricsAnalysisArtifact;
+  analysis_algorithm?: "songcut-standard" | "uta-align";
 };
 
 export type CutOperationKind = "analysis" | "transcription" | "export";
@@ -327,6 +382,20 @@ const whisperModels = new Set<WhisperModelKey>([
 ]);
 const cutOperationKinds = new Set<CutOperationKind>(["analysis", "transcription", "export"]);
 const subOperationKinds = new Set<SubOperationKind>(["lyrics-analysis", "subtitle-export"]);
+const displayElementSources = new Set<ProjectDisplayElement["source"]>([
+  "blank",
+  "mms-ctc",
+  "mms-ctc-interpolated",
+  "line-proportional",
+  "manual",
+]);
+const displayElementConflicts = new Set<Exclude<ProjectDisplayElement["conflict"], null>>([
+  "boundary_conflict",
+  "text_conflict",
+  "orphaned_manual",
+  "stale",
+  "manual_conflict",
+]);
 
 /** 動画pathとmodeから、衝突しないCut/Sub sidecarの保存pathを決定する。 */
 export function sidecarPathForVideo(videoPath: string, mode: "cut" | "sub" = "cut") {
@@ -559,6 +628,7 @@ function validateSubtitleState(value: unknown, label: string) {
   if (lanes.length < 1 || lanes.length > 3) throw new Error(`${label}.lanes must contain 1 through 3 lanes.`);
   const laneIds = new Set<string>();
   const segmentIds = new Set<string>();
+  const displayElementIds = new Set<string>();
   lanes.forEach((value, laneIndex) => {
     const lane = objectValue(value, `${label}.lanes[${laneIndex}]`);
     const laneId = stringValue(lane.id, `${label}.lanes[${laneIndex}].id`);
@@ -595,6 +665,33 @@ function validateSubtitleState(value: unknown, label: string) {
         validateSubtitleStyle(segment.style_override, `${segmentLabel}.style_override`);
         validateSubtitleEffect(segment.effect_override, `${segmentLabel}.effect_override`);
       }
+      if (segment.display_elements !== undefined) {
+        validateDisplayElements(
+          segment.display_elements,
+          start,
+          end,
+          `${segmentLabel}.display_elements`,
+          displayElementIds,
+        );
+      }
+      if (segment.line_revision !== undefined) {
+        nonNegativeInteger(segment.line_revision, `${segmentLabel}.line_revision`);
+      }
+      if (segment.display_element_revision !== undefined) {
+        nonNegativeInteger(segment.display_element_revision, `${segmentLabel}.display_element_revision`);
+      }
+      if (segment.display_element_boundary_locked !== undefined) {
+        booleanValue(segment.display_element_boundary_locked, `${segmentLabel}.display_element_boundary_locked`);
+      }
+      if (segment.start_locked !== undefined) booleanValue(segment.start_locked, `${segmentLabel}.start_locked`);
+      if (segment.end_locked !== undefined) booleanValue(segment.end_locked, `${segmentLabel}.end_locked`);
+      if (segment.alignment_diagnostics !== undefined) {
+        validateAlignmentDiagnostics(segment.alignment_diagnostics, `${segmentLabel}.alignment_diagnostics`);
+      }
+      if (segment.display_element_text !== undefined) {
+        stringValue(segment.display_element_text, `${segmentLabel}.display_element_text`, true);
+      }
+      if (segment.needs_reanalysis !== undefined) booleanValue(segment.needs_reanalysis, `${segmentLabel}.needs_reanalysis`);
       if (segment.render_cache !== undefined) {
         const cache = objectValue(segment.render_cache, `${segmentLabel}.render_cache`);
         stringValue(cache.signature, `${segmentLabel}.render_cache.signature`);
@@ -629,7 +726,136 @@ function validateSubtitleState(value: unknown, label: string) {
   });
   if (row.beat_warning !== null) stringValue(row.beat_warning, `${label}.beat_warning`, true);
   if (row.confidence_statistics !== null) objectValue(row.confidence_statistics, `${label}.confidence_statistics`);
+  if (row.analysis_artifact !== undefined) validateLyricsAnalysisArtifact(row.analysis_artifact, `${label}.analysis_artifact`);
+  if (row.analysis_algorithm !== undefined
+    && row.analysis_algorithm !== "songcut-standard"
+    && row.analysis_algorithm !== "uta-align") {
+    throw new Error(`Invalid ${label}.analysis_algorithm.`);
+  }
 }
+
+function validateDisplayElements(
+  value: unknown,
+  lineStart: number,
+  lineEnd: number,
+  label: string,
+  allIds: Set<string>,
+) {
+  const elements = arrayValue(value, label);
+  if (!elements.length) throw new Error(`${label} must contain at least one display element.`);
+  let cursor = lineStart;
+  const localIds = new Set<string>();
+  elements.forEach((value, index) => {
+    const itemLabel = `${label}[${index}]`;
+    const row = objectValue(value, itemLabel);
+    const stableId = stringValue(row.stable_id, `${itemLabel}.stable_id`);
+    if (localIds.has(stableId) || allIds.has(stableId)) throw new Error(`Duplicate display element id: ${stableId}`);
+    localIds.add(stableId);
+    allIds.add(stableId);
+    if (row.index !== undefined) nonNegativeInteger(row.index, `${itemLabel}.index`);
+    stringValue(row.text, `${itemLabel}.text`, true);
+    const start = nonNegativeFinite(row.start, `${itemLabel}.start`);
+    const end = nonNegativeFinite(row.end, `${itemLabel}.end`);
+    if (end <= start) throw new Error(`Invalid display element range: ${stableId}`);
+    if (Math.abs(start - cursor) > 1e-6) {
+      throw new Error(`${label} must form a gap-free partition of its line.`);
+    }
+    cursor = end;
+    finiteValue(row.confidence, `${itemLabel}.confidence`);
+    if (!displayElementSources.has(row.source as ProjectDisplayElement["source"])) {
+      throw new Error(`Invalid ${itemLabel}.source.`);
+    }
+    const sourceStart = nonNegativeInteger(row.source_start, `${itemLabel}.source_start`);
+    const sourceEnd = nonNegativeInteger(row.source_end, `${itemLabel}.source_end`);
+    if (sourceEnd < sourceStart) throw new Error(`Invalid ${itemLabel} source range.`);
+    stringValue(row.pronunciation, `${itemLabel}.pronunciation`, true);
+    const tokenStart = nonNegativeInteger(row.token_start, `${itemLabel}.token_start`);
+    const tokenEnd = nonNegativeInteger(row.token_end, `${itemLabel}.token_end`);
+    if (tokenEnd < tokenStart) throw new Error(`Invalid ${itemLabel} token range.`);
+    stringValue(row.origin_key, `${itemLabel}.origin_key`, true);
+    booleanValue(row.manual_start, `${itemLabel}.manual_start`);
+    booleanValue(row.manual_end, `${itemLabel}.manual_end`);
+    booleanValue(row.manual_structure, `${itemLabel}.manual_structure`);
+    nonNegativeInteger(row.parent_revision, `${itemLabel}.parent_revision`);
+    if (row.conflict !== null && !displayElementConflicts.has(
+      row.conflict as Exclude<ProjectDisplayElement["conflict"], null>
+    )) {
+      throw new Error(`Invalid ${itemLabel}.conflict.`);
+    }
+    if (row.conflict !== null) stringValue(row.conflict, `${itemLabel}.conflict`);
+    booleanValue(row.orphaned_manual, `${itemLabel}.orphaned_manual`);
+  });
+  if (Math.abs(cursor - lineEnd) > 1e-6) {
+    throw new Error(`${label} must end at its line end.`);
+  }
+}
+
+function validateAlignmentDiagnostics(value: unknown, label: string) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => stringValue(item, `${label}[${index}]`, true));
+    return;
+  }
+  const row = objectValue(value, label);
+  Object.entries(row).forEach(([key, item]) => {
+    if (
+      item !== null && typeof item !== "string" && typeof item !== "boolean" &&
+      !(typeof item === "number" && Number.isFinite(item))
+    ) {
+      throw new Error(`${label}.${key} must be a finite JSON scalar.`);
+    }
+  });
+}
+
+function validateLyricsAnalysisArtifact(value: unknown, label: string) {
+  const row = objectValue(value, label);
+  for (const key of Object.keys(row)) {
+    if (artifactForbiddenKeys.has(key)) {
+      throw new Error(`${label}.${key} is not a persisted artifact identifier.`);
+    }
+  }
+  stringValue(row.cache_key, `${label}.cache_key`);
+  if (row.cache_format !== undefined) stringValue(row.cache_format, `${label}.cache_format`);
+  if (row.cache_version !== undefined) {
+    if (typeof row.cache_version === "number") finiteValue(row.cache_version, `${label}.cache_version`);
+    else stringValue(row.cache_version, `${label}.cache_version`);
+  }
+  const fingerprint = objectValue(row.source_fingerprint, `${label}.source_fingerprint`);
+  stringValue(fingerprint.algorithm, `${label}.source_fingerprint.algorithm`);
+  const fingerprintValue = stringValue(fingerprint.value, `${label}.source_fingerprint.value`);
+  if (!/^[a-f0-9]{64}$/i.test(fingerprintValue)) {
+    throw new Error(`Invalid ${label}.source_fingerprint.value.`);
+  }
+  if (row.demucs_model !== undefined) stringValue(row.demucs_model, `${label}.demucs_model`);
+  if (row.preprocess_version !== undefined) stringValue(row.preprocess_version, `${label}.preprocess_version`);
+  if (row.sample_rate !== undefined) {
+    const sampleRate = nonNegativeInteger(row.sample_rate, `${label}.sample_rate`);
+    if (sampleRate < 1) throw new Error(`${label}.sample_rate must be positive.`);
+  }
+  if (row.channels !== undefined) {
+    const channels = nonNegativeInteger(row.channels, `${label}.channels`);
+    if (channels < 1) throw new Error(`${label}.channels must be positive.`);
+  }
+  if (row.expires_at !== undefined) {
+    if (typeof row.expires_at === "number") {
+      nonNegativeFinite(row.expires_at, `${label}.expires_at`);
+    } else if (typeof row.expires_at === "string") {
+      if (Number.isNaN(Date.parse(row.expires_at))) throw new Error(`${label}.expires_at must be an ISO date.`);
+    } else {
+      throw new Error(`${label}.expires_at must be an ISO date or epoch.`);
+    }
+  }
+}
+
+const artifactForbiddenKeys = new Set([
+  "path",
+  "file_path",
+  "artifact_path",
+  "vocals_path",
+  "session_id",
+  "binary",
+  "bytes",
+  "data_base64",
+]);
 
 function validateSubtitleEffect(value: unknown, label: string) {
   const row = objectValue(value, label);

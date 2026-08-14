@@ -10,10 +10,10 @@
 
 | 項目 | 値 |
 |---|---|
-| 進行中 | なし |
-| 次のタスクID | `SCUT-040` |
-| ブランチ | `codex/SCUT-036-ass-lyric-effects-integration` |
-| 再編開始時HEAD | `5308509` |
+| 進行中 | なし（SCUT-059は実環境検証待ち） |
+| 次のタスクID | `SCUT-061` |
+| ブランチ | `main` |
+| 今回開始時HEAD | `6bf1074` |
 
 ## 運用ルール
 
@@ -23,6 +23,7 @@
 - 新しい課題は既存タスクへ混在させず、未使用IDで追加し、関連・依存を記録する。
 - 後方互換性、schema migration、破壊的変更が必要な場合は、実装前にユーザー判断を得る。
 - commit、push、PR作成はユーザーが明示的に依頼した場合だけ行う。
+- GUI変更では操作回帰を固定するVitestとGUI typecheckを優先し、Python全件、実解析、実字幕出力は変更範囲に必要な場合だけ実行する。
 
 ## 状態定義
 
@@ -89,3 +90,24 @@
 | SCUT-037 | 字幕・不具合修正 | 名前付きウェイト書体の字幕出力修正 | 完了 | 最高 | SCUT-036 | Medium等の非太字物理faceを正しく解決し、ASS Effect付き出力とportable buildが成功する | [詳細・証拠](../tasks/SCUT-037.md) |
 | SCUT-038 | 字幕・基盤 | MSVC DirectWrite font resolverへの置換 | 完了 | 高 | SCUT-037 | runtimeのPowerShell／子processを廃止し、MSVC DLLから実font path・face・coverageを厳格解決する | [詳細・証拠](../tasks/SCUT-038.md) |
 | SCUT-039 | 字幕・GUI | 字幕エフェクト設定の情報設計修正 | 完了 | 高 | SCUT-036 | Type説明、duration、parameter、外部リンクを整理し、Outline／Boldの重なりを解消する | [詳細・証拠](../tasks/SCUT-039.md) |
+| SCUT-040 | GUI | Cut/Sub共通の全高右サイドパネル | 完了 | 最高 | SCUT-039 | セグメント設定が共通右パネルへ移り、未選択・即時確定・縦積み折りたたみ・focus契約が成立する | [詳細・証拠](../tasks/SCUT-040.md) |
+| SCUT-041 | AI・解析 | Standard Align表示素タイミング検出 | 完了 | 最高 | SCUT-040 | Standard Alignが品質判定付き表示素タイミングを返し、局所再解析用artifactを保持する | [詳細・証拠](../tasks/SCUT-041.md) |
+| SCUT-042 | 字幕・GUI | 表示素サブパネルと編集タイムライン | 完了 | 高 | SCUT-041 | 選択行の表示素を100%幅で表示・編集・再生追従でき、blank・merge・追加が保存される | [詳細・証拠](../tasks/SCUT-042.md) |
+| SCUT-043 | 字幕・解析 | 10秒遅延の行再解析と手動表示素保護 | 完了 | 最高 | SCUT-042 | 確定編集だけが10秒後に対象行を再解析し、同一行の旧task取消とmanual保護が成立する | [詳細・証拠](../tasks/SCUT-043.md) |
+| SCUT-044 | GUI・編集 | セグメントインスペクタ調整と複数選択 | 完了 | 高 | SCUT-040, SCUT-042 | インスペクタ表示を整理し、Cut/Subの複数選択・一括削除と、SubのTimeline移動／Style編集が成立する | [詳細・証拠](../tasks/SCUT-044.md) |
+| SCUT-045 | GUI | Cut/Sub操作・ステータス・タイムライン密度整理 | 完了 | 高 | SCUT-044 | Cutの解析導線とCut/Sub共通ヘッダーを省スペース化し、完了済み準備情報を共通情報Dialogへ集約し、SubのTimeline移動・名称編集・歌詞行密度を改善する | [詳細・証拠](../tasks/SCUT-045.md) |
+| SCUT-046 | GUI・品質保証 | Cut境界プレビュー停止と配布E2Eの安定化 | 完了 | 高 | SCUT-045 | 開始／終了境界previewが設定秒数で停止し、配布E2Eで再現性高く検証される | [詳細・証拠](../tasks/SCUT-046.md) |
+| SCUT-047 | 字幕・GUI | 動画上の表示素タイミングプレビュー | 完了 | 高 | SCUT-042, SCUT-044, SCUT-045 | Sub動画上で字幕と表示素を独立表示でき、選択Timeline全体の表示素が中央再生カーソルへ時間比例で追従する | [詳細・証拠](../tasks/SCUT-047.md) |
+| SCUT-048 | 字幕・GUI | 表示素ズーム編集と範囲再生 | 完了 | 高 | SCUT-046, SCUT-047 | 選択行の前後2秒を含む波形と表示素をwide Dialogで編集でき、再生とloopがDialog表示範囲外へ出ない | [詳細・証拠](../tasks/SCUT-048.md) |
+| SCUT-049 | 字幕・出力 | 選択Timelineを統合するSub字幕ファイル書き出し | 完了 | 高 | SCUT-042, SCUT-045 | Export Subから選択Timelineを統合し、SRT／表示素時刻付きLRC／ASSを一つの字幕ファイルとして書き出せる | [詳細・証拠](../tasks/SCUT-049.md) |
+| SCUT-050 | Cut・再生 | Cut選択時の再生カーソル固定を解消 | 完了 | 高 | SCUT-046 | 選択時の一度だけのseekは維持し、以後のカーソル操作が選択開始位置へ戻されない | [詳細・証拠](../tasks/SCUT-050.md) |
+| SCUT-051 | Sub・再生 | Sub波形上の歌詞行矩形によるスクラブ阻害を解消 | 完了 | 高 | SCUT-046 | 歌詞行矩形が波形スクラブを遮らず、境界ハンドルと歌詞ラベルの編集経路を維持する | [詳細・証拠](../tasks/SCUT-051.md) |
+| SCUT-052 | 字幕・GUI | パレット型字幕エフェクトのカラーピッカー表示 | 完了 | 高 | SCUT-039, SCUT-040 | `color_wave`と`aurora_bands`の各パレット色を個別のカラーピッカーで編集でき、配列の順序・長さ・保存形式を維持する | [詳細・証拠](../tasks/SCUT-052.md) |
+| SCUT-053 | Sub・再生 | 波形スクラブとセグメント入力の回帰を解消 | 完了 | 高 | SCUT-046, SCUT-051 | Sub波形の一回のpointer操作が重複したスクラッチ再生を起こさず、セグメント選択と境界dragを維持する | [詳細・証拠](../tasks/SCUT-053.md) |
+| SCUT-054 | 字幕・GUI | 表示素編集による歌詞行境界ロック | 完了 | 高 | SCUT-042, SCUT-043, SCUT-048, SCUT-053 | 表示素編集行を自動ロックし、手動解除とblank端部内の境界編集、共通UI表示を提供する | [詳細・証拠](../tasks/SCUT-054.md) |
+| SCUT-055 | 字幕・統合 | ASS_Lyric_Effects v3 最新wheel取り込み | 完了 | 最高 | SCUT-036 | 指定repoのクリーンHEAD wheelを固定し、97効果・字幕出力・配布版収集を検証する | [詳細・証拠](../tasks/SCUT-055.md) |
+| SCUT-056 | 字幕・統合／GUI | Subタイムライン下端ガターとローカルASS実装取り込み | 完了 | 最高 | SCUT-055 | 最下段の表示素を横バーから保護し、指定ASS worktreeの実装をhash固定wheelとして配布版へ含める | [詳細・証拠](../tasks/SCUT-056.md) |
+| SCUT-057 | 配布・起動 | PyInstaller外部Electron起動時のDLL検索パス分離 | 保留 | 最高 | SCUT-038 | DLL検索パス分離は検証済みだがsandbox GPU異常は未解消。PyInstaller非経由でも再現 | [詳細・証拠](../tasks/SCUT-057.md) |
+| SCUT-058 | 配布・調査 | CodexSandboxOnlineのElectron GPU子プロセス起動障害特定 | 未着手 | 最高 | SCUT-057 | `0xC0000135`の欠落moduleまたはtoken／ACL制約を実測で特定する | [詳細・証拠](../tasks/SCUT-058.md) |
+| SCUT-059 | Cut/Sub・再生 | スクラッチ後の通常再生ライフサイクル競合の解消 | 実環境検証待ち | 最高 | SCUT-053 | スクラッチ停止後の通常再生・シーク反復を共通media制御と回帰テストで固定し、停止時の媒体／renderer診断ログを追加した。通常デスクトップE2Eが残る | [詳細・証拠](../tasks/SCUT-059.md) |
+| SCUT-060 | Cut/Sub・再生 | 動画デコードエラーの復旧とソフトウェアデコード再起動 | 完了 | 最高 | SCUT-059 | `MEDIA_ERR_DECODE`時に利用者へ通知しvideo要素を一度だけ再構築する。Settingsから当該アプリ起動だけをソフトウェアデコードへ切り替えて再起動でき、回帰テスト・通常ポータブルE2Eで確認した | [詳細・証拠](../tasks/SCUT-060.md) |

@@ -8,7 +8,8 @@ import time
 import traceback
 import uuid
 import win_safesubprocess as subprocess
-from dataclasses import asdict
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,14 +17,27 @@ from .ffmpeg_tools import CREATE_NO_WINDOW, find_ffmpeg, probe_duration
 from .boundary_refiner import BoundaryRefinerConfig
 from .guide import make_unique_stem, safe_filename_stem
 from .gui_pipeline import analyze_for_gui, probe_video
-from .lyrics_alignment import align_lyrics_to_chunks, parse_lyrics, transcribe_whisper_chunks
+from .element_reconciliation import ManualBoundaryConflict, reconcile_display_elements
+from .lyrics_alignment import AlignedLyricsLine, align_lyrics_to_chunks, parse_lyrics, transcribe_whisper_chunks
+from .lyrics_artifact_cache import (
+    CACHE_FORMAT_VERSION,
+    CACHE_TTL_SECONDS,
+    SOURCE_FINGERPRINT_ALGORITHM,
+    LyricsArtifactCache,
+    LyricsArtifactMetadata,
+    build_cache_key,
+    fingerprint_source,
+)
 from .mms_alignment import (
     MMS_MODEL,
+    align_single_standard_display_line,
+    align_standard_display_elements,
     ensure_mms_onnx_model,
     mms_onnx_model_status,
-    refine_standard_alignment_with_mms,
+    prepare_standard_alignment_with_mms,
     resolve_mms_onnx_model_dir,
 )
+from .lyrics_elements import DisplayElement
 from .uta_alignment import align_lyrics_with_uta
 from .rhythm_alignment import (
     adjust_lines_to_rhythm,
@@ -34,6 +48,8 @@ from .rhythm_alignment import (
 from .scratch_proxy import ScratchProxyCancelled, ScratchProxyManager
 from .source_separation import (
     DEMUCS_MODEL,
+    DEMUCS_SAMPLE_RATE,
+    SeparatedAudio,
     demucs_model_status,
     ensure_demucs_model,
     resolve_demucs_model_dir,
@@ -49,9 +65,12 @@ from .subtitle_effect_catalog import (
 )
 from .subtitle_export import (
     DEFAULT_EFFECT_DURATION_MS,
+    SubtitleDisplayElement,
     SubtitleEffect,
+    SubtitleFileSegment,
     SubtitleLane,
     SubtitleSegment,
+    export_subtitle_file,
     export_subtitle_bundle,
     render_subtitle_png_base64,
     subtitle_style_from_mapping,
@@ -196,6 +215,129 @@ class LyricsAnalysisRequest(BaseModel):
     algorithm: Literal["songcut-standard", "uta-align"] = "songcut-standard"
 
 
+class SourceFingerprintRequest(BaseModel):
+    algorithm: Literal["sha256-head-tail-1m-v1"] = SOURCE_FINGERPRINT_ALGORITHM
+    value: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DisplayElementRequest(BaseModel):
+    index: int = Field(ge=0)
+    stable_id: str = Field(min_length=1)
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    confidence: float = Field(ge=0, le=1)
+    source: Literal["blank", "mms-ctc", "mms-ctc-interpolated", "line-proportional", "manual"]
+    source_start: int = Field(default=0, ge=0)
+    source_end: int = Field(default=0, ge=0)
+    pronunciation: str = ""
+    token_start: int = Field(default=0, ge=0)
+    token_end: int = Field(default=0, ge=0)
+    origin_key: str = ""
+    manual_start: bool = False
+    manual_end: bool = False
+    manual_structure: bool = False
+    parent_revision: int = Field(default=0, ge=0)
+    conflict: Literal[
+        "boundary_conflict",
+        "text_conflict",
+        "orphaned_manual",
+        "stale",
+        "manual_conflict",
+    ] | None = None
+    orphaned_manual: bool = False
+
+    @model_validator(mode="after")
+    def validate_element(self) -> "DisplayElementRequest":
+        if self.end - self.start < 0.001 - 1e-6:
+            raise ValueError("display element must be at least 1ms long")
+        if self.source_end < self.source_start or self.token_end < self.token_start:
+            raise ValueError("display element source and token ranges must be ordered")
+        return self
+
+    def to_display_element(self) -> DisplayElement:
+        return DisplayElement(**self.model_dump())
+
+
+class LyricsLineSnapshotRequest(BaseModel):
+    id: str = Field(min_length=1)
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    confidence: float = Field(default=0, ge=0, le=1)
+    alignment_source: str = "manual"
+    display_elements: list[DisplayElementRequest] = Field(default_factory=list)
+    display_element_text: str | None = None
+    line_revision: int = Field(ge=0)
+    display_element_revision: int = Field(ge=0)
+    start_locked: bool = False
+    end_locked: bool = False
+    needs_reanalysis: bool = True
+
+    @model_validator(mode="after")
+    def validate_line(self) -> "LyricsLineSnapshotRequest":
+        if self.end <= self.start:
+            raise ValueError("lyric line end must be after start")
+        ids: set[str] = set()
+        previous_end: float | None = None
+        for element in self.display_elements:
+            if element.stable_id in ids:
+                raise ValueError("display element stable_id values must be unique")
+            ids.add(element.stable_id)
+            if previous_end is not None and abs(element.start - previous_end) > 1e-6:
+                raise ValueError("display elements must form a continuous partition")
+            previous_end = element.end
+            if (
+                element.manual_start
+                or element.manual_end
+                or element.manual_structure
+                or element.source == "manual"
+            ) and (element.start < self.start - 1e-6 or element.end > self.end + 1e-6):
+                raise ValueError("lyric line must contain every manual display element")
+        if self.display_elements:
+            if abs(self.display_elements[0].start - self.start) > 1e-6:
+                raise ValueError("display elements must start at the lyric line boundary")
+            if abs(self.display_elements[-1].end - self.end) > 1e-6:
+                raise ValueError("display elements must end at the lyric line boundary")
+        return self
+
+
+class LyricsLineContextRequest(BaseModel):
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    confidence: float = Field(default=0, ge=0, le=1)
+    alignment_source: str = "manual"
+
+    @model_validator(mode="after")
+    def validate_line(self) -> "LyricsLineContextRequest":
+        if self.end <= self.start:
+            raise ValueError("lyric context line end must be after start")
+        return self
+
+
+class LyricsLineAnalysisRequest(BaseModel):
+    source_path: str
+    source_fingerprint: SourceFingerprintRequest
+    line: LyricsLineSnapshotRequest
+    next_line: LyricsLineContextRequest | None = None
+    language: str = "ja"
+    demucs_device: Literal["auto", "npu", "gpu", "cpu"] = "auto"
+    mms_device: Literal["auto", "gpu", "cpu"] = "auto"
+    expected_line_revision: int = Field(ge=0)
+    expected_display_element_revision: int = Field(ge=0)
+    project_epoch: int = Field(ge=0)
+    reanalysis_epoch: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_revisions(self) -> "LyricsLineAnalysisRequest":
+        if self.expected_line_revision != self.line.line_revision:
+            raise ValueError("expected line revision does not match the snapshot")
+        if self.expected_display_element_revision != self.line.display_element_revision:
+            raise ValueError("expected display element revision does not match the snapshot")
+        return self
+
+
 class SubtitleStyleRequest(BaseModel):
     font_name: str = "Yu Gothic UI"
     font_size: float = Field(default=48.0, gt=0, le=400)
@@ -269,6 +411,74 @@ class SubtitleExportRequest(BaseModel):
     lanes: list[SubtitleLaneRequest] = Field(min_length=1, max_length=3)
 
 
+class SubtitleFileDisplayElementRequest(BaseModel):
+    """LRCへ渡す表示素の本文と絶対タイミングを検証する。"""
+
+    text: str = ""
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SubtitleFileDisplayElementRequest":
+        if self.end <= self.start:
+            raise ValueError("display element end must be after start")
+        return self
+
+
+class SubtitleFileSegmentRequest(BaseModel):
+    """SRT/LRC/ASSの共通字幕行と任意の表示素列を検証する。"""
+
+    id: str
+    text: str
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    style_override: SubtitleStyleRequest | None = None
+    effect_override: SubtitleEffectRequest | None = None
+    display_elements: list[SubtitleFileDisplayElementRequest] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_range_and_elements(self) -> "SubtitleFileSegmentRequest":
+        if self.end <= self.start:
+            raise ValueError("subtitle segment end must be after start")
+        if (self.style_override is None) != (self.effect_override is None):
+            raise ValueError("subtitle segment overrides must provide both style and effect")
+        previous_end = self.start
+        for element in self.display_elements:
+            if element.start < self.start - 1e-6 or element.end > self.end + 1e-6:
+                raise ValueError("display element must remain inside its subtitle segment")
+            if element.start < previous_end - 1e-6:
+                raise ValueError("display elements must be ordered without overlap")
+            previous_end = element.end
+        return self
+
+
+class SubtitleFileLaneRequest(BaseModel):
+    """統合字幕ファイルへ出力するTimelineを表現する。"""
+
+    id: str
+    name: str = ""
+    style: SubtitleStyleRequest = Field(default_factory=SubtitleStyleRequest)
+    effect: SubtitleEffectRequest = Field(default_factory=SubtitleEffectRequest)
+    segments: list[SubtitleFileSegmentRequest] = Field(default_factory=list)
+
+
+class SubtitleFileExportRequest(BaseModel):
+    """選択Timelineを一つの字幕ファイルに統合するrequestを検証する。"""
+
+    source_path: str
+    output_dir: str
+    format: Literal["srt", "lrc", "ass"]
+    play_res_x: int = Field(gt=0)
+    play_res_y: int = Field(gt=0)
+    lanes: list[SubtitleFileLaneRequest] = Field(min_length=1, max_length=3)
+
+    @model_validator(mode="after")
+    def validate_nonempty_lanes(self) -> "SubtitleFileExportRequest":
+        if not any(lane.segments for lane in self.lanes):
+            raise ValueError("at least one selected subtitle timeline must contain a segment")
+        return self
+
+
 class SubtitleRenderItemRequest(BaseModel):
     segment_id: str
     signature: str = Field(min_length=1, max_length=4096)
@@ -294,6 +504,12 @@ class JobRecord(BaseModel):
     error: str | None = None
     created_at: float
     updated_at: float
+    scope: str | None = None
+    line_id: str | None = None
+    project_epoch: int | None = None
+    line_revision: int | None = None
+    display_element_revision: int | None = None
+    reanalysis_epoch: int | None = None
 
 
 app = FastAPI(title="songcut API", version="0.1.0")
@@ -306,14 +522,48 @@ app.add_middleware(
 )
 
 _jobs: dict[str, JobRecord] = {}
-_jobs_lock = threading.Lock()
+_jobs_lock = threading.RLock()
 _job_cancel_events: dict[str, threading.Event] = {}
+_line_job_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="songcut-line-reanalysis")
+_line_job_futures: dict[str, Future[None]] = {}
+_active_line_jobs: dict[str, str] = {}
+_line_cache_commit_lock = threading.Lock()
 _scratch_proxy_manager = ScratchProxyManager()
 _waveform_generator = WaveformGenerator()
 _waveform_points: dict[str, list[dict[str, float | int]]] = {}
 _waveform_finished_at: dict[str, float] = {}
 WAVEFORM_JOB_TTL_SECONDS = 10 * 60
 FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html"
+LYRICS_DEMUCS_PREPROCESS_VERSION = "openvino-htdemucs-v4-stereo-44100-v1"
+_lyrics_artifact_cache: LyricsArtifactCache | None = None
+
+
+def _get_lyrics_artifact_cache() -> LyricsArtifactCache:
+    """歌詞局所再解析で共有するdisk cacheを遅延初期化する。"""
+
+    global _lyrics_artifact_cache
+    if _lyrics_artifact_cache is None:
+        _lyrics_artifact_cache = LyricsArtifactCache()
+    return _lyrics_artifact_cache
+
+
+def _lyrics_artifact_payload(item: LyricsArtifactMetadata) -> dict[str, Any]:
+    """Projectへ保存可能なpath非依存のartifact識別情報だけを返す。"""
+
+    return {
+        "cache_key": item.cache_key,
+        "cache_format": CACHE_FORMAT_VERSION,
+        "cache_version": 1,
+        "source_fingerprint": {
+            "algorithm": SOURCE_FINGERPRINT_ALGORITHM,
+            "value": item.key.source_fingerprint,
+        },
+        "demucs_model": item.key.demucs_model,
+        "preprocess_version": item.key.preprocess_version,
+        "sample_rate": item.key.sample_rate,
+        "channels": item.key.channels,
+        "expires_at": item.last_used + CACHE_TTL_SECONDS,
+    }
 
 
 @app.get("/health")
@@ -562,9 +812,44 @@ def create_lyrics_analysis_job(request: LyricsAnalysisRequest) -> JobRecord:
     return start_job("lyrics-analysis", lambda job_id: _lyrics_analysis_job(job_id, request))
 
 
+@app.post("/lyrics-analysis/line-jobs")
+def create_lyrics_line_analysis_job(request: LyricsLineAnalysisRequest) -> JobRecord:
+    source = require_file(request.source_path)
+    actual_fingerprint = fingerprint_source(source)
+    if actual_fingerprint != request.source_fingerprint.value:
+        raise HTTPException(status_code=409, detail="source fingerprint changed")
+    return _start_lyrics_line_job(request, actual_fingerprint)
+
+
+@app.delete("/lyrics-analysis/line-jobs/{job_id}")
+def cancel_lyrics_line_analysis_job(job_id: str) -> JobRecord:
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None or job.kind != "lyrics-line-reanalysis":
+            raise HTTPException(status_code=404, detail="lyrics line analysis job not found")
+        if job.status in {"completed", "failed", "cancelled"}:
+            return job
+        return _cancel_line_job_locked(job_id)
+
+
 @app.post("/subtitle-export/jobs")
 def create_subtitle_export_job(request: SubtitleExportRequest) -> JobRecord:
     return start_job("subtitle-export", lambda job_id: _subtitle_export_job(job_id, request))
+
+
+@app.post("/subtitle-files/export")
+def export_subtitle_file_route(request: SubtitleFileExportRequest) -> dict[str, str]:
+    """選択Timelineを統合した一つの字幕ファイルを同期書き出しする。"""
+
+    source = require_file(request.source_path)
+    return export_subtitle_file(
+        source,
+        Path(request.output_dir),
+        _subtitle_file_lanes(request.lanes),
+        export_format=request.format,
+        play_res_x=request.play_res_x,
+        play_res_y=request.play_res_y,
+    )
 
 
 @app.post("/subtitle-render/jobs")
@@ -651,6 +936,96 @@ def start_job(kind: str, target, *, cancel_event: threading.Event | None = None)
     return record
 
 
+def _job_record_with_changes(current: JobRecord, **changes: Any) -> JobRecord:
+    data = current.model_dump()
+    data.update(changes)
+    data["updated_at"] = time.time()
+    return JobRecord(**data)
+
+
+def _cancel_line_job_locked(job_id: str) -> JobRecord:
+    """``_jobs_lock``保持中に行jobをqueued/runningに応じて取消する。"""
+
+    current = _jobs[job_id]
+    if current.status in {"completed", "failed", "cancelled"}:
+        return current
+    cancel_event = _job_cancel_events.get(job_id)
+    with _line_cache_commit_lock:
+        if cancel_event is not None:
+            cancel_event.set()
+    future = _line_job_futures.get(job_id)
+    cancelled_before_run = future.cancel() if future is not None else current.status == "queued"
+    status = "cancelled" if cancelled_before_run else "cancelling"
+    updated = _job_record_with_changes(
+        current,
+        status=status,
+        progress=1.0 if status == "cancelled" else current.progress,
+        message=(
+            "Lyrics line analysis cancelled."
+            if status == "cancelled"
+            else "Cancelling lyrics line analysis."
+        ),
+        result=None,
+    )
+    _jobs[job_id] = updated
+    if status == "cancelled" and current.scope is not None:
+        if _active_line_jobs.get(current.scope) == job_id:
+            _active_line_jobs.pop(current.scope, None)
+    return updated
+
+
+def _line_job_done(job_id: str, scope: str) -> None:
+    with _jobs_lock:
+        _line_job_futures.pop(job_id, None)
+        _job_cancel_events.pop(job_id, None)
+        if _active_line_jobs.get(scope) == job_id:
+            _active_line_jobs.pop(scope, None)
+
+
+def _start_lyrics_line_job(
+    request: LyricsLineAnalysisRequest,
+    actual_fingerprint: str,
+) -> JobRecord:
+    job_id = str(uuid.uuid4())
+    scope = f"{actual_fingerprint}:{request.line.id}"
+    cancel_event = threading.Event()
+    now = time.time()
+    record = JobRecord(
+        id=job_id,
+        kind="lyrics-line-reanalysis",
+        status="queued",
+        message="Lyrics line analysis queued.",
+        created_at=now,
+        updated_at=now,
+        scope=scope,
+        line_id=request.line.id,
+        project_epoch=request.project_epoch,
+        line_revision=request.expected_line_revision,
+        display_element_revision=request.expected_display_element_revision,
+        reanalysis_epoch=request.reanalysis_epoch,
+    )
+    with _jobs_lock:
+        previous_job_id = _active_line_jobs.get(scope)
+        if previous_job_id is not None and previous_job_id in _jobs:
+            _cancel_line_job_locked(previous_job_id)
+        _jobs[job_id] = record
+        _job_cancel_events[job_id] = cancel_event
+        _active_line_jobs[scope] = job_id
+    future = _line_job_executor.submit(
+        _lyrics_line_analysis_job,
+        job_id,
+        request,
+        actual_fingerprint,
+        cancel_event,
+    )
+    with _jobs_lock:
+        _line_job_futures[job_id] = future
+        if cancel_event.is_set():
+            future.cancel()
+    future.add_done_callback(lambda _future: _line_job_done(job_id, scope))
+    return record
+
+
 def update_job(job_id: str, **changes: Any) -> None:
     _add_message_metadata(changes)
     with _jobs_lock:
@@ -665,7 +1040,7 @@ def update_job_unless_cancelled(job_id: str, cancel_event: threading.Event, **ch
     _add_message_metadata(changes)
     with _jobs_lock:
         current = _jobs[job_id]
-        if cancel_event.is_set() or current.status == "cancelled":
+        if cancel_event.is_set() or current.status in {"cancelling", "cancelled"}:
             return False
         data = current.model_dump()
         data.update(changes)
@@ -699,6 +1074,11 @@ _MESSAGE_CODES = {
     "Downloading MMS forced aligner.": "mmsDownloading",
     "MMS forced aligner ready.": "mmsReady",
     "Refining lyric onset with MMS.": "lyricsRefiningOnset",
+    "Lyrics line analysis queued.": "lyricsLineQueued",
+    "Analyzing lyric display elements.": "lyricsLineRunning",
+    "Cancelling lyrics line analysis.": "lyricsLineCancelling",
+    "Lyrics line analysis cancelled.": "lyricsLineCancelled",
+    "Lyrics line analysis complete.": "lyricsLineComplete",
 }
 
 
@@ -731,7 +1111,25 @@ def _add_message_metadata(changes: dict[str, Any]) -> None:
 
 
 def fail_job(job_id: str, exc: Exception) -> None:
-    update_job(job_id, status="failed", progress=1.0, error=f"{exc}\n{traceback.format_exc()}")
+    with _jobs_lock:
+        current = _jobs[job_id]
+        if current.status == "cancelled":
+            return
+        if current.status == "cancelling":
+            _jobs[job_id] = _job_record_with_changes(
+                current,
+                status="cancelled",
+                progress=1.0,
+                message="Lyrics line analysis cancelled.",
+                result=None,
+            )
+            return
+        _jobs[job_id] = _job_record_with_changes(
+            current,
+            status="failed",
+            progress=1.0,
+            error=f"{exc}\n{traceback.format_exc()}",
+        )
 
 
 def _ffmpeg_check_payload() -> dict[str, Any]:
@@ -1134,24 +1532,288 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
         fail_job(job_id, exc)
 
 
+class LyricsLineJobCancelled(RuntimeError):
+    """行局所再解析が協調取消された。"""
+
+
+def _finish_cancelled_line_job(job_id: str) -> None:
+    with _jobs_lock:
+        current = _jobs.get(job_id)
+        if current is None or current.status in {"completed", "failed", "cancelled"}:
+            return
+        _jobs[job_id] = _job_record_with_changes(
+            current,
+            status="cancelled",
+            progress=1.0,
+            message="Lyrics line analysis cancelled.",
+            result=None,
+        )
+
+
+def _lyrics_line_analysis_job(
+    job_id: str,
+    request: LyricsLineAnalysisRequest,
+    expected_fingerprint: str,
+    cancel_event: threading.Event,
+) -> None:
+    """vocals cacheと局所MMSだけを使い、対象行の表示素を置換する。"""
+
+    def checkpoint() -> None:
+        with _jobs_lock:
+            current = _jobs.get(job_id)
+            cancelled = (
+                cancel_event.is_set()
+                or current is None
+                or current.status in {"cancelling", "cancelled"}
+            )
+        if cancelled:
+            raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+
+    def progress(value: float, message: str) -> None:
+        if not update_job_unless_cancelled(
+            job_id,
+            cancel_event,
+            status="running",
+            progress=max(0.0, min(0.99, value)),
+            message=message,
+        ):
+            raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+
+    try:
+        checkpoint()
+        source = require_file(request.source_path)
+        if fingerprint_source(source) != expected_fingerprint:
+            raise RuntimeError("source fingerprint changed while line analysis was queued")
+        artifact_cache = _get_lyrics_artifact_cache()
+        artifact_key = build_cache_key(
+            expected_fingerprint,
+            demucs_model=DEMUCS_MODEL,
+            preprocess_version=LYRICS_DEMUCS_PREPROCESS_VERSION,
+            sample_rate=DEMUCS_SAMPLE_RATE,
+            channels=2,
+        )
+        progress(0.03, "Preparing isolated vocals for lyric line analysis.")
+        with _line_cache_commit_lock:
+            if cancel_event.is_set():
+                raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+            artifact_item = artifact_cache.get(artifact_key)
+        cache_hit = artifact_item is not None
+        if artifact_item is None:
+            with tempfile.TemporaryDirectory(prefix="songcut-line-demucs-") as temporary_directory:
+                separated = separate_vocals(
+                    source,
+                    Path(temporary_directory),
+                    device=request.demucs_device,
+                    progress_callback=lambda value: progress(
+                        0.05 + 0.43 * value,
+                        "Separating vocals for lyric line analysis.",
+                    ),
+                )
+                checkpoint()
+                with _line_cache_commit_lock:
+                    if cancel_event.is_set():
+                        raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+                    artifact_cache.put(
+                        artifact_key,
+                        separated.vocals,
+                        source_path=source,
+                        metadata={"device_used": separated.device_used},
+                    )
+                    artifact_cache.prune()
+                    artifact_item = artifact_cache.get(artifact_key)
+            if artifact_item is None:
+                raise RuntimeError("isolated vocals cache commit failed")
+        checkpoint()
+        progress(0.52, "Analyzing lyric display elements.")
+
+        line_request = request.line
+        current_elements = tuple(element.to_display_element() for element in line_request.display_elements)
+        next_revision = line_request.display_element_revision + 1
+        aligned_line = AlignedLyricsLine(
+            index=1,
+            text=line_request.text,
+            start=line_request.start,
+            end=line_request.end,
+            confidence=line_request.confidence,
+            source=line_request.alignment_source,
+            matched_characters=0,
+            exact_characters=0,
+            total_characters=len(line_request.text),
+            display_elements=current_elements,
+            line_revision=line_request.line_revision,
+            display_element_revision=line_request.display_element_revision,
+            start_locked=line_request.start_locked,
+            end_locked=line_request.end_locked,
+            needs_reanalysis=True,
+        )
+        next_line = None
+        if request.next_line is not None:
+            context = request.next_line
+            next_line = AlignedLyricsLine(
+                index=2,
+                text=context.text,
+                start=context.start,
+                end=context.end,
+                confidence=context.confidence,
+                source=context.alignment_source,
+                matched_characters=0,
+                exact_characters=0,
+                total_characters=len(context.text),
+            )
+        generated, mms_device_used = align_single_standard_display_line(
+            artifact_item.vocals_path,
+            aligned_line,
+            line_id=line_request.id,
+            language=request.language,
+            device=request.mms_device,
+            next_line=next_line,
+            parent_revision=next_revision,
+            progress_callback=lambda value: progress(
+                0.52 + 0.43 * value,
+                "Analyzing lyric display elements.",
+            ),
+            cancel_check=checkpoint,
+        )
+        checkpoint()
+        old_text = line_request.display_element_text
+        if old_text is None:
+            old_text = "".join(element.text for element in current_elements) or line_request.text
+        try:
+            reconciled = reconcile_display_elements(
+                line_id=line_request.id,
+                old_text=old_text,
+                new_text=line_request.text,
+                existing=current_elements,
+                generated=generated.elements,
+                line_start=line_request.start,
+                line_end=line_request.end,
+                parent_revision=next_revision,
+            )
+        except ManualBoundaryConflict as exc:
+            result = {
+                "outcome": "conflict",
+                "conflict": str(exc),
+                "line_id": line_request.id,
+                "project_epoch": request.project_epoch,
+                "line_revision": request.expected_line_revision,
+                "display_element_revision": request.expected_display_element_revision,
+                "reanalysis_epoch": request.reanalysis_epoch,
+                "cache_hit": cache_hit,
+                "analysis_artifact": _lyrics_artifact_payload(artifact_item),
+            }
+            if not update_job_unless_cancelled(
+                job_id,
+                cancel_event,
+                status="completed",
+                progress=1.0,
+                message="Lyrics line analysis complete.",
+                result=result,
+            ):
+                raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+            return
+
+        diagnostics = asdict(generated.diagnostics)
+        diagnostics["rejection_reasons"] = ",".join(generated.diagnostics.rejection_reasons)
+        result = {
+            "outcome": "applied",
+            "line_id": line_request.id,
+            "project_epoch": request.project_epoch,
+            "line_revision": request.expected_line_revision,
+            "display_element_revision": request.expected_display_element_revision,
+            "reanalysis_epoch": request.reanalysis_epoch,
+            "cache_hit": cache_hit,
+            "mms_device_used": mms_device_used,
+            "analysis_artifact": _lyrics_artifact_payload(artifact_item),
+            "line": {
+                "id": line_request.id,
+                "text": line_request.text,
+                "start": line_request.start,
+                "end": line_request.end,
+                "confidence": line_request.confidence,
+                "display_elements": [asdict(element) for element in reconciled.elements],
+                "display_element_text": line_request.text,
+                "line_revision": line_request.line_revision,
+                "display_element_revision": next_revision,
+                "start_locked": line_request.start_locked,
+                "end_locked": line_request.end_locked,
+                "alignment_diagnostics": diagnostics,
+                "needs_reanalysis": False,
+            },
+            "reconciliation": {
+                "preserved_manual_element_ids": list(reconciled.preserved_manual_element_ids),
+                "orphaned_manual_element_ids": list(reconciled.orphaned_manual_element_ids),
+                "dropped_auto_element_ids": list(reconciled.dropped_auto_element_ids),
+                "reconciliation_conflicts": list(reconciled.reconciliation_conflicts),
+            },
+        }
+        checkpoint()
+        if not update_job_unless_cancelled(
+            job_id,
+            cancel_event,
+            status="completed",
+            progress=1.0,
+            message="Lyrics line analysis complete.",
+            result=result,
+        ):
+            raise LyricsLineJobCancelled("lyrics line analysis cancelled")
+    except LyricsLineJobCancelled:
+        _finish_cancelled_line_job(job_id)
+    except Exception as exc:
+        if cancel_event.is_set():
+            _finish_cancelled_line_job(job_id)
+        else:
+            fail_job(job_id, exc)
+
+
 def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
     started = time.perf_counter()
     try:
         source = require_file(request.source_path)
         document = parse_lyrics(request.lyrics_text)
-        update_job(job_id, status="running", progress=0.03, message="Separating vocals with OpenVINO Demucs.")
-        with tempfile.TemporaryDirectory(prefix="songcut-demucs-") as temporary_directory:
-            separated = separate_vocals(
-                source,
-                Path(temporary_directory),
-                device=request.demucs_device,
-                progress_callback=lambda progress: update_job(
-                    job_id,
-                    status="running",
-                    progress=0.03 + 0.37 * progress,
-                    message="Separating vocals with OpenVINO Demucs.",
-                ),
+        artifact_item: LyricsArtifactMetadata | None = None
+        artifact_cache: LyricsArtifactCache | None = None
+        artifact_key = None
+        if request.algorithm == "songcut-standard" and source.is_file():
+            artifact_cache = _get_lyrics_artifact_cache()
+            artifact_key = build_cache_key(
+                fingerprint_source(source),
+                demucs_model=DEMUCS_MODEL,
+                preprocess_version=LYRICS_DEMUCS_PREPROCESS_VERSION,
+                sample_rate=DEMUCS_SAMPLE_RATE,
+                channels=2,
             )
+            artifact_item = artifact_cache.get(artifact_key)
+        update_job(job_id, status="running", progress=0.03, message="Preparing isolated vocals.")
+        with tempfile.TemporaryDirectory(prefix="songcut-demucs-") as temporary_directory:
+            if artifact_item is not None:
+                separated = SeparatedAudio(
+                    vocals=artifact_item.vocals_path,
+                    no_vocals=artifact_item.vocals_path,
+                    model=artifact_item.key.demucs_model,
+                    device_used="CACHE",
+                )
+                update_job(job_id, status="running", progress=0.40, message="Reusing isolated vocals cache.")
+            else:
+                separated = separate_vocals(
+                    source,
+                    Path(temporary_directory),
+                    device=request.demucs_device,
+                    progress_callback=lambda progress: update_job(
+                        job_id,
+                        status="running",
+                        progress=0.03 + 0.37 * progress,
+                        message="Separating vocals with OpenVINO Demucs.",
+                    ),
+                )
+                if artifact_cache is not None and artifact_key is not None:
+                    artifact_item = artifact_cache.put(
+                        artifact_key,
+                        separated.vocals,
+                        source_path=source,
+                        metadata={"device_used": separated.device_used},
+                    )
+                    artifact_cache.prune()
+                    artifact_item = artifact_cache.get(artifact_key)
             update_job(
                 job_id,
                 status="running",
@@ -1164,6 +1826,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             )
             uta_diagnostics: dict[str, Any] | None = None
             mms_diagnostics: dict[str, Any] | None = None
+            mms_context = None
             if request.algorithm == "uta-align":
                 uta_output = align_lyrics_with_uta(
                     source,
@@ -1199,7 +1862,7 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
                     progress=0.72,
                     message="Refining lyric onset with MMS.",
                 )
-                alignment, mms_output = refine_standard_alignment_with_mms(
+                mms_context = prepare_standard_alignment_with_mms(
                     separated.vocals,
                     document,
                     alignment,
@@ -1212,7 +1875,8 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
                         message="Refining lyric onset with MMS.",
                     ),
                 )
-                mms_diagnostics = asdict(mms_output)
+                alignment = mms_context.alignment
+                mms_diagnostics = asdict(mms_context.diagnostics)
         beat_warning: str | None = None
         tempo_bpm = 0.0
         beat_times: list[float] = []
@@ -1231,8 +1895,56 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             rhythm_grid = build_extended_rhythm_grid(beat_times, media_duration=duration)
         except Exception as exc:
             beat_warning = str(exc)
+        display_results = {}
+        if mms_context is not None:
+            update_job(job_id, status="running", progress=0.88, message="Aligning lyric display elements.")
+            display_results = align_standard_display_elements(
+                mms_context,
+                adjusted_lines,
+                language=request.language or "auto",
+                progress_callback=lambda progress: update_job(
+                    job_id,
+                    status="running",
+                    progress=0.88 + 0.08 * progress,
+                    message="Aligning lyric display elements.",
+                ),
+            )
+            adjusted_lines = [
+                replace(
+                    line,
+                    display_elements=display_results[line.index].elements,
+                    alignment_diagnostics=display_results[line.index].diagnostics.rejection_reasons,
+                    needs_reanalysis=False,
+                )
+                for line in adjusted_lines
+            ]
         stats = confidence_statistics(adjusted_lines)
         low_indexes = set(stats.low_outlier_indexes)
+        line_payloads: list[dict[str, Any]] = []
+        for line in adjusted_lines:
+            payload = {**asdict(line), "low_confidence_outlier": line.index in low_indexes}
+            detail = display_results.get(line.index)
+            if detail is not None:
+                diagnostics_payload = asdict(detail.diagnostics)
+                diagnostics_payload["rejection_reasons"] = ",".join(
+                    detail.diagnostics.rejection_reasons
+                )
+                payload["alignment_diagnostics"] = diagnostics_payload
+                payload["display_elements"] = [asdict(element) for element in detail.elements]
+                payload["display_element_text"] = line.text
+            else:
+                for field_name in (
+                    "display_elements",
+                    "display_element_text",
+                    "line_revision",
+                    "display_element_revision",
+                    "start_locked",
+                    "end_locked",
+                    "alignment_diagnostics",
+                    "needs_reanalysis",
+                ):
+                    payload.pop(field_name, None)
+            line_payloads.append(payload)
         result = {
             "title": alignment.title,
             "duration": duration,
@@ -1247,16 +1959,15 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
             "rhythm_grid": [asdict(point) for point in rhythm_grid],
             "beat_warning": beat_warning,
             "confidence_statistics": asdict(stats),
-            "lines": [
-                {**asdict(line), "low_confidence_outlier": line.index in low_indexes}
-                for line in adjusted_lines
-            ],
+            "lines": line_payloads,
             "elapsed_seconds": round(time.perf_counter() - started, 3),
         }
         if uta_diagnostics is not None:
             result["uta_align_diagnostics"] = uta_diagnostics
         if mms_diagnostics is not None:
             result["mms_diagnostics"] = mms_diagnostics
+        if artifact_item is not None:
+            result["analysis_artifact"] = _lyrics_artifact_payload(artifact_item)
         update_job(
             job_id,
             status="completed",
@@ -1266,6 +1977,57 @@ def _lyrics_analysis_job(job_id: str, request: LyricsAnalysisRequest) -> None:
         )
     except Exception as exc:
         fail_job(job_id, exc)
+
+
+def _subtitle_file_lanes(request_lanes: list[SubtitleFileLaneRequest]) -> list[SubtitleLane]:
+    """字幕ファイル用requestを既存ASS/SRT rendererのlaneへ変換する。"""
+
+    return [
+        SubtitleLane(
+            id=lane.id,
+            name=lane.name,
+            style=subtitle_style_from_mapping(lane.style.model_dump()),
+            effect=SubtitleEffect(
+                name=lane.effect.name,
+                start_duration_ms=lane.effect.start_duration_ms,
+                end_duration_ms=lane.effect.end_duration_ms,
+                params=lane.effect.params,
+            ),
+            segments=[
+                SubtitleFileSegment(
+                    id=segment.id,
+                    text=segment.text,
+                    start=segment.start,
+                    end=segment.end,
+                    style_override=(
+                        subtitle_style_from_mapping(segment.style_override.model_dump())
+                        if segment.style_override is not None
+                        else None
+                    ),
+                    effect_override=(
+                        SubtitleEffect(
+                            name=segment.effect_override.name,
+                            start_duration_ms=segment.effect_override.start_duration_ms,
+                            end_duration_ms=segment.effect_override.end_duration_ms,
+                            params=segment.effect_override.params,
+                        )
+                        if segment.effect_override is not None
+                        else None
+                    ),
+                    display_elements=tuple(
+                        SubtitleDisplayElement(
+                            text=element.text,
+                            start=element.start,
+                            end=element.end,
+                        )
+                        for element in segment.display_elements
+                    ),
+                )
+                for segment in lane.segments
+            ],
+        )
+        for lane in request_lanes
+    ]
 
 
 def _subtitle_export_job(job_id: str, request: SubtitleExportRequest) -> None:

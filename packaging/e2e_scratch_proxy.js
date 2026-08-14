@@ -247,6 +247,49 @@ async function endScratch(cdp, point) {
   });
 }
 
+async function pressSpace(cdp) {
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: " ",
+    code: "Space",
+    windowsVirtualKeyCode: 32,
+    nativeVirtualKeyCode: 32
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: " ",
+    code: "Space",
+    windowsVirtualKeyCode: 32,
+    nativeVirtualKeyCode: 32
+  });
+}
+
+async function assertScratchPlaybackRecovery(cdp, label) {
+  const ratios = [0.16, 0.43, 0.76];
+  for (let index = 0; index < ratios.length; index += 1) {
+    const point = await beginScratch(cdp, ratios[index]);
+    await moveScratch(cdp, Math.min(0.92, ratios[index] + 0.12));
+    await endScratch(cdp, point);
+    await waitFor(
+      cdp,
+      `(() => { const video = document.querySelector("video"); const audio = document.querySelector("audio"); return video?.paused === true && video?.dataset.scratchPreviewActive === "false" && audio?.dataset.scratchPreviewActive === "false"; })()`,
+      5_000,
+      `${label} scratch ${index + 1} stop`
+    );
+    const stopped = await proxyState(cdp);
+    await pressSpace(cdp);
+    await waitFor(
+      cdp,
+      `(() => { const video = document.querySelector("video"); return video && video.paused === false && video.currentTime > ${Number(stopped.videoTime || 0) + 0.03}; })()`,
+      5_000,
+      `${label} replay ${index + 1}`
+    );
+    await pressSpace(cdp);
+    await waitFor(cdp, `document.querySelector("video")?.paused === true`, 5_000, `${label} pause ${index + 1}`);
+  }
+  log(`${label}_PLAYBACK_RECOVERY_OK`);
+}
+
 async function assertOriginalScratch(cdp, label) {
   const point = await beginScratch(cdp, 0.25);
   const first = await proxyState(cdp);
@@ -322,17 +365,20 @@ async function runCase(codec, port) {
       const state = await proxyState(cdp);
       assertPass(state.proxyRequests.length === 0 && !state.audioDuration, "AAC input unexpectedly created a proxy.", state);
       await assertOriginalScratch(cdp, "AAC");
+      await assertScratchPlaybackRecovery(cdp, "AAC");
       return;
     }
 
     await waitFor(cdp, `document.querySelector("audio")?.dataset.scratchProxyState === "preparing"`, 10_000, "held Opus proxy");
     await assertOriginalScratch(cdp, "OPUS_PRE_READY");
+    await assertScratchPlaybackRecovery(cdp, "OPUS_PRE_READY");
     await evaluate(cdp, `window.__holdScratchProxyJobs = false; true`);
     await waitFor(cdp, `document.querySelector("audio")?.dataset.scratchProxyState === "ready"`, 30_000, "Opus proxy ready");
     const ready = await proxyState(cdp);
     assertPass(ready.proxyRequests.some((request) => request.method === "POST"), "Opus proxy API was not requested.", ready);
     assertPass(ready.audioDuration > 11.5, "Loaded proxy duration is invalid.", ready);
     await assertProxyScratch(cdp);
+    await assertScratchPlaybackRecovery(cdp, "OPUS_PROXY");
 
     await prepareRenderer(cdp, false, false);
     await clickLoad(cdp);
@@ -340,6 +386,7 @@ async function runCase(codec, port) {
     const disabled = await proxyState(cdp);
     assertPass(disabled.proxyRequests.length === 0 && !disabled.audioDuration, "Disabled setting still prepared a proxy.", disabled);
     await assertOriginalScratch(cdp, "OPUS_DISABLED");
+    await assertScratchPlaybackRecovery(cdp, "OPUS_DISABLED");
   } finally {
     try {
       cdp?.close();

@@ -6,12 +6,17 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CutAnalyzeGuideDialog } from "@/components/CutAnalyzeGuideDialog";
+import type { TaskStatusMetaItem } from "@/components/ProjectInformation";
 import { ModeToolbar } from "@/components/ModeToolbar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import { TimelineSurface } from "@/components/TimelineSurface";
 import { formatTime } from "@/lib/time";
+import {
+  segmentSelectionModifiers,
+  type SegmentSelectionModifiers,
+} from "@/lib/segmentSelection";
 import { useBoundaryDrag } from "@/lib/useBoundaryDrag";
 import type { CutWaveformAmplitudeProfile } from "@/lib/waveform";
 import type { ModeMediaViewModel, ModePanelViewModel } from "@/lib/modeViewModel";
@@ -22,9 +27,10 @@ export type CutTimelineProps = ModeMediaViewModel & {
   waveformAmplitudeProfile: CutWaveformAmplitudeProfile;
   segments: Segment[];
   selectedSegment: Segment | null;
+  selectedIds: ReadonlySet<string>;
+  onSelect: (segment: Segment, modifiers: SegmentSelectionModifiers) => void;
   onBoundaryPreview: (edge: "start" | "end", time: number) => void;
   onChangeCommitted: () => void;
-  onEditTiming: () => void;
 };
 
 export type CutTimelineDomainProps = Omit<CutTimelineProps, keyof ModeMediaViewModel>;
@@ -32,7 +38,8 @@ export type CutTimelineDomainProps = Omit<CutTimelineProps, keyof ModeMediaViewM
 export type CutSegmentsProps = {
   segments: Segment[];
   selectedId: string | null;
-  onSelect: (segment: Segment) => void;
+  selectedIds: ReadonlySet<string>;
+  onSelect: (segment: Segment, modifiers: SegmentSelectionModifiers) => void;
   onToggle: (segment: Segment, checked: boolean) => void;
   onTitleChange: (segment: Segment, title: string) => void;
   onTranscript: (segment: Segment) => void;
@@ -44,26 +51,28 @@ export type CutModePanelProps = {
   apiReady: boolean;
   checkedCount: number;
   onLoad: () => void;
-  onAnalyze: () => void;
+  onAnalyze: (guideText: string) => void;
   onExport: () => void;
   onExportTimestamp: () => void;
   onSettings: () => void;
   guideText: string;
-  onGuideTextChange: (value: string) => void;
-  taskStatus: React.ReactNode;
+  renderTaskStatus: (modeMeta?: TaskStatusMetaItem[]) => React.ReactNode;
   timeline: CutTimelineDomainProps;
   segments: CutSegmentsProps;
 };
 
 /** `CutModePanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
 export function CutModePanel(props: CutModePanelProps) {
+  const [analyzeGuideOpen, setAnalyzeGuideOpen] = useState(false);
+
   return (
     <>
       <ModeToolbar
         transport={props.view.transport}
+        information={props.renderTaskStatus()}
         load={{ onClick: props.onLoad }}
         analyze={{
-          onClick: props.onAnalyze,
+          onClick: () => setAnalyzeGuideOpen(true),
           disabled: !props.view.media.sourceAvailable || !props.apiReady,
         }}
         exportAction={{
@@ -78,10 +87,15 @@ export function CutModePanel(props: CutModePanelProps) {
           {tr("common.exportTs")}
         </Button>
       </ModeToolbar>
-      <div className="guide-row">
-        <Textarea value={props.guideText} onChange={(event) => props.onGuideTextChange(event.target.value)} placeholder={tr("app.guidePlaceholder")} />
-        {props.taskStatus}
-      </div>
+      <CutAnalyzeGuideDialog
+        open={analyzeGuideOpen}
+        guideText={props.guideText}
+        onCancel={() => setAnalyzeGuideOpen(false)}
+        onConfirm={(guideText) => {
+          setAnalyzeGuideOpen(false);
+          props.onAnalyze(guideText);
+        }}
+      />
       <TimelineStack {...props.view.media} {...props.timeline} />
       <SegmentList {...props.segments} />
     </>
@@ -114,16 +128,18 @@ function TimelineStack(props: CutTimelineProps) {
       wheelScope="surface"
       waveformClassName="waveform-timeline timeline-row"
       rangeLayer={({ width }) => [
-        ...props.segments.filter((segment) => segment.id !== props.selectedSegment?.id),
-        ...props.segments.filter((segment) => segment.id === props.selectedSegment?.id),
+        ...props.segments.filter((segment) => !props.selectedIds.has(segment.id)),
+        ...props.segments.filter((segment) => props.selectedIds.has(segment.id)),
       ].map((segment) => (
         <rect
           key={segment.id}
+          className={`cut-waveform-segment ${props.selectedIds.has(segment.id) ? "selected" : ""}`}
           x={(segment.start / Math.max(0.001, props.duration)) * width}
           y="10"
           width={Math.max(1, ((segment.end - segment.start) / Math.max(0.001, props.duration)) * width)}
           height="66"
-          fill={segment.id === props.selectedSegment?.id ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
+          fill={props.selectedIds.has(segment.id) ? "rgba(67, 190, 155, 0.42)" : "rgba(69, 179, 157, 0.26)"}
+          pointerEvents="none"
         />
       ))}
     >
@@ -137,7 +153,6 @@ function TimelineStack(props: CutTimelineProps) {
           onBoundaryPreview={props.onBoundaryPreview}
           onChangeCommitted={props.onChangeCommitted}
           onEditingChange={props.onHandleEditingChange}
-          onEditTiming={props.onEditTiming}
         />
       )}
     </TimelineSurface>
@@ -153,9 +168,7 @@ function SegmentTimeline(props: {
   onBoundaryPreview: (edge: "start" | "end", time: number) => void;
   onChangeCommitted: () => void;
   onEditingChange: (editing: boolean) => void;
-  onEditTiming: () => void;
 }) {
-  const segmentActionFocusProps = useEditorActionFocusProps<HTMLButtonElement>();
   const safeDuration = Math.max(0.001, props.duration);
   const segment = props.segment;
   const [draggingEdge, setDraggingEdge] = useState<"start" | "end" | null>(null);
@@ -176,17 +189,10 @@ function SegmentTimeline(props: {
         {segment ? (
           <>
             {draggingX !== null ? <div className="cut-boundary-drag-guide" style={{ left: draggingX }} /> : null}
-            <button
-              {...segmentActionFocusProps}
-              type="button"
+            <div
               className="segment-range"
               style={{ left: startX, width: Math.max(2, endX - startX) }}
-              onDoubleClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                props.onEditTiming();
-              }}
-              aria-label={tr("segmentTiming.title")}
+              aria-hidden="true"
             />
             <DragHandle
               left={startX}
@@ -306,8 +312,9 @@ function SegmentList(props: CutSegmentsProps) {
               <tr
                 key={segment.id}
                 ref={segment.id === props.selectedId ? selectedRowRef : undefined}
-                className={segment.id === props.selectedId ? "selected" : ""}
-                onClick={() => props.onSelect(segment)}
+                className={props.selectedIds.has(segment.id) ? "selected" : ""}
+                aria-selected={props.selectedIds.has(segment.id)}
+                onClick={(event) => props.onSelect(segment, segmentSelectionModifiers(event))}
               >
                 <td>
                   <Checkbox

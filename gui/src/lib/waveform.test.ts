@@ -4,6 +4,8 @@ import {
   buildWaveformPathSpecs,
   buildWaveformPyramid,
   calculateWaveformAmplitudeScale,
+  cropWaveformChunksToRange,
+  cropWaveformToRange,
   mergeWaveformPoints,
   normalizeWaveformDisplayMode,
   selectWaveformLevel
@@ -43,6 +45,42 @@ describe("waveform pyramid", () => {
 
     expect(uniquePoints.size).toBeLessThan(base.length * 2);
     expect(pyramid.at(-1)).toHaveLength(1);
+  });
+});
+
+describe("waveform range crop", () => {
+  const waveform = [
+    point(0.5, -0.2, 0.2, 0.1, 10),
+    point(1.5, -0.4, 0.6, 0.3, 20),
+    point(2.5, -0.8, 1, 0.5, 30),
+  ];
+
+  it("interpolates both boundaries and converts absolute time to local time", () => {
+    const cropped = cropWaveformToRange(waveform, 1, 2);
+
+    expect(cropped.map((value) => value.t)).toEqual([0, 0.5, 1]);
+    expect(cropped[0].min).toBeCloseTo(-0.3);
+    expect(cropped[0]).toMatchObject({ max: 0.4, rms: 0.2, sample_count: 15 });
+    expect(cropped[2].min).toBeCloseTo(-0.6);
+    expect(cropped[2]).toMatchObject({ max: 0.8, rms: 0.4, sample_count: 25 });
+  });
+
+  it("interpolates a short range that contains no original bucket center", () => {
+    const cropped = cropWaveformToRange(waveform, 0.75, 1.25);
+
+    expect(cropped).toHaveLength(2);
+    expect(cropped.map((value) => value.t)).toEqual([0, 0.5]);
+    expect(cropped[0].max).toBeCloseTo(0.3);
+    expect(cropped[1].max).toBeCloseTo(0.5);
+  });
+
+  it("flattens progressive chunks before interpolation and rejects invalid ranges", () => {
+    expect(cropWaveformChunksToRange([[waveform[0]], waveform.slice(1)], 1, 2)).toEqual([
+      cropWaveformToRange(waveform, 1, 2),
+    ]);
+    expect(cropWaveformToRange(waveform, 4, 5)).toEqual([]);
+    expect(cropWaveformToRange(waveform, 2, 2)).toEqual([]);
+    expect(cropWaveformToRange([{ ...waveform[0], rms: Number.NaN }], 0, 1)).toEqual([]);
   });
 });
 

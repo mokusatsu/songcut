@@ -196,6 +196,31 @@ async function createWindow() {
     closeRequestPending = true;
     mainWindow?.webContents.send("songcut:close-requested");
   });
+  mainWindow.webContents.on("console-message", (_event, level, message) => {
+    if (!message.startsWith("[songcut-media]")) return;
+    console.info(`[songcut-media renderer:${level}] ${message.slice("[songcut-media]".length).trim()}`);
+  });
+  mainWindow.webContents.on("media-started-playing", () => {
+    console.info("[songcut-renderer] media-started-playing");
+  });
+  mainWindow.webContents.on("media-paused", () => {
+    console.info("[songcut-renderer] media-paused");
+  });
+  mainWindow.webContents.on("unresponsive", () => {
+    console.error("[songcut-renderer] unresponsive");
+  });
+  mainWindow.webContents.on("responsive", () => {
+    console.info("[songcut-renderer] responsive");
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error("[songcut-renderer] render-process-gone", JSON.stringify(details));
+  });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+    console.error(
+      "[songcut-renderer] did-fail-load",
+      JSON.stringify({ errorCode, errorDescription, validatedUrl, isMainFrame })
+    );
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
       void shell.openExternal(url);

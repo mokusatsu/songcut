@@ -9,7 +9,9 @@ import pytest
 from songcut.ffmpeg_tools import FfmpegPaths
 
 from songcut.subtitle_export import (
+    SubtitleDisplayElement,
     SubtitleEffect,
+    SubtitleFileSegment,
     SubtitleLane,
     SubtitleSegment,
     SubtitleStyle,
@@ -18,9 +20,13 @@ from songcut.subtitle_export import (
     _effect_params,
     _fit_effect_durations,
     _run_ffmpeg_with_progress,
+    export_subtitle_file,
     export_subtitle_bundle,
+    format_lrc_timestamp,
     render_ass_document,
     render_lane_srt,
+    render_lrc_document,
+    render_merged_srt,
     render_subtitle_png_base64,
     render_srt_style_document,
     subtitle_style_from_mapping,
@@ -37,6 +43,87 @@ def test_lane_srt_keeps_text_and_orders_segments() -> None:
 
     assert text.index("一行目") < text.index("二行目")
     assert "00:00:00,500 --> 00:00:01,500" in text
+
+
+def test_merged_srt_orders_selected_timelines_as_one_document() -> None:
+    text = render_merged_srt(
+        [
+            SubtitleLane(
+                "lyrics-2",
+                "Lyrics 2",
+                SubtitleStyle(),
+                [SubtitleSegment("later", "later", 2.0, 3.0)],
+            ),
+            SubtitleLane(
+                "lyrics-1",
+                "Lyrics 1",
+                SubtitleStyle(),
+                [SubtitleSegment("first", "first", 1.0, 2.0)],
+            ),
+        ]
+    )
+
+    assert text.startswith("1\n00:00:01,000 --> 00:00:02,000\nfirst")
+    assert "2\n00:00:02,000 --> 00:00:03,000\nlater" in text
+
+
+def test_lrc_document_keeps_display_element_tags_blank_and_line_end() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(),
+        [
+            SubtitleFileSegment(
+                "line",
+                "呼んで",
+                6.6,
+                10.18,
+                display_elements=(
+                    SubtitleDisplayElement("呼ん", 6.6, 7.22),
+                    SubtitleDisplayElement("", 7.22, 7.52),
+                    SubtitleDisplayElement("で", 7.52, 10.18),
+                ),
+            )
+        ],
+    )
+
+    assert render_lrc_document([lane]) == (
+        "[00:06.60]<00:06.60>呼ん<00:07.22><00:07.52>で<00:10.18>\n"
+    )
+
+
+def test_lrc_falls_back_to_line_text_and_rounds_centiseconds() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(),
+        [SubtitleSegment("line", "未解析の歌詞", 59.999, 61.001)],
+    )
+
+    assert format_lrc_timestamp(59.999) == "01:00.00"
+    assert render_lrc_document([lane]) == "[01:00.00]<01:00.00>未解析の歌詞<01:01.00>\n"
+
+
+def test_export_subtitle_file_writes_one_selected_format(tmp_path: Path) -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(),
+        [SubtitleSegment("line", "歌詞", 1.0, 2.0)],
+    )
+
+    result = export_subtitle_file(
+        Path("source video.mp4"),
+        tmp_path,
+        [lane],
+        export_format="srt",
+        play_res_x=1280,
+        play_res_y=720,
+    )
+
+    target = Path(result["file"])
+    assert target.name == "source video-subtitles.srt"
+    assert target.read_text(encoding="utf-8-sig") == "1\n00:00:01,000 --> 00:00:02,000\n歌詞\n"
 
 
 def test_subtitle_effect_defaults_to_750ms_transitions() -> None:

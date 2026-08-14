@@ -115,6 +115,7 @@ node packaging\e2e_scratch_proxy.js
 - Opusプロキシ準備中は元音声を使うこと
 - 準備完了後はプロキシ音声へ切り替わること
 - 連続したドラッグで前のスクラッチを中断し、新しい位置へ移動すること
+- スクラッチ停止後に通常再生、停止、次のスクラッチを反復しても動画再生が復帰すること
 - 設定をOFFにするとOpusでもプロキシを作らないこと
 
 既定ではCDPポート9231と9232を使います。最後の成功マーカーは
@@ -140,6 +141,21 @@ node packaging\e2e_sub_mode.js
 最後の成功マーカーは `SUB_E2E_OK` です。成果物とログは
 `out\e2e-sub-mode` 以下に保存されます。
 
+Subの境界ドラッグだけを重点確認する場合は、ローカルの解析済みSub sidecarを
+複製してWhisper解析と字幕出力を省略できます。
+
+```powershell
+$env:SONGCUT_E2E_SUB_BOUNDARY_ONLY = "1"
+$env:SONGCUT_E2E_SUB_BOUNDARY_VIDEO = "C:\path\to\video.webm"
+node packaging\e2e_sub_mode.js
+Remove-Item Env:SONGCUT_E2E_SUB_BOUNDARY_ONLY
+Remove-Item Env:SONGCUT_E2E_SUB_BOUNDARY_VIDEO
+```
+
+このモードは開始・終了handleへ実マウス入力を送り、hit target、保存revision、
+再生位置、動画frame、media lifecycle eventを検証します。成功マーカーは
+`SUB_BOUNDARY_DRAG_E2E_PASS`です。
+
 ## 実行環境の上書き
 
 | 環境変数 | 既定値 | 用途 |
@@ -149,6 +165,8 @@ node packaging\e2e_sub_mode.js
 | `SONGCUT_E2E_AAC_PORT` | `9231` | AACスクラッチE2EのCDPポート |
 | `SONGCUT_E2E_OPUS_PORT` | `9232` | OpusスクラッチE2EのCDPポート |
 | `SONGCUT_E2E_SUB_PORT` | `9240` | Subモード実データE2EのCDPポート |
+| `SONGCUT_E2E_SUB_BOUNDARY_ONLY` | 未設定 | 解析済みsidecarを使うSub境界ドラッグ重点モードを有効にする |
+| `SONGCUT_E2E_SUB_BOUNDARY_VIDEO` | 既定のAimer fixture | 境界ドラッグ重点モードで動画と隣接`.sub.songcut`を指定する |
 | `SONGCUT_E2E_SEGMENT_MENU_ONLY` | 未設定 | Segment重点モードを有効にする |
 | `SONGCUT_E2E_EXPORT_NAMING_ONLY` | 未設定 | ファイル名設定重点モードを有効にする |
 

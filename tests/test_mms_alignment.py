@@ -17,9 +17,12 @@ from songcut.mms_alignment import (
     MMS_SAMPLE_RATE,
     CtcAlignmentResult,
     CtcLineSpan,
+    MmsRefinementDiagnostics,
+    MmsStandardAlignmentContext,
     MmsOnnxRunner,
     PreparedLyricsLine,
     align_prepared_lines,
+    align_standard_display_elements,
     bundled_mms_onnx_model_dir,
     ensure_mms_onnx_model,
     load_mms_vocabulary,
@@ -286,6 +289,47 @@ def test_star_ctc_alignment_places_lines_around_unmatched_audio() -> None:
     assert result.lines[1].start == pytest.approx(10.12)
     assert result.star_ratio > 0
     assert all(line.confidence > 0.8 for line in result.lines)
+    assert [(token.token_text, token.line_index) for token in result.tokens] == [("1", 1), ("2", 2)]
+    assert [token.confidence for token in result.tokens] == pytest.approx([0.9, 0.9])
+    assert [(token.start, token.end) for token in result.tokens] == [
+        (pytest.approx(10.04), pytest.approx(10.06)),
+        (pytest.approx(10.12), pytest.approx(10.14)),
+    ]
+
+
+def test_local_display_alignment_reuses_emissions_without_changing_line_bounds() -> None:
+    probabilities = np.full((100, 3), 0.01, dtype=np.float32)
+    probabilities[:, 0] = 0.98
+    probabilities[10:36] = np.asarray([0.01, 0.98, 0.01])
+    probabilities[45:71] = np.asarray([0.01, 0.01, 0.98])
+    prepared = (
+        PreparedLyricsLine(1, "A", "a", (1,), 1.0, ("a",)),
+        PreparedLyricsLine(2, "B", "b", (2,), 1.0, ("b",)),
+    )
+    lines = [
+        AlignedLyricsLine(1, "A", 0.2, 0.8, 0.9, "whisper-chunk", 1, 1, 1),
+        AlignedLyricsLine(2, "B", 1.0, 1.5, 0.9, "whisper-chunk", 1, 1, 1),
+    ]
+    alignment = _standard_alignment(lines)
+    context = MmsStandardAlignmentContext(
+        alignment=alignment,
+        diagnostics=MmsRefinementDiagnostics([], 2, 1, -0.1, 0.2, "q4"),
+        prepared_lines=prepared,
+        vocabulary={"<blank>": 0, "a": 1, "b": 2},
+        frame_seconds=0.02,
+        emissions=np.log(probabilities),
+    )
+
+    result = align_standard_display_elements(context, lines, language="en")
+
+    assert set(result) == {1, 2}
+    for line in lines:
+        elements = result[line.index].elements
+        assert elements[0].start == pytest.approx(line.start)
+        assert elements[-1].end == pytest.approx(line.end)
+        assert all(element.end > element.start for element in elements)
+        assert all(left.end == pytest.approx(right.start) for left, right in zip(elements, elements[1:]))
+    assert (lines[0].start, lines[0].end) == (0.2, 0.8)
 
 
 def _read_srt_entries(path: Path) -> list[tuple[float, float, str]]:

@@ -7,7 +7,7 @@ import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import TYPE_CHECKING, Callable, Iterable, Sequence
 
 import numpy as np
 
@@ -22,6 +22,9 @@ from .transcription import (
     select_whisper_runtime,
 )
 from .whisper_execution import WhisperExecutionSession
+
+if TYPE_CHECKING:
+    from .lyrics_elements import DisplayElement
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,13 @@ class AlignedLyricsLine:
     matched_characters: int
     exact_characters: int
     total_characters: int
+    display_elements: tuple[DisplayElement, ...] = ()
+    line_revision: int = 1
+    display_element_revision: int = 1
+    start_locked: bool = False
+    end_locked: bool = False
+    alignment_diagnostics: tuple[str, ...] = ()
+    needs_reanalysis: bool = False
 
 
 @dataclass(frozen=True)

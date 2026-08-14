@@ -172,7 +172,7 @@ export type AnalysisResult = {
 export type JobRecord = {
   id: string;
   kind: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
   progress: number;
   message: string;
   message_code?: string;
@@ -181,6 +181,12 @@ export type JobRecord = {
   error?: string | null;
   created_at: number;
   updated_at: number;
+  scope?: string | null;
+  line_id?: string | null;
+  project_epoch?: number | null;
+  line_revision?: number | null;
+  display_element_revision?: number | null;
+  reanalysis_epoch?: number | null;
 };
 
 export type ExportRenderPlanItem = {

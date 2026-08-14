@@ -140,6 +140,15 @@ export function placeLyricsAnalysisResult(
     rhythm_grid: result.rhythm_grid,
     beat_warning: result.beat_warning,
     confidence_statistics: result.confidence_statistics,
+    analysis_algorithm: result.algorithm,
+    ...(result.analysis_artifact
+      ? {
+          analysis_artifact: {
+            ...result.analysis_artifact,
+            source_fingerprint: { ...result.analysis_artifact.source_fingerprint },
+          },
+        }
+      : {}),
   };
 }
 

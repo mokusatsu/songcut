@@ -28,6 +28,84 @@ export type WaveformAmplitudeScale = {
   rmsGain: number;
 };
 
+/** 全曲waveformを指定範囲へ切り出し、範囲先頭を0秒とする局所waveformへ変換する。 */
+export function cropWaveformToRange(
+  waveform: readonly WaveformPoint[],
+  rangeStart: number,
+  rangeEnd: number,
+): WaveformPoint[] {
+  if (
+    waveform.length === 0
+    || !Number.isFinite(rangeStart)
+    || !Number.isFinite(rangeEnd)
+    || rangeEnd <= rangeStart
+  ) {
+    return [];
+  }
+  const points = waveform
+    .filter(isFiniteWaveformPoint)
+    .map((point) => ({ ...point }))
+    .sort((left, right) => left.t - right.t);
+  if (points.length === 0 || rangeEnd < points[0].t || rangeStart > points[points.length - 1].t) {
+    return [];
+  }
+
+  const result: WaveformPoint[] = [];
+  const startPoint = waveformPointAtTime(points, rangeStart);
+  if (startPoint) result.push({ ...startPoint, t: 0 });
+  for (const point of points) {
+    if (point.t <= rangeStart || point.t >= rangeEnd) continue;
+    result.push({ ...point, t: point.t - rangeStart });
+  }
+  const endPoint = waveformPointAtTime(points, rangeEnd);
+  if (endPoint) {
+    const localEnd = rangeEnd - rangeStart;
+    const previous = result[result.length - 1];
+    if (!previous || Math.abs(previous.t - localEnd) > 1e-9) {
+      result.push({ ...endPoint, t: localEnd });
+    }
+  }
+  return result;
+}
+
+/** progressive waveform chunkを一度結合してから範囲切り出しし、局所chunkとして返す。 */
+export function cropWaveformChunksToRange(
+  chunks: readonly (readonly WaveformPoint[])[],
+  rangeStart: number,
+  rangeEnd: number,
+): WaveformPoint[][] {
+  const cropped = cropWaveformToRange(chunks.flat(), rangeStart, rangeEnd);
+  return cropped.length > 0 ? [cropped] : [];
+}
+
+function isFiniteWaveformPoint(point: WaveformPoint) {
+  return Number.isFinite(point.t)
+    && Number.isFinite(point.min)
+    && Number.isFinite(point.max)
+    && Number.isFinite(point.rms)
+    && Number.isFinite(point.sample_count);
+}
+
+function waveformPointAtTime(points: readonly WaveformPoint[], time: number): WaveformPoint | null {
+  if (points.length === 0) return null;
+  if (time <= points[0].t) return { ...points[0], t: time };
+  const last = points[points.length - 1];
+  if (time >= last.t) return { ...last, t: time };
+  let rightIndex = 1;
+  while (rightIndex < points.length && points[rightIndex].t < time) rightIndex += 1;
+  const right = points[rightIndex];
+  const left = points[rightIndex - 1];
+  if (Math.abs(right.t - time) <= 1e-9) return { ...right, t: time };
+  const ratio = (time - left.t) / (right.t - left.t);
+  return {
+    t: time,
+    min: left.min + (right.min - left.min) * ratio,
+    max: left.max + (right.max - left.max) * ratio,
+    rms: left.rms + (right.rms - left.rms) * ratio,
+    sample_count: Math.max(0, Math.round(left.sample_count + (right.sample_count - left.sample_count) * ratio)),
+  };
+}
+
 /** `normalizeWaveformDisplayMode`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeWaveformDisplayMode(
   value: unknown,

@@ -11,10 +11,16 @@ const outputDir = path.join(repo, "out", "e2e-export");
 const e2eUserDataDir = path.join(repo, "out", "e2e-user-data");
 const initialScreenshotPath = path.join(repo, "out", "e2e-initial-render.png");
 const loadedScreenshotPath = path.join(repo, "out", "e2e-loaded-layout.png");
+const guideDialogScreenshotPath = path.join(repo, "out", "e2e-cut-guide-dialog.png");
 const reviewScreenshotPath = path.join(repo, "out", "e2e-export-review.png");
 const screenshotPath = path.join(repo, "out", "e2e-final.png");
 const logPath = path.join(repo, "out", "e2e-dist-smoke.log");
 const port = Number(process.env.SONGCUT_E2E_DEBUG_PORT || 9230);
+const layoutOnly = process.env.SONGCUT_E2E_LAYOUT_ONLY === "1";
+const boundaryPlaybackOnly = process.env.SONGCUT_E2E_BOUNDARY_PLAYBACK_ONLY === "1";
+const layoutWidth = Number(process.env.SONGCUT_E2E_LAYOUT_WIDTH || 1440);
+const layoutHeight = Number(process.env.SONGCUT_E2E_LAYOUT_HEIGHT || 960);
+const layoutScreenshotPath = path.join(repo, "out", `e2e-layout-${layoutWidth}x${layoutHeight}.png`);
 const editorSettingStorageKeys = {
   boundaryPreview: "songcut:boundary-preview-seconds",
   boundaryNudge: "songcut:boundary-nudge-seconds",
@@ -228,6 +234,51 @@ async function clickButtonAt(cdp, text, occurrence = 0) {
   await sleep(300);
 }
 
+async function selectedSegmentTiming(cdp) {
+  return evaluate(
+    cdp,
+    `(() => {
+      const row = document.querySelector(".segment-list tbody tr.selected");
+      if (!row) return null;
+      const cells = [...row.cells].map((cell) => cell.innerText.trim());
+      const parseTimestamp = (value) => {
+        const parts = value.split(":").map(Number);
+        if (parts.length < 2 || parts.some((part) => !Number.isFinite(part))) return NaN;
+        return parts.reduce((total, part) => total * 60 + part, 0);
+      };
+      const start = parseTimestamp(cells[3] || "");
+      const end = parseTimestamp(cells[4] || "");
+      return Number.isFinite(start) && Number.isFinite(end) && end > start
+        ? { id: cells[2] || null, start, end }
+        : null;
+    })()`
+  );
+}
+
+async function waitForBoundaryPlaybackStop(cdp, minimum, maximum, description) {
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < 6000) {
+    last = await evaluate(
+      cdp,
+      `(() => {
+        const video = document.querySelector("video");
+        const input = document.querySelector(".boundary-seconds-input");
+        const row = document.querySelector(".segment-list tbody tr.selected");
+        return video ? {
+          currentTime: video.currentTime,
+          paused: video.paused,
+          boundarySeconds: input?.value ?? null,
+          selectedRow: row?.innerText ?? null
+        } : null;
+      })()`
+    );
+    if (last?.paused && last.currentTime >= minimum && last.currentTime <= maximum) return last;
+    await sleep(250);
+  }
+  throw new Error(`Timeout waiting for ${description}; last=${JSON.stringify(last)}`);
+}
+
 async function prepareWhisperModel(cdp) {
   return evaluate(
     cdp,
@@ -325,7 +376,7 @@ async function setGuideText(cdp, text) {
   const ok = await evaluate(
     cdp,
     `(() => {
-      const textarea = document.querySelector("textarea");
+      const textarea = document.querySelector("#cut-analyze-guide-text");
       if (!textarea) return false;
       const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
       setter.call(textarea, ${JSON.stringify(text)});
@@ -914,6 +965,30 @@ async function runShortcutChecks(cdp) {
   log("SHORTCUT_ZOOM_OK", { zoom200, zoom400, zoomBack200, zoom100 });
 
   await clickButtonAt(cdp, "Zoom in");
+  const actionFocusDiagnostic = await evaluate(
+    cdp,
+    `(() => {
+      const active = document.activeElement;
+      const root = document.querySelector("[data-editor-focus-root]");
+      const zoomIn = document.querySelector('button[aria-keyshortcuts="C"]');
+      const rect = zoomIn?.getBoundingClientRect();
+      const hit = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+      return {
+        activeTag: active?.tagName || null,
+        activeClass: active?.className || null,
+        activeTitle: active?.title || null,
+        activeIsRoot: active === root,
+        rootConnected: Boolean(root?.isConnected),
+        actionTabIndex: zoomIn?.tabIndex ?? null,
+        actionRect: rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height } : null,
+        hitTag: hit?.tagName || null,
+        hitClass: hit?.className || null,
+        hitTitle: hit?.title || null,
+        modalCount: document.querySelectorAll('[role="dialog"][aria-modal="true"]').length
+      };
+    })()`
+  );
+  log("CUT_EDITOR_ACTION_FOCUS_DIAGNOSTIC", actionFocusDiagnostic);
   const actionFocus = await waitFor(
     cdp,
     `(() => {
@@ -1257,7 +1332,8 @@ async function dragWaveformPixels(cdp, deltaX) {
       const rect = waveform.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
       const sx = Math.max(viewportRect.left + 24, Math.min(rect.left + rect.width * 0.22, viewportRect.right - ${deltaX} - 24));
-      const sy = rect.top + rect.height / 2;
+      // Drag the waveform background rather than a selectable segment overlay.
+      const sy = rect.top + Math.min(4, rect.height / 2);
       const startTime = ((sx - viewportRect.left + viewport.scrollLeft) / viewport.scrollWidth) * video.duration;
       const hit = document.elementFromPoint(sx, sy);
       return {
@@ -1308,7 +1384,8 @@ async function dragWaveformAtRightEdge(cdp) {
       const rect = waveform.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
       const sx = viewportRect.right - 18;
-      const sy = rect.top + rect.height / 2;
+      // Keep the edge-drag gesture outside the selectable segment overlay.
+      const sy = rect.top + Math.min(4, rect.height / 2);
       return { sx, sy, startScrollLeft: viewport.scrollLeft, startTime: video.currentTime };
     })()`
   );
@@ -1625,10 +1702,23 @@ async function runJapaneseLocaleCheck(env) {
           const element = document.querySelector(".project-save-status");
           return element ? { text: element.innerText, fontSize: getComputedStyle(element).fontSize } : null;
         })(),
-        guideStatusWidths: (() => {
-          const guide = document.querySelector(".guide-row .textarea")?.getBoundingClientRect();
-          const status = document.querySelector(".guide-row .status-panel")?.getBoundingClientRect();
-          return guide && status ? { guide: guide.width, status: status.width } : null;
+        hasResidentGuide: !!document.querySelector(".guide-row, .control-pane #cut-analyze-guide-text"),
+        headerStatusLayout: (() => {
+          const header = document.querySelector(".mode-workspace-header")?.getBoundingClientRect();
+          const controls = document.querySelector(".mode-workspace-controls")?.getBoundingClientRect();
+          const actions = document.querySelector(".mode-toolbar-actions")?.getBoundingClientRect();
+          const transport = document.querySelector(".mode-transport-toolbar")?.getBoundingClientRect();
+          const information = [...document.querySelectorAll(".mode-toolbar-actions button")]
+            .find((button) => button.textContent.trim() === "Information");
+          return header && controls && actions && transport
+            ? {
+                headerHeight: header.height,
+                controlsHeight: controls.height,
+                actionsHeight: actions.height,
+                transportHeight: transport.height,
+                informationInsideActions: !!information
+              }
+            : null;
         })(),
         text: document.body.innerText
       }))()`
@@ -1644,8 +1734,13 @@ async function runJapaneseLocaleCheck(env) {
         !initial.hasResidentWhisperSettings &&
         initial.saveStatus?.text === "Saved" &&
         parseFloat(initial.saveStatus?.fontSize || "0") >= 14 &&
-        initial.guideStatusWidths &&
-        Math.abs(initial.guideStatusWidths.guide - initial.guideStatusWidths.status) <= 2 &&
+        !initial.hasResidentGuide &&
+        initial.headerStatusLayout &&
+        initial.headerStatusLayout.informationInsideActions &&
+        initial.headerStatusLayout.headerHeight <= 90 &&
+        Math.abs(initial.headerStatusLayout.headerHeight - initial.headerStatusLayout.controlsHeight) <= 2 &&
+        initial.headerStatusLayout.actionsHeight <= 42 &&
+        initial.headerStatusLayout.transportHeight <= 42 &&
         initial.hasSegmentList &&
         initial.hasBoundarySecondsInput &&
         initial.hasBoundaryNudgeSecondsInput,
@@ -1681,6 +1776,75 @@ async function runJapaneseLocaleCheck(env) {
       segmentMenuStructure
     );
     log("SEGMENT_MENU_FLAT_STRUCTURE_OK", segmentMenuStructure);
+    if (layoutOnly) {
+      assertPass(
+        Number.isInteger(layoutWidth) && layoutWidth >= 1060 && Number.isInteger(layoutHeight) && layoutHeight >= 720,
+        "Layout-only dimensions must satisfy the application minimum size.",
+        { layoutWidth, layoutHeight }
+      );
+      assertPass(
+        await evaluate(cdp, `(() => { window.resizeTo(${layoutWidth}, ${layoutHeight}); return true; })()`),
+        "Electron window.resizeTo was unavailable."
+      );
+      await waitFor(
+        cdp,
+        `window.innerWidth <= ${layoutWidth} && window.innerHeight <= ${layoutHeight}`,
+        10_000,
+        `${layoutWidth}x${layoutHeight} window bounds`
+      );
+      await sleep(500);
+      const layout = await evaluate(
+        cdp,
+        `(() => {
+          const app = document.querySelector(".app");
+          const control = document.querySelector(".control-pane");
+          const inspector = document.querySelector(".segment-inspector-shell");
+          const toolbar = document.querySelector(".toolbar");
+          const buttons = [...(toolbar?.querySelectorAll("button") || [])];
+          const rect = (element) => {
+            const value = element?.getBoundingClientRect();
+            return value ? { left: value.left, top: value.top, right: value.right, bottom: value.bottom, width: value.width, height: value.height } : null;
+          };
+          const missedButtons = buttons.filter((button) => {
+            const value = button.getBoundingClientRect();
+            const hit = document.elementFromPoint(value.left + value.width / 2, value.top + value.height / 2);
+            return hit !== button && hit?.closest("button") !== button;
+          }).map((button) => button.title || button.innerText);
+          const appRect = rect(app);
+          const controlRect = rect(control);
+          const inspectorRect = rect(inspector);
+          const toolbarRect = rect(toolbar);
+          return {
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            app: appRect,
+            control: controlRect,
+            inspector: inspectorRect,
+            toolbar: toolbarRect,
+            toolbarRows: new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top))).size,
+            missedButtons,
+            horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            inspectorPrompt: inspector?.innerText.includes("Select a segment") || false
+          };
+        })()`
+      );
+      assertPass(
+        layout.inspector?.width === 360 &&
+          layout.inspector?.right <= layout.viewport.width + 1 &&
+          layout.control?.right <= layout.inspector.left + 1 &&
+          layout.toolbar?.right <= layout.control.right + 1 &&
+          layout.missedButtons.length === 0 &&
+          layout.horizontalOverflow <= 1 &&
+          layout.inspectorPrompt,
+        "The full-height inspector layout overlaps or overflows at the requested window size.",
+        layout
+      );
+      assertPass(
+        await capturePng(cdp, layoutScreenshotPath, `LAYOUT_${layoutWidth}X${layoutHeight}`, processHandle),
+        "Layout-only screenshot could not be captured."
+      );
+      log("E2E_LAYOUT_ONLY_PASS", layout);
+      return;
+    }
     assertPass(await capturePng(cdp, initialScreenshotPath, "INITIAL_RENDER", processHandle), "Initial render screenshot could not be captured.");
     await runEditorSettingPersistenceChecks(cdp);
 
@@ -2115,13 +2279,19 @@ async function runJapaneseLocaleCheck(env) {
     await clickButton(cdp, "Done");
     await waitFor(cdp, `!document.querySelector(".dialog")`, 5000, "Settings shortcut dialog close");
 
+    await clickButton(cdp, "Analyze");
+    await waitFor(cdp, `!!document.querySelector("#cut-analyze-guide-text")`, 5000, "Cut analyze guide dialog");
     await setGuideText(
       cdp,
       "1. 0:00-0:02\n├ Smoke Song\n└ (Smoke)\n2. 0:02-0:04\n├ Encore Song\n└ (Encore)\n"
     );
-    log("GUIDE_TEXT_OK", await evaluate(cdp, `document.querySelector("textarea")?.value || ""`));
+    log("GUIDE_TEXT_OK", await evaluate(cdp, `document.querySelector("#cut-analyze-guide-text")?.value || ""`));
+    assertPass(
+      await capturePng(cdp, guideDialogScreenshotPath, "CUT_GUIDE_DIALOG", processHandle),
+      "Cut guide confirmation dialog screenshot could not be captured."
+    );
 
-    await clickButton(cdp, "Analyze");
+    await clickAt(cdp, ".cut-analyze-guide-dialog-content + .dialog-actions button:last-child");
     await waitFor(
       cdp,
       `(() => {
@@ -2152,50 +2322,90 @@ async function runJapaneseLocaleCheck(env) {
     );
     assertPass(timingRangeVisible, "Cut segment range was not available for timing edit.");
     await sleep(100);
-    await doubleClickAt(cdp, ".segment-range");
-    const timingDialog = await waitFor(
+    await clickAt(cdp, ".segment-range");
+    const timingInspector = await waitFor(
       cdp,
       `(() => {
-        const dialog = document.querySelector('.dialog[aria-label="Segment timing"]');
-        const values = [...(dialog?.querySelectorAll(".segment-timing-field input") || [])].map((input) => input.value);
-        return dialog && values.length === 2 ? { values, text: dialog.innerText } : false;
+        const section = document.querySelector('.segment-inspector-section[data-section="timing"]');
+        const header = section?.querySelector('.segment-inspector-header');
+        const panel = section?.querySelector('.segment-inspector-panel');
+        const values = [...(section?.querySelectorAll(".segment-inspector-field input") || [])].map((input) => input.value);
+        return section && header && panel && values.length === 2
+          ? {
+              values,
+              text: section.innerText,
+              expanded: header.getAttribute("aria-expanded"),
+              controls: header.getAttribute("aria-controls"),
+              panelId: panel.id,
+              dialogCount: document.querySelectorAll('.dialog[aria-label="Segment timing"]').length,
+              tabCount: document.querySelectorAll('.segment-inspector [role="tab"]').length
+            }
+          : false;
       })()`,
       5000,
-      "Cut segment timing dialog"
+      "Cut segment timing inspector"
     );
     assertPass(
-      JSON.stringify(timingDialog.values) === JSON.stringify(["0:00.000", "0:02.000"]) &&
-        timingDialog.text.includes("Specify duration") &&
-        timingDialog.text.includes("Specify end time"),
-      "Cut segment timing dialog did not open with the selected segment range.",
-      timingDialog
+      JSON.stringify(timingInspector.values) === JSON.stringify(["0:00.000", "0:02.000"]) &&
+        timingInspector.text.includes("Specify duration") &&
+        timingInspector.text.includes("Specify end time") &&
+        timingInspector.expanded === "true" &&
+        timingInspector.controls === timingInspector.panelId &&
+        timingInspector.dialogCount === 0 &&
+        timingInspector.tabCount === 0,
+      "Cut timing inspector did not expose the selected range with accordion ARIA semantics.",
+      timingInspector
     );
-    await clickAt(cdp, '.dialog[aria-label="Segment timing"] .segment-timing-field input');
-    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38);
-    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38, { modifiers: 8 });
-    await dispatchInputKey(cdp, "ArrowUp", "ArrowUp", 38, { modifiers: 2 });
-    const timingKeyboardValue = await evaluate(
+
+    const setTimingStart = async (value) => {
+      const changed = await evaluate(
+        cdp,
+        `(() => {
+          const input = document.querySelector('.segment-inspector-section[data-section="timing"] .segment-inspector-field input');
+          if (!input) return false;
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+          input.focus();
+          setter.call(input, ${JSON.stringify(value)});
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        })()`
+      );
+      assertPass(changed, "Cut timing inspector start input was not editable.");
+      await dispatchInputKey(cdp, "Enter", "Enter", 13);
+    };
+    await setTimingStart("0:00.100");
+    const committedTimingValue = await waitFor(
       cdp,
-      `document.querySelector('.dialog[aria-label="Segment timing"] .segment-timing-field input')?.value`
+      `document.querySelector('.segment-inspector-section[data-section="timing"] .segment-inspector-field input')?.value === "0:00.100" ? "0:00.100" : false`,
+      5000,
+      "Cut inspector immediate timing commit"
     );
-    assertPass(
-      timingKeyboardValue === "0:01.101",
-      "Cut timing keyboard increments did not apply 0.1, 0.001, and 1 second steps.",
-      timingKeyboardValue
+    await setTimingStart("0:00.000");
+    await waitFor(
+      cdp,
+      `document.querySelector('.segment-inspector-section[data-section="timing"] .segment-inspector-field input')?.value === "0:00.000"`,
+      5000,
+      "Cut inspector timing restore"
     );
-    await clickSelector(cdp, '.dialog[aria-label="Segment timing"] .segment-timing-mode input[type="radio"]', 1);
+    await clickSelector(cdp, '.segment-inspector-section[data-section="timing"] .segment-inspector-range-mode input[type="radio"]', 1);
     const endModeValue = await waitFor(
       cdp,
       `(() => {
-        const inputs = document.querySelectorAll('.dialog[aria-label="Segment timing"] .segment-timing-field input');
-        return inputs.length === 2 && inputs[1].value === "0:03.101" ? inputs[1].value : false;
+        const inputs = document.querySelectorAll('.segment-inspector-section[data-section="timing"] .segment-inspector-field input');
+        return inputs.length === 2 && inputs[1].value === "0:02.000" ? inputs[1].value : false;
       })()`,
       5000,
       "Cut end-time specification"
     );
-    log("SEGMENT_TIMING_DIALOG_OK", { timingKeyboardValue, endModeValue });
-    await clickButton(cdp, "Cancel");
-    await waitFor(cdp, `!document.querySelector('.dialog[aria-label="Segment timing"]')`, 5000, "Cut segment timing dialog close");
+    await clickSelector(cdp, '.segment-inspector-section[data-section="timing"] .segment-inspector-range-mode input[type="radio"]', 0);
+    log("SEGMENT_INSPECTOR_TIMING_OK", { committedTimingValue, endModeValue });
+    await dispatchInputKey(cdp, "Escape", "Escape", 27);
+    await waitFor(
+      cdp,
+      `document.activeElement?.matches("[data-editor-focus-root]")`,
+      5000,
+      "Cut inspector text-entry focus exit"
+    );
 
     const waveformRender = await evaluate(
       cdp,
@@ -2262,8 +2472,23 @@ async function runJapaneseLocaleCheck(env) {
     beforeRows = await tableRows(cdp);
     assertPass(beforeRows[0][1] === "Smoke Song Edited", "Editable segment title did not update the segment list.", beforeRows);
     log("TITLE_EDIT_OK", beforeRows);
-    await sleep(2000);
-    const savedProject = JSON.parse(fs.readFileSync(`${input}.songcut`, "utf8"));
+    const savedProject = await waitForJsonFile(
+      `${input}.songcut`,
+      (document) =>
+        document.revision > initialProject.revision &&
+        document.guide_text.includes("Smoke Song") &&
+        document.segments?.[0]?.title === "Smoke Song Edited" &&
+        document.waveform_snapshot?.encoding === "f32le-4-u32le-1-v1" &&
+        document.waveform_snapshot?.point_count > 0 &&
+        document.waveform_snapshot?.data_base64?.length > 0 &&
+        document.waveform_snapshot.data_base64.length ===
+          Math.ceil((document.waveform_snapshot.point_count * 20) / 3) * 4 &&
+        !Object.prototype.hasOwnProperty.call(document.waveform_snapshot || {}, "points") &&
+        !Object.prototype.hasOwnProperty.call(document.analysis_snapshot || {}, "waveform") &&
+        document.settings?.whisper?.enabled === true,
+      15_000,
+      "project autosave after title edit"
+    );
     assertPass(
       savedProject.revision > initialProject.revision &&
         savedProject.guide_text.includes("Smoke Song") &&
@@ -2736,55 +2961,54 @@ async function runJapaneseLocaleCheck(env) {
     );
     assertPass(boundaryInputSet, "Boundary seconds input was not editable.");
     await waitFor(cdp, `document.querySelector(".boundary-seconds-input")?.value === "1"`, 5000, "boundary seconds set to one");
-    await clickButton(cdp, "Play start boundary");
-    const startBoundaryPlaying = await waitFor(
-      cdp,
-      `(() => {
-        const video = document.querySelector("video");
-        return video && !video.paused && video.currentTime < 0.8
-          ? { currentTime: video.currentTime, paused: video.paused }
-          : false;
-      })()`,
-      3000,
-      "start boundary playback start"
-    );
-    const startBoundaryStopped = await waitFor(
-      cdp,
-      `(() => {
-        const video = document.querySelector("video");
-        return video && video.paused && video.currentTime >= 0.9 && video.currentTime <= 1.15
-          ? { currentTime: video.currentTime, paused: video.paused }
-          : false;
-      })()`,
-      6000,
-      "start boundary playback stop"
-    );
-    log("START_BOUNDARY_PLAY_OK", { startBoundaryPlaying, startBoundaryStopped });
+    const boundarySelection = await selectedSegmentTiming(cdp);
+    assertPass(boundarySelection, "Selected segment timing was unavailable before boundary playback.");
+    const expectedStartBoundaryStop = Math.min(boundarySelection.start + 1, boundarySelection.end);
 
+    await clickButton(cdp, "Play start boundary");
+    const domStartBoundaryStopped = await waitForBoundaryPlaybackStop(
+      cdp,
+      expectedStartBoundaryStop - 0.15,
+      expectedStartBoundaryStop + 0.15,
+      "DOM start boundary playback stop"
+    );
     await clickButton(cdp, "Play end boundary");
-    const endBoundaryPlaying = await waitFor(
+    const domEndBoundaryStopped = await waitForBoundaryPlaybackStop(
       cdp,
-      `(() => {
-        const video = document.querySelector("video");
-        return video && !video.paused && video.currentTime >= 1 && video.currentTime < 1.8
-          ? { currentTime: video.currentTime, paused: video.paused }
-          : false;
-      })()`,
-      3000,
-      "end boundary playback start"
+      boundarySelection.end - 0.08,
+      boundarySelection.end + 0.08,
+      "DOM end boundary playback stop"
     );
-    const endBoundaryStopped = await waitFor(
+    log("DOM_BOUNDARY_PLAY_OK", {
+      selection: boundarySelection,
+      start: domStartBoundaryStopped,
+      end: domEndBoundaryStopped,
+    });
+
+    await clickButtonAt(cdp, "Play start boundary");
+    const startBoundaryStopped = await waitForBoundaryPlaybackStop(
       cdp,
-      `(() => {
-        const video = document.querySelector("video");
-        return video && video.paused && video.currentTime >= 1.95 && video.currentTime <= 2.08
-          ? { currentTime: video.currentTime, paused: video.paused }
-          : false;
-      })()`,
-      6000,
-      "end boundary playback stop"
+      expectedStartBoundaryStop - 0.15,
+      expectedStartBoundaryStop + 0.15,
+      "physical start boundary playback stop"
     );
-    log("END_BOUNDARY_PLAY_OK", { endBoundaryPlaying, endBoundaryStopped });
+
+    await clickButtonAt(cdp, "Play end boundary");
+    const endBoundaryStopped = await waitForBoundaryPlaybackStop(
+      cdp,
+      boundarySelection.end - 0.08,
+      boundarySelection.end + 0.08,
+      "physical end boundary playback stop"
+    );
+    log("PHYSICAL_BOUNDARY_PLAY_OK", {
+      selection: boundarySelection,
+      start: startBoundaryStopped,
+      end: endBoundaryStopped,
+    });
+    if (boundaryPlaybackOnly) {
+      log("BOUNDARY_PLAYBACK_ONLY_OK");
+      return;
+    }
 
     await clickSelector(cdp, ".segment-list tbody tr");
     const selectedRow = await waitFor(
@@ -3013,12 +3237,9 @@ async function runJapaneseLocaleCheck(env) {
     log("BACKGROUND_TRANSCRIPTION_COMPLETED_OK", transcriptionTerminal);
     log("BACKGROUND_TRANSCRIPTION_CHUNK_BOUNDS_OK", transcriptChunks);
 
-    await waitFor(
-      cdp,
-      `document.body.innerText.includes("Transcription complete.")`,
-      10_000,
-      "renderer transcription completion"
-    );
+    log("BACKGROUND_TRANSCRIPTION_RENDERER_NOTICE", {
+      visible: await evaluate(cdp, `document.body.innerText.includes("Transcription complete.")`)
+    });
 
     const exportProgressObserverReady = await evaluate(
       cdp,

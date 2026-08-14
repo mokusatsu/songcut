@@ -78,6 +78,14 @@ function lyricsResult(): LyricsAnalysisResult {
       total_characters: 5,
       low_confidence_outlier: false,
     }],
+    analysis_artifact: {
+      cache_key: "cache-key",
+      cache_format: "lyrics-align-v1",
+      source_fingerprint: {
+        algorithm: "sha256-head-tail-1m-v1",
+        value: "a".repeat(64),
+      },
+    },
     elapsed_seconds: 1,
   };
 }
@@ -122,7 +130,11 @@ describe("Sub operation coordinator", () => {
       "hello",
       state.whisperSettings,
     );
-    expect(state.setState).toHaveBeenCalledWith(expect.objectContaining({ tempo_bpm: 120 }));
+    expect(state.setState).toHaveBeenCalledWith(expect.objectContaining({
+      tempo_bpm: 120,
+      analysis_algorithm: "songcut-standard",
+      analysis_artifact: expect.objectContaining({ cache_key: "cache-key" }),
+    }));
     expect(state.markStateChanged).toHaveBeenCalledOnce();
     expect(state.focusSegment).toHaveBeenCalledWith(expect.objectContaining({ text: "hello" }));
   });

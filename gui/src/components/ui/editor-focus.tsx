@@ -260,8 +260,8 @@ export function NormalFocusScope({ children }: PropsWithChildren) {
 
 type DialogFocusOptions = {
   open: boolean;
-  dialogRef: RefObject<HTMLElement | null>;
-  initialFocusRef?: RefObject<HTMLElement | null>;
+  dialogRef: RefObject<HTMLElement>;
+  initialFocusRef?: RefObject<HTMLElement>;
 };
 
 /**

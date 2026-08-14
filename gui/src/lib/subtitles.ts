@@ -47,6 +47,88 @@ export type LyricsSegment = {
   style_override?: SubtitleStyle;
   effect_override?: SubtitleEffectSettings;
   render_cache?: SubtitleRenderCache;
+  /** Standard Align が生成またはユーザーが編集した表示素列。 */
+  display_elements?: DisplayElement[];
+  /** 行本文を確定した回数。欠落は未解析の旧 schema を表す。 */
+  line_revision?: number;
+  /** 表示素の解析／編集 revision。欠落は未解析の旧 schema を表す。 */
+  display_element_revision?: number;
+  /** 表示素を保護するため、利用者の歌詞行境界編集を制限するか。 */
+  display_element_boundary_locked?: boolean;
+  /** 行の開始境界を解析結果から固定しているか。 */
+  start_locked?: boolean;
+  /** 行の終了境界を解析結果から固定しているか。 */
+  end_locked?: boolean;
+  /** 表示素解析の品質診断。backend の拡張診断を保持する。 */
+  alignment_diagnostics?: AlignmentDiagnostics;
+  /** 現在の表示素列を生成した時点の歌詞本文。本文LCS照合に使う。 */
+  display_element_text?: string;
+  /** この行だけ局所再解析が必要か。 */
+  needs_reanalysis?: boolean;
+};
+
+/** MMS token と原文範囲を保持する、保存可能な表示素の型。 */
+export type DisplayElement = {
+  index?: number;
+  stable_id: string;
+  text: string;
+  start: number;
+  end: number;
+  confidence: number;
+  source: DisplayElementSource;
+  source_start: number;
+  source_end: number;
+  pronunciation: string;
+  token_start: number;
+  token_end: number;
+  origin_key: string;
+  manual_start: boolean;
+  manual_end: boolean;
+  manual_structure: boolean;
+  parent_revision: number;
+  conflict: DisplayElementConflict | null;
+  orphaned_manual: boolean;
+  /** backend が将来追加する診断・対応情報を失わずに保持する。 */
+  [key: string]: unknown;
+};
+
+/** 表示素の生成元。未知の値を保存時に通さず、既知の source を明示する。 */
+export type DisplayElementSource =
+  | "blank"
+  | "mms-ctc"
+  | "mms-ctc-interpolated"
+  | "line-proportional"
+  | "manual";
+
+/** 表示素と手動編集の競合状態。 */
+export type DisplayElementConflict =
+  | "boundary_conflict"
+  | "text_conflict"
+  | "orphaned_manual"
+  | "stale"
+  | "manual_conflict";
+
+/** backend が返す診断値を JSON の有限 scalar に限定して保持する。 */
+export type AlignmentDiagnosticValue = string | number | boolean | null;
+export type AlignmentDiagnostics =
+  | string[]
+  | Record<string, AlignmentDiagnosticValue>;
+
+/** 再解析で共有する vocals artifact の識別情報（path／binary は保存しない）。 */
+export type LyricsAnalysisArtifact = {
+  cache_key: string;
+  cache_format?: string;
+  cache_version?: string | number;
+  source_fingerprint: {
+    algorithm: string;
+    value: string;
+  };
+  demucs_model?: string;
+  preprocess_version?: string;
+  sample_rate?: number;
+  channels?: number;
+  expires_at?: string | number;
+  [key: string]: unknown;
 };
 
 export type SubtitleRenderCache = {
@@ -113,6 +195,15 @@ export type LyricsAnalysisLine = {
   exact_characters: number;
   total_characters: number;
   low_confidence_outlier: boolean;
+  display_elements?: DisplayElement[];
+  line_revision?: number;
+  display_element_revision?: number;
+  start_locked?: boolean;
+  end_locked?: boolean;
+  alignment_diagnostics?: AlignmentDiagnostics;
+  display_element_text?: string;
+  needs_reanalysis?: boolean;
+  [key: string]: unknown;
 };
 
 export type LyricsAnalysisResult = {
@@ -130,6 +221,8 @@ export type LyricsAnalysisResult = {
   elapsed_seconds: number;
   uta_align_diagnostics?: Record<string, unknown>;
   mms_diagnostics?: Record<string, unknown>;
+  analysis_artifact?: LyricsAnalysisArtifact;
+  [key: string]: unknown;
 };
 
 export type SubtitleProjectState = {
@@ -141,6 +234,9 @@ export type SubtitleProjectState = {
   rhythm_grid: RhythmGridPoint[];
   beat_warning: string | null;
   confidence_statistics: ConfidenceStatistics | null;
+  analysis_artifact?: LyricsAnalysisArtifact;
+  /** 行局所再解析をStandard Alignのprojectだけに限定する識別子。 */
+  analysis_algorithm?: "songcut-standard" | "uta-align";
 };
 
 /** `selectedSubtitleSegment`の候補と条件から、利用すべき値または操作を決定する。 */
@@ -315,6 +411,22 @@ export function analysisLinesToSegments(result: LyricsAnalysisResult): LyricsSeg
     source: "lyrics",
     low_confidence_outlier: line.low_confidence_outlier,
     user_edited: false,
+    ...(line.display_elements?.length
+      ? { display_elements: line.display_elements.map((element) => ({ ...element })) }
+      : {}),
+    ...(line.line_revision !== undefined ? { line_revision: line.line_revision } : {}),
+    ...(line.display_element_revision !== undefined
+      ? { display_element_revision: line.display_element_revision }
+      : {}),
+    ...(line.start_locked !== undefined ? { start_locked: line.start_locked } : {}),
+    ...(line.end_locked !== undefined ? { end_locked: line.end_locked } : {}),
+    ...(line.alignment_diagnostics !== undefined
+      ? { alignment_diagnostics: cloneAlignmentDiagnostics(line.alignment_diagnostics) }
+      : {}),
+    ...(line.display_element_text !== undefined
+      ? { display_element_text: line.display_element_text }
+      : line.display_elements?.length ? { display_element_text: line.text } : {}),
+    ...(line.needs_reanalysis !== undefined ? { needs_reanalysis: line.needs_reanalysis } : {}),
   }));
 }
 
@@ -519,6 +631,21 @@ export function validateSubtitleState(
   const candidate = value as Partial<SubtitleProjectState>;
   if (!Array.isArray(candidate.lanes) || candidate.lanes.length < 1 || candidate.lanes.length > 3) return null;
   if (!candidate.lanes.every(isLyricsLane)) return null;
+  const displayElementIds = new Set<string>();
+  for (const lane of candidate.lanes) {
+    for (const segment of lane.segments) {
+      for (const element of segment.display_elements ?? []) {
+        if (displayElementIds.has(element.stable_id)) return null;
+        displayElementIds.add(element.stable_id);
+      }
+    }
+  }
+  if (candidate.analysis_artifact !== undefined && !isLyricsAnalysisArtifact(candidate.analysis_artifact)) {
+    return null;
+  }
+  if (candidate.analysis_algorithm !== undefined
+    && candidate.analysis_algorithm !== "songcut-standard"
+    && candidate.analysis_algorithm !== "uta-align") return null;
   const activeLaneId = candidate.lanes.some((lane) => lane.id === candidate.active_lane_id)
     ? candidate.active_lane_id!
     : candidate.lanes[0].id;
@@ -544,6 +671,10 @@ export function validateSubtitleState(
       candidate.confidence_statistics && typeof candidate.confidence_statistics === "object"
         ? candidate.confidence_statistics
         : null,
+    ...(candidate.analysis_artifact
+      ? { analysis_artifact: cloneLyricsAnalysisArtifact(candidate.analysis_artifact) }
+      : {}),
+    ...(candidate.analysis_algorithm ? { analysis_algorithm: candidate.analysis_algorithm } : {}),
   };
 }
 
@@ -576,9 +707,152 @@ function isLyricsSegment(value: unknown): value is LyricsSegment {
     (!hasStyleOverride || (
       typeof segment.style_override === "object" &&
       typeof segment.effect_override === "object"
-    ))
+    )) &&
+    (segment.display_elements === undefined || isDisplayElementPartition(
+      segment.display_elements,
+      Number(segment.start),
+      Number(segment.end),
+    )) &&
+    (segment.line_revision === undefined || isNonNegativeInteger(segment.line_revision)) &&
+    (segment.display_element_revision === undefined || isNonNegativeInteger(segment.display_element_revision)) &&
+    (segment.display_element_boundary_locked === undefined
+      || typeof segment.display_element_boundary_locked === "boolean") &&
+    (segment.start_locked === undefined || typeof segment.start_locked === "boolean") &&
+    (segment.end_locked === undefined || typeof segment.end_locked === "boolean") &&
+    (segment.alignment_diagnostics === undefined || isAlignmentDiagnostics(segment.alignment_diagnostics)) &&
+    (segment.display_element_text === undefined || typeof segment.display_element_text === "string") &&
+    (segment.needs_reanalysis === undefined || typeof segment.needs_reanalysis === "boolean")
   );
 }
+
+/** 表示素が行全体を正時間の連続 partition として覆うことを確認する。 */
+function isDisplayElementPartition(value: unknown, lineStart: number, lineEnd: number): value is DisplayElement[] {
+  if (!Array.isArray(value) || !value.length) return false;
+  let cursor = lineStart;
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!isDisplayElement(item)) return false;
+    if (ids.has(item.stable_id)) return false;
+    ids.add(item.stable_id);
+    if (item.start < cursor - 1e-6 || Math.abs(item.start - cursor) > 1e-6 || item.end <= item.start) {
+      return false;
+    }
+    cursor = item.end;
+  }
+  return Math.abs(cursor - lineEnd) <= 1e-6;
+}
+
+/** 表示素の必須値・enum・有限値を確認する。 */
+function isDisplayElement(value: unknown): value is DisplayElement {
+  if (!value || typeof value !== "object") return false;
+  const element = value as Partial<DisplayElement>;
+  return (
+    typeof element.stable_id === "string" && Boolean(element.stable_id.trim()) &&
+    typeof element.text === "string" &&
+    Number.isFinite(element.start) && Number.isFinite(element.end) &&
+    Number.isFinite(element.confidence) &&
+    displayElementSources.has(element.source as DisplayElementSource) &&
+    isNonNegativeInteger(element.source_start) &&
+    isNonNegativeInteger(element.source_end) &&
+    Number(element.source_end) >= Number(element.source_start) &&
+    typeof element.pronunciation === "string" &&
+    isNonNegativeInteger(element.token_start) &&
+    isNonNegativeInteger(element.token_end) &&
+    Number(element.token_end) >= Number(element.token_start) &&
+    typeof element.origin_key === "string" &&
+    typeof element.manual_start === "boolean" &&
+    typeof element.manual_end === "boolean" &&
+    typeof element.manual_structure === "boolean" &&
+    isNonNegativeInteger(element.parent_revision) &&
+    (element.conflict === null || displayElementConflicts.has(element.conflict as DisplayElementConflict)) &&
+    typeof element.orphaned_manual === "boolean"
+  );
+}
+
+/** alignment diagnostics の形式が JSON scalar の範囲に収まることを確認する。 */
+function isAlignmentDiagnostics(value: unknown): value is AlignmentDiagnostics {
+  if (Array.isArray(value)) return value.every((item) => typeof item === "string");
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).every((item) =>
+    item === null || typeof item === "string" || typeof item === "boolean" ||
+    (typeof item === "number" && Number.isFinite(item))
+  );
+}
+
+/** vocals artifact の識別情報が path／binary を含まない有効な値か確認する。 */
+function isLyricsAnalysisArtifact(value: unknown): value is LyricsAnalysisArtifact {
+  if (!value || typeof value !== "object") return false;
+  const artifact = value as Partial<LyricsAnalysisArtifact>;
+  const fingerprint = artifact.source_fingerprint;
+  return (
+    !Object.keys(artifact).some((key) => artifactForbiddenKeys.has(key)) &&
+    typeof artifact.cache_key === "string" && Boolean(artifact.cache_key.trim()) &&
+    (artifact.cache_format === undefined || typeof artifact.cache_format === "string") &&
+    (artifact.cache_version === undefined ||
+      typeof artifact.cache_version === "string" ||
+      (typeof artifact.cache_version === "number" && Number.isFinite(artifact.cache_version))) &&
+    Boolean(fingerprint) && typeof fingerprint === "object" &&
+    typeof fingerprint.algorithm === "string" && Boolean(fingerprint.algorithm.trim()) &&
+    typeof fingerprint.value === "string" && /^[a-f0-9]{64}$/i.test(fingerprint.value) &&
+    (artifact.demucs_model === undefined || typeof artifact.demucs_model === "string") &&
+    (artifact.preprocess_version === undefined || typeof artifact.preprocess_version === "string") &&
+    (artifact.sample_rate === undefined || isPositiveInteger(artifact.sample_rate)) &&
+    (artifact.channels === undefined || isPositiveInteger(artifact.channels)) &&
+    (artifact.expires_at === undefined ||
+      (typeof artifact.expires_at === "number" && Number.isFinite(artifact.expires_at)) ||
+      (typeof artifact.expires_at === "string" && !Number.isNaN(Date.parse(artifact.expires_at))))
+  );
+}
+
+/** 表示素・診断を参照共有しないための軽量な clone。 */
+function cloneAlignmentDiagnostics(value: AlignmentDiagnostics): AlignmentDiagnostics {
+  return Array.isArray(value) ? [...value] : { ...value };
+}
+
+/** artifact を保存／hydrate 境界で独立値にする。 */
+function cloneLyricsAnalysisArtifact(value: LyricsAnalysisArtifact): LyricsAnalysisArtifact {
+  return {
+    ...value,
+    source_fingerprint: { ...value.source_fingerprint },
+  };
+}
+
+/** revisionや原文offsetに使う0以上の有限整数だけを受理する。 */
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0;
+}
+
+/** cache version等に使う1以上の有限整数だけを受理する。 */
+function isPositiveInteger(value: unknown): value is number {
+  return isNonNegativeInteger(value) && value > 0;
+}
+
+const displayElementSources = new Set<DisplayElementSource>([
+  "blank",
+  "mms-ctc",
+  "mms-ctc-interpolated",
+  "line-proportional",
+  "manual",
+]);
+
+const displayElementConflicts = new Set<DisplayElementConflict>([
+  "boundary_conflict",
+  "text_conflict",
+  "orphaned_manual",
+  "stale",
+  "manual_conflict",
+]);
+
+const artifactForbiddenKeys = new Set([
+  "path",
+  "file_path",
+  "artifact_path",
+  "vocals_path",
+  "session_id",
+  "binary",
+  "bytes",
+  "data_base64",
+]);
 
 /** projectから読み込んだセグメントの個別Style／Effectを現在の制約へ正規化する。 */
 function normalizeLyricsSegment(segment: LyricsSegment, catalog?: SubtitleEffectCatalog): LyricsSegment {

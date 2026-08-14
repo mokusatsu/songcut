@@ -21,6 +21,7 @@ from songcut.api import (
     SubtitleEffectEstimateRequest,
     SubtitleEffectRequest,
     SubtitleExportRequest,
+    SubtitleFileExportRequest,
     SubtitleRenderRequest,
     TranscriptionRequest,
     TranscriptionSegmentRequest,
@@ -47,6 +48,7 @@ from songcut.api import (
     download_whisper_model,
     ffmpeg_check,
     estimate_subtitle_effect,
+    export_subtitle_file_route,
     get_subtitle_effect_catalog,
     health,
     probe,
@@ -57,7 +59,14 @@ from pydantic import ValidationError
 from fastapi import HTTPException
 from songcut.gui_pipeline import build_gui_segments_and_exports
 from songcut.lyrics_alignment import AlignedLyricsLine
+from songcut.lyrics_artifact_cache import LyricsArtifactCache
+from songcut.lyrics_elements import (
+    DisplayAlignmentDiagnostics,
+    DisplayAlignmentResult,
+    DisplayElement,
+)
 from songcut.mms_alignment import MmsRefinementDiagnostics
+from songcut.source_separation import DEMUCS_MODEL, SeparatedAudio
 
 
 class ApiJobTests(unittest.TestCase):
@@ -101,6 +110,60 @@ class ApiJobTests(unittest.TestCase):
                 )
             )
         self.assertEqual(caught.exception.status_code, 422)
+
+    def test_subtitle_file_export_route_keeps_display_elements_and_overrides(self) -> None:
+        request = SubtitleFileExportRequest.model_validate(
+            {
+                "source_path": "source.mp4",
+                "output_dir": "out",
+                "format": "lrc",
+                "play_res_x": 1280,
+                "play_res_y": 720,
+                "lanes": [
+                    {
+                        "id": "lyrics",
+                        "name": "Lyrics",
+                        "style": {"font_size": 48},
+                        "effect": {"name": "fad", "start_duration_ms": 200},
+                        "segments": [
+                            {
+                                "id": "line",
+                                "text": "歌詞",
+                                "start": 1,
+                                "end": 2,
+                                "style_override": {"font_size": 80, "alignment": 7},
+                                "effect_override": {"name": "cut"},
+                                "display_elements": [
+                                    {"text": "歌", "start": 1, "end": 1.4},
+                                    {"text": "詞", "start": 1.4, "end": 2},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        captured: dict[str, object] = {}
+
+        def fake_export(source, output_dir, lanes, **kwargs):
+            captured["source"] = source
+            captured["output_dir"] = output_dir
+            captured["lanes"] = lanes
+            captured["kwargs"] = kwargs
+            return {"file": "out/source-subtitles.lrc", "format": "lrc", "output_dir": "out"}
+
+        with (
+            mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
+            mock.patch("songcut.api.export_subtitle_file", side_effect=fake_export),
+        ):
+            result = export_subtitle_file_route(request)
+
+        lane = captured["lanes"][0]
+        self.assertEqual(result["file"], "out/source-subtitles.lrc")
+        self.assertEqual(captured["kwargs"]["export_format"], "lrc")
+        self.assertEqual(lane.effect.name, "fad")
+        self.assertEqual(lane.segments[0].display_elements[0].text, "歌")
+        self.assertEqual(lane.segments[0].style_override.alignment, 7)
 
     def test_subtitle_render_job_returns_cache_identity_with_png(self) -> None:
         now = time.time()
@@ -296,6 +359,37 @@ class ApiJobTests(unittest.TestCase):
             no_vocals=Path("temporary/no_vocals.wav"),
             model="htdemucs",
         )
+        mms_diagnostics = MmsRefinementDiagnostics(
+            applied_line_indexes=[1],
+            candidate_line_count=5,
+            first_reliable_whisper_line=1,
+            path_score=-0.5,
+            star_ratio=0.4,
+            variant="q4",
+        )
+        display_results = {
+            line.index: DisplayAlignmentResult(
+                elements=(
+                    DisplayElement(
+                        index=0,
+                        text=line.text,
+                        start=line.start,
+                        end=line.end,
+                        confidence=0.9,
+                        source="line-proportional",
+                        stable_id=f"display-{line.index}",
+                        parent_revision=1,
+                    ),
+                ),
+                diagnostics=DisplayAlignmentDiagnostics(
+                    accepted=False,
+                    rejection_reasons=("coverage",),
+                ),
+                source="line-proportional",
+                parent_revision=1,
+            )
+            for line in lines
+        }
 
         with (
             mock.patch("songcut.api.require_file", return_value=Path("source.mp4")),
@@ -306,19 +400,13 @@ class ApiJobTests(unittest.TestCase):
             ) as transcribe,
             mock.patch("songcut.api.align_lyrics_to_chunks", return_value=alignment),
             mock.patch(
-                "songcut.api.refine_standard_alignment_with_mms",
-                return_value=(
-                    alignment,
-                    MmsRefinementDiagnostics(
-                        applied_line_indexes=[1],
-                        candidate_line_count=5,
-                        first_reliable_whisper_line=1,
-                        path_score=-0.5,
-                        star_ratio=0.4,
-                        variant="q4",
-                    ),
-                ),
-            ) as refine_mms,
+                "songcut.api.prepare_standard_alignment_with_mms",
+                return_value=SimpleNamespace(alignment=alignment, diagnostics=mms_diagnostics),
+            ) as prepare_mms,
+            mock.patch(
+                "songcut.api.align_standard_display_elements",
+                return_value=display_results,
+            ) as align_display,
             mock.patch(
                 "songcut.api.detect_beat_times",
                 return_value=(120.0, [0.0, 0.5, 1.0], 10.0),
@@ -343,13 +431,85 @@ class ApiJobTests(unittest.TestCase):
         self.assertEqual(separate.call_args.kwargs["device"], "npu")
         transcribe.assert_called_once()
         self.assertEqual(transcribe.call_args.args[0], separated.vocals)
-        refine_mms.assert_called_once()
-        self.assertEqual(refine_mms.call_args.args[0], separated.vocals)
-        self.assertEqual(refine_mms.call_args.kwargs["device"], "gpu")
+        prepare_mms.assert_called_once()
+        self.assertEqual(prepare_mms.call_args.args[0], separated.vocals)
+        self.assertEqual(prepare_mms.call_args.kwargs["device"], "gpu")
+        align_display.assert_called_once()
         self.assertEqual(completed.result["mms_diagnostics"]["applied_line_indexes"], [1])
+        self.assertEqual(completed.result["lines"][0]["display_elements"][0]["stable_id"], "display-1")
         detect_beats.assert_called_once_with(Path("source.mp4"))
         self.assertEqual(completed.result["confidence_statistics"]["low_outlier_indexes"], [1])
         self.assertTrue(completed.result["lines"][0]["low_confidence_outlier"])
+
+    def test_standard_lyrics_analysis_persists_and_reuses_vocals_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            source = root / "source.bin"
+            vocals = root / "vocals.wav"
+            source.write_bytes(b"source-audio")
+            vocals.write_bytes(b"cached-vocals")
+            cache = LyricsArtifactCache(root / "cache")
+            line = AlignedLyricsLine(1, "line", 0.1, 0.8, 0.9, "whisper-chunk", 1, 1, 1)
+            alignment = SimpleNamespace(title=None, lines=[line])
+            diagnostics = MmsRefinementDiagnostics([], 1, 1, -0.2, 0.1, "q4")
+            display = DisplayAlignmentResult(
+                elements=(
+                    DisplayElement(
+                        0,
+                        "line",
+                        0.1,
+                        0.8,
+                        0.9,
+                        "line-proportional",
+                        stable_id="display-line",
+                        parent_revision=1,
+                    ),
+                ),
+                diagnostics=DisplayAlignmentDiagnostics(accepted=True),
+                source="line-proportional",
+                parent_revision=1,
+            )
+            separated = SeparatedAudio(vocals, root / "no-vocals.wav", DEMUCS_MODEL, "CPU")
+
+            with (
+                mock.patch("songcut.api._get_lyrics_artifact_cache", return_value=cache),
+                mock.patch("songcut.api.separate_vocals", return_value=separated) as separate,
+                mock.patch(
+                    "songcut.api.transcribe_whisper_chunks",
+                    return_value=([], "line", 1.0, "CPU"),
+                ),
+                mock.patch("songcut.api.align_lyrics_to_chunks", return_value=alignment),
+                mock.patch(
+                    "songcut.api.prepare_standard_alignment_with_mms",
+                    return_value=SimpleNamespace(alignment=alignment, diagnostics=diagnostics),
+                ),
+                mock.patch(
+                    "songcut.api.align_standard_display_elements",
+                    return_value={1: display},
+                ),
+                mock.patch("songcut.api.detect_beat_times", side_effect=RuntimeError("no beat")),
+            ):
+                for job_id in ("lyrics-cache-miss", "lyrics-cache-hit"):
+                    now = time.time()
+                    with _jobs_lock:
+                        _jobs[job_id] = JobRecord(
+                            id=job_id,
+                            kind="lyrics-analysis",
+                            status="queued",
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    _lyrics_analysis_job(
+                        job_id,
+                        LyricsAnalysisRequest(source_path=str(source), lyrics_text="line"),
+                    )
+
+            self.assertEqual(separate.call_count, 1)
+            first = _jobs["lyrics-cache-miss"].result
+            second = _jobs["lyrics-cache-hit"].result
+            self.assertEqual(first["analysis_artifact"]["cache_key"], second["analysis_artifact"]["cache_key"])
+            self.assertEqual(second["demucs_device_used"], "CACHE")
+            self.assertEqual(second["analysis_artifact"]["source_fingerprint"]["algorithm"], "sha256-head-tail-1m-v1")
 
     def test_uta_align_receives_original_media_and_demucs_vocals(self) -> None:
         now = time.time()

@@ -24,6 +24,23 @@ function numberParameter(defaultValue: number, min: number, max: number) {
   };
 }
 
+function paletteParameter(defaultValue: string[]) {
+  return {
+    kind: "palette" as const,
+    default: defaultValue,
+    min: null,
+    max: null,
+    step: null,
+    choices: [],
+    choice_labels_en: {},
+    choice_labels_ja: {},
+    label_en: "Palette",
+    label_ja: "パレット",
+    description_en: "Palette description",
+    description_ja: "パレットの説明",
+  };
+}
+
 const catalog = {
   package: "ass-lyric-effects",
   version: "3.0.0",
@@ -60,6 +77,17 @@ const catalog = {
         peak: numberParameter(128, 105, 220),
         valley: numberParameter(88, 40, 99),
         rebound: numberParameter(108, 101, 160),
+      },
+    },
+    {
+      effect_id: "color_wave",
+      stable_effect_id: true,
+      name_en: "Color wave",
+      name_ja: "カラーウェーブ",
+      description_en: "Color wave",
+      description_ja: "カラーウェーブ",
+      parameters: {
+        palette: paletteParameter(["&H00112233&", "&H00445566&", "&H00778899&", "&H00AABBCC&"]),
       },
     },
   ],
@@ -106,6 +134,17 @@ describe("backend-owned subtitle effect catalog", () => {
     });
   });
 
+  it("preserves the ordered string array supplied for a palette parameter", () => {
+    const palette = ["&H00010203&", "&H00040506&", "&H00070809&", "&H000A0B0C&"];
+    const normalized = normalizeSubtitleEffect({
+      name: "color_wave",
+      params: { palette },
+    }, catalog);
+
+    expect(normalized.params.palette).toEqual(palette);
+    expect(normalized.params.palette).not.toBe(palette);
+  });
+
   it("rejects unknown effects instead of falling back to cut", () => {
     expect(() => normalizeSubtitleEffect({ name: "removed", params: {} }, catalog)).toThrow(
       /Unknown subtitle effect_id/,
@@ -114,7 +153,7 @@ describe("backend-owned subtitle effect catalog", () => {
 
   it("parses the JSON catalog contract", () => {
     const parsed = parseSubtitleEffectCatalog(catalog);
-    expect(parsed.effects.map((effect) => effect.effect_id)).toEqual(["cut", "zoom", "bounce"]);
+    expect(parsed.effects.map((effect) => effect.effect_id)).toEqual(["cut", "zoom", "bounce", "color_wave"]);
   });
 
   it("requests the backend catalog endpoint", async () => {

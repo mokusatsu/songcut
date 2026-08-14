@@ -1,6 +1,34 @@
-import type { RhythmGridPoint } from "@/lib/subtitles";
+import {
+  resolveBoundaryRange,
+  type BoundaryPolicy,
+} from "@/lib/boundaries";
+import type { RhythmGridPoint, SubtitleStyle } from "@/lib/subtitles";
+import { normalizeSubtitleStyle } from "@/lib/subtitles";
+import {
+  normalizeSubtitleEffect,
+  type SubtitleEffectCatalog,
+  type SubtitleEffectSettings,
+} from "@/lib/subtitleEffects";
+import { TIME_RANGE_EPSILON } from "@/lib/timeRange";
+import { tr } from "@/i18n";
 
 const EPSILON = 1e-6;
+
+export type SegmentTimingTarget = {
+  id: string;
+  start: number;
+  end: number;
+  style_override?: SubtitleStyle;
+  effect_override?: SubtitleEffectSettings;
+};
+
+export type SegmentStyleDraftState = {
+  mode: "inherit" | "custom";
+  style: SubtitleStyle;
+  effect: SubtitleEffectSettings;
+};
+
+export type SegmentRangeMode = "duration" | "end";
 
 /** `parseTimeInput`の外部表現を検証し、アプリ内部で扱う状態へ復元する。 */
 export function parseTimeInput(value: string): number | null {
@@ -114,4 +142,79 @@ export function nudgedRhythmTime(
 export function isOnRhythmGrid(grid: readonly RhythmGridPoint[], value: number): boolean {
   const nearest = nearestRhythmTime(grid, value);
   return nearest !== null && Math.abs(nearest - value) <= 0.0005;
+}
+
+/** 継承／独自モードと、即時編集に使う正規化済みStyle／Effectを作る。 */
+export function createSegmentStyleDraft(
+  segment: SegmentTimingTarget,
+  inheritedStyle: SubtitleStyle | undefined,
+  inheritedEffect: SubtitleEffectSettings | undefined,
+  catalog: SubtitleEffectCatalog,
+): SegmentStyleDraftState {
+  const custom = Boolean(segment.style_override && segment.effect_override);
+  return {
+    mode: custom ? "custom" : "inherit",
+    style: normalizeSubtitleStyle(custom ? segment.style_override : inheritedStyle),
+    effect: normalizeSubtitleEffect(custom ? segment.effect_override : inheritedEffect, catalog),
+  };
+}
+
+/** 時刻入力を既存BoundaryPolicyで検証し、確定可能な範囲を返す。 */
+export function evaluateSegmentTiming(input: {
+  startInput: string;
+  extentInput: string;
+  rangeMode: SegmentRangeMode;
+  mode: "cut" | "sub";
+  policy: BoundaryPolicy;
+  mediaDuration: number;
+  previousEnd?: number;
+  nextStart?: number;
+}) {
+  const proposedStart = parseTimeInput(input.startInput);
+  const extent = parseTimeInput(input.extentInput);
+  const startError = proposedStart === null ? tr("segmentTiming.invalidTime") : null;
+  const extentError = extent === null ? tr("segmentTiming.invalidTime") : null;
+  const proposedEnd = proposedStart === null || extent === null
+    ? null
+    : input.rangeMode === "duration"
+      ? proposedStart + extent
+      : extent;
+  let rangeError: string | null = null;
+  let resolved: { start: number; end: number } | null = null;
+  if (proposedStart !== null && proposedEnd !== null) {
+    if (proposedEnd - proposedStart < input.policy.minimumDuration - TIME_RANGE_EPSILON) {
+      rangeError = tr("segmentTiming.positiveDuration");
+    } else if (proposedStart < 0 || proposedEnd > input.mediaDuration + EPSILON) {
+      rangeError = tr("segmentTiming.outOfMedia");
+    } else if (input.mode === "sub" && input.previousEnd !== undefined && proposedStart < input.previousEnd - EPSILON) {
+      rangeError = tr("segmentTiming.previousOverlap");
+    } else if (input.mode === "sub" && input.nextStart !== undefined && proposedEnd > input.nextStart + EPSILON) {
+      rangeError = tr("segmentTiming.nextOverlap");
+    } else {
+      resolved = resolveBoundaryRange(
+        { start: proposedStart, end: proposedEnd },
+        input.policy,
+        { previousEnd: input.previousEnd, nextStart: input.nextStart },
+      );
+      if (!resolved) {
+        if (input.previousEnd !== undefined && proposedStart <= input.previousEnd + EPSILON) {
+          rangeError = tr("segmentTiming.previousOverlap");
+        } else if (input.nextStart !== undefined && proposedEnd >= input.nextStart - EPSILON) {
+          rangeError = tr("segmentTiming.nextOverlap");
+        } else {
+          rangeError = tr("segmentTiming.invalidTime");
+        }
+      }
+    }
+  }
+  return {
+    start: resolved?.start ?? null,
+    end: resolved?.end ?? null,
+    proposedStart,
+    proposedEnd,
+    startError,
+    extentError,
+    rangeError,
+    valid: startError === null && extentError === null && rangeError === null,
+  };
 }

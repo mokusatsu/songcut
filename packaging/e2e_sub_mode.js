@@ -6,10 +6,17 @@ const repo = path.resolve(__dirname, "..");
 const packageRoot = process.env.SONGCUT_E2E_PACKAGE_ROOT
   ? path.resolve(process.env.SONGCUT_E2E_PACKAGE_ROOT)
   : path.join(repo, "dist", "songcut-win-x64");
-const fixtureStem = "02_「星の消えた夜に」 - Aimer";
-const fixtureVideo = path.join(repo, "testdata", `${fixtureStem}.webm`);
-const fixtureLyrics = path.join(repo, "testdata", `${fixtureStem}.lyrics.txt`);
-const runRoot = path.join(repo, "out", "e2e-sub-mode");
+const boundaryDragOnly = process.env.SONGCUT_E2E_SUB_BOUNDARY_ONLY === "1";
+const defaultFixtureStem = "02_「星の消えた夜に」 - Aimer";
+const defaultFixtureVideo = path.join(repo, "testdata", `${defaultFixtureStem}.webm`);
+const fixtureVideo = boundaryDragOnly && process.env.SONGCUT_E2E_SUB_BOUNDARY_VIDEO
+  ? path.resolve(process.env.SONGCUT_E2E_SUB_BOUNDARY_VIDEO)
+  : defaultFixtureVideo;
+const fixtureStem = path.basename(fixtureVideo, path.extname(fixtureVideo));
+const fixtureLyrics = path.join(repo, "testdata", `${defaultFixtureStem}.lyrics.txt`);
+const runRoot = process.env.SONGCUT_E2E_SUB_RUN_DIR
+  ? path.resolve(process.env.SONGCUT_E2E_SUB_RUN_DIR)
+  : path.join(repo, "out", "e2e-sub-mode");
 const input = path.join(runRoot, `${fixtureStem}.webm`);
 const outputDir = path.join(runRoot, "export");
 const userDataDir = path.join(runRoot, "user-data");
@@ -19,8 +26,14 @@ const lyricsDialogScreenshotPath = path.join(runRoot, "e2e-sub-mode-lyrics-dialo
 const analysisProgressScreenshotPath = path.join(runRoot, "e2e-sub-mode-analysis-progress.png");
 const styleDialogScreenshotPath = path.join(runRoot, "e2e-sub-mode-style-dialog.png");
 const exportProgressScreenshotPath = path.join(runRoot, "e2e-sub-mode-export-progress.png");
+const displayPreviewScreenshotPath = path.join(runRoot, "e2e-sub-mode-display-preview.png");
 const port = Number(process.env.SONGCUT_E2E_SUB_PORT || 9240);
 const captureScreenshots = process.env.SONGCUT_E2E_SCREENSHOTS === "1";
+const viewportWidth = Number(process.env.SONGCUT_E2E_SUB_VIEWPORT_WIDTH || 0);
+const viewportHeight = Number(process.env.SONGCUT_E2E_SUB_VIEWPORT_HEIGHT || 0);
+const viewportRequested = viewportWidth > 0 || viewportHeight > 0;
+const fixtureSubProject = `${fixtureVideo}.sub.songcut`;
+let boundarySeed = null;
 
 function log(message, value) {
   const line = value === undefined ? message : `${message} ${JSON.stringify(value)}`;
@@ -47,19 +60,23 @@ function withTimeout(promise, timeoutMs, label) {
 
 async function captureOptionalScreenshot(cdp, filePath, label) {
   if (!captureScreenshots) return null;
-  try {
-    const screenshot = await withTimeout(
-      cdp.send("Page.captureScreenshot", { format: "png", fromSurface: true }),
-      15_000,
-      `${label} screenshot`
-    );
-    fs.writeFileSync(filePath, Buffer.from(screenshot.result.data, "base64"));
-    assertPass(fs.statSync(filePath).size > 0, `${label} screenshot is empty.`);
-    return filePath;
-  } catch (error) {
-    log("SUB_SCREENSHOT_SKIPPED", { label, message: error.message });
-    return null;
+  let lastError = null;
+  for (const fromSurface of [true, false]) {
+    try {
+      const screenshot = await withTimeout(
+        cdp.send("Page.captureScreenshot", { format: "png", fromSurface }),
+        15_000,
+        `${label} screenshot`
+      );
+      fs.writeFileSync(filePath, Buffer.from(screenshot.result.data, "base64"));
+      assertPass(fs.statSync(filePath).size > 0, `${label} screenshot is empty.`);
+      return filePath;
+    } catch (error) {
+      lastError = error;
+    }
   }
+  log("SUB_SCREENSHOT_SKIPPED", { label, message: lastError?.message ?? String(lastError) });
+  return null;
 }
 
 async function getPage() {
@@ -115,6 +132,9 @@ async function evaluate(cdp, expression) {
     returnByValue: true,
     awaitPromise: true,
   });
+  if (!response?.result) {
+    throw new Error(`CDP Runtime.evaluate failed: ${JSON.stringify(response?.error ?? response)}`);
+  }
   if (response.result.exceptionDetails) throw new Error(JSON.stringify(response.result.exceptionDetails));
   return response.result.result.value;
 }
@@ -142,7 +162,15 @@ async function waitForJson(filePath, predicate, timeoutMs, label) {
     }
     await sleep(500);
   }
-  throw new Error(`Timeout waiting for ${label}; last=${JSON.stringify(last)}`);
+  const compactLast = last && typeof last === "object"
+    ? {
+        updated_at: last.updated_at,
+        revision: last.revision,
+        mode: last.mode,
+        selected_segment_id: last.subtitle?.selected_segment_id,
+      }
+    : last;
+  throw new Error(`Timeout waiting for ${label}; last=${JSON.stringify(compactLast)}`);
 }
 
 async function clickButton(cdp, label) {
@@ -155,6 +183,23 @@ async function clickButton(cdp, label) {
       return true;
     })()`
   );
+}
+
+async function pressSpace(cdp) {
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: " ",
+    code: "Space",
+    windowsVirtualKeyCode: 32,
+    nativeVirtualKeyCode: 32,
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: " ",
+    code: "Space",
+    windowsVirtualKeyCode: 32,
+    nativeVirtualKeyCode: 32,
+  });
 }
 
 function cleanup(processHandle, cdp) {
@@ -170,17 +215,330 @@ function cleanup(processHandle, cdp) {
   }
 }
 
+function prepareBoundaryDragProject() {
+  assertPass(fs.existsSync(fixtureSubProject), "Sub boundary E2E seed project is missing.", fixtureSubProject);
+  const project = JSON.parse(fs.readFileSync(fixtureSubProject, "utf8"));
+  const selectedId = project.subtitle?.selected_segment_id;
+  const selectedLane = project.subtitle?.lanes?.find((candidate) =>
+    candidate.segments?.some((segment) => segment.id === selectedId)
+  );
+  const selectedSegment = selectedLane?.segments?.find((candidate) => candidate.id === selectedId);
+  const selectedIsEditable = selectedSegment?.source === "lyrics"
+    && selectedSegment.end - selectedSegment.start >= 2
+    && selectedSegment.start >= 1;
+  const lane = selectedIsEditable ? selectedLane : project.subtitle?.lanes?.find((candidate) =>
+    candidate.segments?.some((segment) =>
+      segment.source === "lyrics" && segment.end - segment.start >= 2 && segment.start >= 1
+    )
+  );
+  const segment = selectedIsEditable ? selectedSegment : lane?.segments?.find((candidate) =>
+    candidate.source === "lyrics" && candidate.end - candidate.start >= 2 && candidate.start >= 1
+  );
+  assertPass(lane && segment, "Sub boundary E2E seed has no editable lyrics segment.");
+  const orderedSegments = [...lane.segments]
+    .sort((left, right) => left.start - right.start || left.end - right.end || left.id.localeCompare(right.id));
+  const segmentIndex = orderedSegments.findIndex((candidate) => candidate.id === segment.id);
+  const previousEnd = segmentIndex > 0 ? orderedSegments[segmentIndex - 1].end : 0;
+  const nextStart = segmentIndex + 1 < orderedSegments.length
+    ? orderedSegments[segmentIndex + 1].start
+    : project.source.duration_seconds;
+  const rhythmTimes = project.subtitle.rhythm_grid.map((point) => point.time);
+  const inputStat = fs.statSync(input);
+  project.source.absolute_path = input;
+  project.source.relative_path = path.basename(input);
+  project.source.filename = path.basename(input);
+  project.source.mtime_ms = inputStat.mtimeMs;
+  project.subtitle.active_lane_id = lane.id;
+  project.subtitle.selected_segment_id = segment.id;
+  project.updated_at = new Date().toISOString();
+  fs.writeFileSync(`${input}.sub.songcut`, `${JSON.stringify(project, null, 2)}\n`);
+  boundarySeed = {
+    laneId: lane.id,
+    segmentId: segment.id,
+    start: segment.start,
+    end: segment.end,
+    lineRevision: segment.line_revision ?? 0,
+    sourceDuration: project.source.duration_seconds,
+    startTarget: [...rhythmTimes]
+      .reverse()
+      .find((time) => time <= segment.start - 0.35 && time > previousEnd),
+    endTarget: rhythmTimes
+      .find((time) => time >= segment.end + 0.35 && time < nextStart),
+  };
+}
+
+async function sampleVideoFrame(cdp) {
+  return evaluate(
+    cdp,
+    `(() => {
+      const video = document.querySelector("video");
+      if (!video) return null;
+      const state = {
+        currentTime: video.currentTime,
+        duration: video.duration,
+        paused: video.paused,
+        readyState: video.readyState,
+        networkState: video.networkState,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        src: video.currentSrc || video.src,
+        error: video.error ? { code: video.error.code, message: video.error.message } : null,
+        frame: null,
+      };
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 36;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let luminance = 0;
+        let opaque = 0;
+        for (let index = 0; index < pixels.length; index += 4) {
+          luminance += pixels[index] * 0.2126 + pixels[index + 1] * 0.7152 + pixels[index + 2] * 0.0722;
+          if (pixels[index + 3] > 0) opaque += 1;
+        }
+        state.frame = { meanLuminance: luminance / (pixels.length / 4), opaque };
+      } catch (error) {
+        state.frame = { error: String(error) };
+      }
+      return state;
+    })()`
+  );
+}
+
+async function dragSubBoundary(cdp, edge, targetTime) {
+  const geometry = await evaluate(
+    cdp,
+    `(() => {
+      const viewport = document.querySelector(".sub-timeline-scroll .scroll-area-viewport");
+      const content = document.querySelector(".sub-timeline-content");
+      const handle = document.querySelector(${JSON.stringify(`.lyrics-handle.${edge}.selected`)});
+      if (!viewport || !content || !handle) return null;
+      const requestedLeft = Number.parseFloat(handle.style.left || "0");
+      viewport.scrollLeft = Math.max(0, requestedLeft - viewport.clientWidth * 0.45);
+      const rect = handle.getBoundingClientRect();
+      const contentRect = content.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const targetX = contentRect.left + (${Number(targetTime)} / ${Number(boundarySeed?.sourceDuration ?? 1)}) * contentRect.width;
+      const hit = document.elementFromPoint(x, y);
+      window.__subBoundaryInputEvents = [];
+      window.__subBoundaryErrors = [];
+      window.addEventListener("error", (event) => {
+        window.__subBoundaryErrors.push({
+          type: "error",
+          message: event.message,
+          stack: event.error?.stack || null,
+          filename: event.filename || null,
+          lineno: event.lineno || null,
+          colno: event.colno || null,
+        });
+      }, { once: true });
+      window.addEventListener("unhandledrejection", (event) => {
+        window.__subBoundaryErrors.push({
+          type: "unhandledrejection",
+          message: String(event.reason),
+          stack: event.reason?.stack || null,
+        });
+      }, { once: true });
+      for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "mousedown", "mousemove", "mouseup"]) {
+        window.addEventListener(type, (event) => {
+          window.__subBoundaryInputEvents.push({
+            type,
+            pointerId: event.pointerId ?? null,
+            clientX: event.clientX,
+            targetClass: event.target?.className || null,
+          });
+        }, { capture: true, once: type === "pointerdown" || type === "mousedown" });
+      }
+      return {
+        sx: x,
+        sy: y,
+        tx: targetX,
+        ty: y,
+        delta: targetX - x,
+        targetTime: ${Number(targetTime)},
+        hitClass: hit?.className || null,
+        hitTag: hit?.tagName || null,
+        handleClass: handle.className,
+      };
+    })()`
+  );
+  assertPass(geometry, `Sub ${edge} boundary handle is unavailable.`);
+  assertPass(
+    String(geometry.hitClass).includes("lyrics-handle"),
+    `Sub ${edge} boundary handle does not own its visible hit area.`,
+    geometry
+  );
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved", x: geometry.sx, y: geometry.sy, button: "none", buttons: 0,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed", x: geometry.sx, y: geometry.sy, button: "left", buttons: 1, clickCount: 1,
+  });
+  await sleep(80);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved", x: geometry.tx, y: geometry.ty, button: "left", buttons: 1,
+  });
+  await sleep(250);
+  const during = await sampleVideoFrame(cdp);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased", x: geometry.tx, y: geometry.ty, button: "left", buttons: 0, clickCount: 1,
+  });
+  await sleep(500);
+  const after = await sampleVideoFrame(cdp);
+  const runtime = await evaluate(
+    cdp,
+    `(() => {
+      const handle = document.querySelector(${JSON.stringify(`.lyrics-handle.${edge}.selected`)});
+      const segment = document.querySelector(".lyrics-segment.selected");
+      return {
+        events: window.__subBoundaryInputEvents || [],
+        errors: window.__subBoundaryErrors || [],
+        handleLeft: handle?.style.left || null,
+        segmentLeft: segment?.style.left || null,
+        segmentWidth: segment?.style.width || null,
+        bodyTextLength: document.body?.innerText?.length || 0,
+        visibilityState: document.visibilityState,
+      };
+    })()`
+  );
+  log("SUB_BOUNDARY_DRAG_RUNTIME", { edge, geometry, runtime, during, after });
+  return { geometry, during, after, runtime };
+}
+
+async function runSubBoundaryDragE2E(cdp, subProjectPath) {
+  assertPass(boundarySeed, "Sub boundary E2E seed metadata is unavailable.");
+  await waitFor(
+    cdp,
+    `!!document.querySelector(".lyrics-handle.start.selected") && !!document.querySelector(".lyrics-handle.end.selected")`,
+    30_000,
+    "selected Sub boundary handles"
+  );
+  await evaluate(
+    cdp,
+    `(() => {
+      const groups = document.querySelectorAll(".sub-toolbar .mode-transport-toolbar > .icon-group");
+      const buttons = groups[groups.length - 1]?.querySelectorAll("button");
+      const zoomIn = buttons?.[buttons.length - 1];
+      zoomIn?.click();
+      zoomIn?.click();
+      return true;
+    })()`
+  );
+  await sleep(300);
+  const targetTime = boundarySeed.start + Math.min(1, (boundarySeed.end - boundarySeed.start) / 2);
+  await evaluate(
+    cdp,
+    `(async () => {
+      const video = document.querySelector("video");
+      if (!video) return false;
+      video.pause();
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 5000);
+        video.addEventListener("seeked", () => { clearTimeout(timer); resolve(); }, { once: true });
+        video.currentTime = ${targetTime};
+      });
+      window.__subBoundaryVideoEvents = { seeking: 0, seeked: 0, emptied: 0, loadstart: 0, error: 0 };
+      for (const type of Object.keys(window.__subBoundaryVideoEvents)) {
+        video.addEventListener(type, () => { window.__subBoundaryVideoEvents[type] += 1; });
+      }
+      return true;
+    })()`
+  );
+  const before = await sampleVideoFrame(cdp);
+  assertPass(
+    before?.readyState >= 2 && before.videoWidth > 0 && before.videoHeight > 0 && !before.error &&
+      before.frame && !before.frame.error && before.frame.opaque > 0 && before.frame.meanLuminance > 1,
+    "Sub boundary E2E could not establish a drawable video frame.",
+    before
+  );
+
+  assertPass(
+    Number.isFinite(boundarySeed.startTarget) && Number.isFinite(boundarySeed.endTarget),
+    "Sub boundary E2E could not resolve valid rhythm-grid targets.",
+    boundarySeed
+  );
+  const startDrag = await dragSubBoundary(cdp, "start", boundarySeed.startTarget);
+  const afterStartDocument = await waitForJson(
+    subProjectPath,
+    (value) => {
+      const segment = value.subtitle?.lanes?.flatMap((lane) => lane.segments || [])
+        .find((candidate) => candidate.id === boundarySeed.segmentId);
+      return segment && segment.start < boundarySeed.start && (segment.line_revision ?? 0) === boundarySeed.lineRevision + 1
+        ? segment
+        : false;
+    },
+    10_000,
+    "persisted Sub start boundary drag"
+  );
+  const afterStartSegment = afterStartDocument.subtitle.lanes
+    .flatMap((lane) => lane.segments || [])
+    .find((segment) => segment.id === boundarySeed.segmentId);
+  assertPass(
+    Math.abs(startDrag.during.currentTime - targetTime) <= 0.15 &&
+      Math.abs(startDrag.after.currentTime - targetTime) <= 0.15,
+    "Sub start boundary drag unexpectedly sought the video.",
+    { targetTime, startDrag }
+  );
+
+  const endDrag = await dragSubBoundary(cdp, "end", boundarySeed.endTarget);
+  const afterEndDocument = await waitForJson(
+    subProjectPath,
+    (value) => {
+      const segment = value.subtitle?.lanes?.flatMap((lane) => lane.segments || [])
+        .find((candidate) => candidate.id === boundarySeed.segmentId);
+      return segment && segment.end > boundarySeed.end && (segment.line_revision ?? 0) === boundarySeed.lineRevision + 2
+        ? segment
+        : false;
+    },
+    10_000,
+    "persisted Sub end boundary drag"
+  );
+  const afterEndSegment = afterEndDocument.subtitle.lanes
+    .flatMap((lane) => lane.segments || [])
+    .find((segment) => segment.id === boundarySeed.segmentId);
+  const events = await evaluate(cdp, `window.__subBoundaryVideoEvents`);
+  for (const state of [startDrag.during, startDrag.after, endDrag.during, endDrag.after]) {
+    assertPass(
+      state?.readyState >= 2 && state.videoWidth > 0 && state.videoHeight > 0 && !state.error &&
+        state.frame && !state.frame.error && state.frame.opaque > 0 && state.frame.meanLuminance > 1,
+      "Sub boundary drag blacked out the video frame.",
+      state
+    );
+    assertPass(
+      Math.abs(state.currentTime - targetTime) <= 0.15,
+      "Sub boundary drag changed the playback cursor.",
+      { targetTime, state }
+    );
+  }
+  assertPass(
+    events && events.seeking === 0 && events.seeked === 0 && events.emptied === 0 && events.loadstart === 0 && events.error === 0,
+    "Sub boundary drag caused an unexpected media lifecycle event.",
+    events
+  );
+  log("SUB_BOUNDARY_DRAG_E2E_PASS", {
+    segmentId: boundarySeed.segmentId,
+    before,
+    start: { from: boundarySeed.start, to: afterStartSegment?.start },
+    end: { from: boundarySeed.end, to: afterEndSegment?.end },
+    events,
+  });
+}
+
 (async () => {
   assertPass(fs.existsSync(fixtureVideo), "Fixture video is missing.", fixtureVideo);
-  assertPass(fs.existsSync(fixtureLyrics), "Fixture lyrics are missing.", fixtureLyrics);
+  if (!boundaryDragOnly) assertPass(fs.existsSync(fixtureLyrics), "Fixture lyrics are missing.", fixtureLyrics);
   assertPass(fs.existsSync(path.join(packageRoot, "songcut.exe")), "Packaged songcut.exe is missing.", packageRoot);
   fs.rmSync(runRoot, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.copyFileSync(fixtureVideo, input);
+  if (boundaryDragOnly) prepareBoundaryDragProject();
   fs.writeFileSync(path.join(userDataDir, "app-preferences.json"), `${JSON.stringify({ uiLanguage: "ja" }, null, 2)}\n`);
   fs.writeFileSync(logPath, "");
-  const lyrics = fs.readFileSync(fixtureLyrics, "utf8");
+  const lyrics = boundaryDragOnly ? "" : fs.readFileSync(fixtureLyrics, "utf8");
   const env = {
     ...process.env,
     SONGCUT_E2E_VIDEO: input,
@@ -202,11 +560,31 @@ function cleanup(processHandle, cdp) {
     await cdp.send("Runtime.enable");
     await cdp.send("Page.enable");
     await waitFor(cdp, `!!window.songcut && !!document.querySelector('[role="tab"]')`, 60_000, "initial render");
+    if (viewportRequested) {
+      assertPass(
+        Number.isInteger(viewportWidth) && viewportWidth >= 1060 &&
+          Number.isInteger(viewportHeight) && viewportHeight >= 720,
+        "Sub E2E viewport must satisfy the application minimum size.",
+        { viewportWidth, viewportHeight }
+      );
+      assertPass(
+        await evaluate(cdp, `(() => { window.resizeTo(${viewportWidth}, ${viewportHeight}); return true; })()`),
+        "Electron window.resizeTo was unavailable for the Sub E2E viewport."
+      );
+      await waitFor(
+        cdp,
+        `window.innerWidth <= ${viewportWidth} && window.innerHeight <= ${viewportHeight}`,
+        10_000,
+        `${viewportWidth}x${viewportHeight} Sub E2E window bounds`
+      );
+      const actualViewport = await evaluate(cdp, `({ width: window.innerWidth, height: window.innerHeight })`);
+      log("SUB_VIEWPORT_OK", { requested: { width: viewportWidth, height: viewportHeight }, actual: actualViewport });
+    }
     assertPass(await clickButton(cdp, "読み込む"), "Load button could not be clicked.");
     await waitFor(cdp, `document.querySelector("video")?.src.includes(${JSON.stringify(encodeURIComponent(fixtureStem))})`, 60_000, "fixture video load");
     log("SUB_FIXTURE_LOAD_OK", { input });
 
-    const subTabPoint = await evaluate(
+    const subTabPoint = await waitFor(
       cdp,
       `(() => {
         const tab = [...document.querySelectorAll('[role="tab"]')].find((item) => item.textContent.trim() === "Sub");
@@ -219,7 +597,9 @@ function cleanup(processHandle, cdp) {
           y,
           hit: document.elementFromPoint(x, y)?.outerHTML?.slice(0, 300) || null
         };
-      })()`
+      })()`,
+      60_000,
+      "enabled Sub tab"
     );
     assertPass(subTabPoint, "Sub tab could not be selected.");
     log("SUB_TAB_TARGET", subTabPoint);
@@ -330,6 +710,17 @@ function cleanup(processHandle, cdp) {
       "Sub symmetric-peak waveform default"
     );
     log("SUB_WAVEFORM_DEFAULT_OK", subWaveformDefault);
+    if (boundaryDragOnly) {
+      const subProjectPath = `${input}.sub.songcut`;
+      await waitForJson(
+        subProjectPath,
+        (value) => value.mode === "sub" && value.subtitle?.selected_segment_id === boundarySeed.segmentId,
+        30_000,
+        "seeded Sub boundary project"
+      );
+      await runSubBoundaryDragE2E(cdp, subProjectPath);
+      return;
+    }
     const proxyAfterModeSwitch = await waitFor(
       cdp,
       `(() => {
@@ -493,6 +884,66 @@ function cleanup(processHandle, cdp) {
               gridLines: document.querySelectorAll(".rhythm-grid-line").length,
               timelineWidth: timelineContent?.getBoundingClientRect().width || 0,
               timelineViewportWidth: timelineViewport?.clientWidth || 0,
+              laneDensity: [...document.querySelectorAll(".lyrics-lane")].map((lane) => {
+                const laneRect = lane.getBoundingClientRect();
+                const segment = lane.querySelector(".lyrics-segment");
+                const labels = [...lane.querySelectorAll(".lyrics-label")];
+                const firstLabelTop = labels.length
+                  ? Math.min(...labels.map((label) => label.getBoundingClientRect().top))
+                  : null;
+                const lastLabelBottom = labels.length
+                  ? Math.max(...labels.map((label) => label.getBoundingClientRect().bottom))
+                  : null;
+                return {
+                  height: laneRect.height,
+                  leadingGap: segment && firstLabelTop !== null
+                    ? firstLabelTop - segment.getBoundingClientRect().bottom
+                    : null,
+                  trailingGap: lastLabelBottom !== null ? laneRect.bottom - lastLabelBottom : null
+                };
+              }),
+              contentTrailingGap: (() => {
+                const laneList = [...document.querySelectorAll(".lyrics-lane")];
+                const lastLane = laneList.at(-1);
+                return timelineContent && lastLane
+                  ? timelineContent.getBoundingClientRect().bottom - lastLane.getBoundingClientRect().bottom
+                  : null;
+              })(),
+              bottomGutter: (() => {
+                const scrollRoot = document.querySelector(".sub-timeline-scroll");
+                const horizontalScrollbar = scrollRoot?.querySelector(".scroll-area-scrollbar-horizontal");
+                const laneList = [...document.querySelectorAll(".lyrics-lane")];
+                const lastLane = laneList.at(-1);
+                if (!timelineContent || !timelineViewport || !horizontalScrollbar || !lastLane) return null;
+                const scrollbarRect = horizontalScrollbar.getBoundingClientRect();
+                const previousScrollTop = timelineViewport.scrollTop;
+                timelineViewport.scrollTop = timelineViewport.scrollHeight;
+                const lastLaneBottomToScrollbarTop = scrollbarRect.top - lastLane.getBoundingClientRect().bottom;
+                timelineViewport.scrollTop = previousScrollTop;
+                return {
+                  contentTrailingGap: timelineContent.getBoundingClientRect().bottom - lastLane.getBoundingClientRect().bottom,
+                  contentPaddingBottom: Number.parseFloat(getComputedStyle(timelineContent).paddingBottom),
+                  horizontalScrollbarHeight: scrollbarRect.height,
+                  lastLaneBottomToScrollbarTop,
+                };
+              })(),
+              headerStatusLayout: (() => {
+                const header = document.querySelector(".mode-workspace-header");
+                const controls = header?.querySelector(".mode-workspace-controls");
+                const actions = header?.querySelector(".mode-toolbar-actions");
+                const transport = header?.querySelector(".mode-transport-toolbar");
+                const information = actions?.querySelector('button[aria-label="情報"]');
+                return header && controls && actions && transport && information
+                  ? {
+                      headerHeight: header.getBoundingClientRect().height,
+                      controlsHeight: controls.getBoundingClientRect().height,
+                      actionsHeight: actions.getBoundingClientRect().height,
+                      transportHeight: transport.getBoundingClientRect().height,
+                      informationInsideActions: actions.contains(information),
+                      hasResidentStatus: !!header.querySelector(".mode-workspace-status")
+                    }
+                  : null;
+              })(),
               overflowingLabels: [...document.querySelectorAll(".lyrics-lane")].flatMap((lane) => {
                 const laneBottom = lane.getBoundingClientRect().bottom;
                 return [...lane.querySelectorAll(".lyrics-label")]
@@ -542,6 +993,35 @@ function cleanup(processHandle, cdp) {
       analysisUi.overflowingLabels
     );
     assertPass(
+      analysisUi.laneDensity.every(
+        (lane) =>
+          lane.height < 240 &&
+          (lane.leadingGap === null || (lane.leadingGap >= -1 && lane.leadingGap <= 8)) &&
+          (lane.trailingGap === null || (lane.trailingGap >= -1 && lane.trailingGap <= 8))
+      ) &&
+        analysisUi.bottomGutter &&
+        analysisUi.bottomGutter.horizontalScrollbarHeight >= 8 &&
+        Math.abs(analysisUi.bottomGutter.contentTrailingGap - analysisUi.bottomGutter.horizontalScrollbarHeight) <= 1 &&
+        Math.abs(analysisUi.bottomGutter.contentPaddingBottom - analysisUi.bottomGutter.horizontalScrollbarHeight) <= 1 &&
+        analysisUi.bottomGutter.lastLaneBottomToScrollbarTop >= -1,
+      "The final Sub lyrics lane is not reserved above the horizontal scrollbar.",
+      {
+        laneDensity: analysisUi.laneDensity,
+        bottomGutter: analysisUi.bottomGutter,
+      }
+    );
+    assertPass(
+      analysisUi.headerStatusLayout &&
+        Math.abs(analysisUi.headerStatusLayout.headerHeight - analysisUi.headerStatusLayout.controlsHeight) <= 2 &&
+        analysisUi.headerStatusLayout.headerHeight <= 90 &&
+        analysisUi.headerStatusLayout.actionsHeight <= 42 &&
+        analysisUi.headerStatusLayout.transportHeight <= 42 &&
+        analysisUi.headerStatusLayout.informationInsideActions &&
+        !analysisUi.headerStatusLayout.hasResidentStatus,
+      "Sub controls do not retain the compact status-free Cut header contract.",
+      analysisUi.headerStatusLayout
+    );
+    assertPass(
       project.subtitle.beat_warning === null &&
         project.subtitle.tempo_bpm > 0 &&
         project.subtitle.rhythm_grid.length > 0 &&
@@ -568,6 +1048,92 @@ function cleanup(processHandle, cdp) {
       warningCount: warningSegments.length,
       confidence: project.subtitle.confidence_statistics,
     });
+    const renamedLane = project.subtitle.lanes.find((lane) =>
+      lane.segments.some((segment) => segment.source === "lyrics")
+    ) || project.subtitle.lanes[0];
+    const temporaryLaneName = `${renamedLane.name} E2E`;
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const laneName = [...document.querySelectorAll(".lyrics-lane-name")].find(
+            (item) => item.textContent.trim() === ${JSON.stringify(renamedLane.name)}
+          );
+          if (!laneName) return false;
+          laneName.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+          return true;
+        })()`
+      ),
+      "Lyrics timeline name could not be opened by double-click."
+    );
+    await waitFor(cdp, `!!document.querySelector(".lyrics-lane-name-input")`, 10_000, "timeline name editor");
+    await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".lyrics-lane-name-input");
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, ${JSON.stringify(temporaryLaneName)});
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return input.value;
+      })()`
+    );
+    await waitFor(
+      cdp,
+      `document.querySelector(".lyrics-lane-name-input")?.value === ${JSON.stringify(temporaryLaneName)}`,
+      10_000,
+      "edited timeline name"
+    );
+    await sleep(50);
+    await evaluate(
+      cdp,
+      `document.querySelector(".lyrics-lane-name-input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))`
+    );
+    await waitForJson(
+      subProjectPath,
+      (value) => value.subtitle?.lanes?.find((lane) => lane.id === renamedLane.id)?.name === temporaryLaneName,
+      60_000,
+      "renamed lyrics timeline persistence"
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `[...document.querySelectorAll(".lyrics-lane-name")].some((item) => item.textContent.trim() === ${JSON.stringify(temporaryLaneName)})`
+      ),
+      "Renamed lyrics timeline is not visible."
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        const laneName = [...document.querySelectorAll(".lyrics-lane-name")].find(
+          (item) => item.textContent.trim() === ${JSON.stringify(temporaryLaneName)}
+        );
+        laneName?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+        return !!laneName;
+      })()`
+    );
+    await waitFor(cdp, `!!document.querySelector(".lyrics-lane-name-input")`, 10_000, "timeline name restore editor");
+    await evaluate(
+      cdp,
+      `(() => {
+        const input = document.querySelector(".lyrics-lane-name-input");
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        setter.call(input, ${JSON.stringify(renamedLane.name)});
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        return input.value;
+      })()`
+    );
+    await sleep(50);
+    await evaluate(
+      cdp,
+      `document.querySelector(".lyrics-lane-name-input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }))`
+    );
+    await waitForJson(
+      subProjectPath,
+      (value) => value.subtitle?.lanes?.find((lane) => lane.id === renamedLane.id)?.name === renamedLane.name,
+      60_000,
+      "restored lyrics timeline name"
+    );
+    log("SUB_TIMELINE_RENAME_OK", { laneId: renamedLane.id, originalName: renamedLane.name });
     const cachedProject = await waitForJson(
       subProjectPath,
       (value) => {
@@ -621,7 +1187,7 @@ function cleanup(processHandle, cdp) {
     const zoomButtonPoint = await evaluate(
       cdp,
       `(() => {
-        const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
+        const groups = document.querySelectorAll(".sub-toolbar .mode-transport-toolbar > .icon-group");
         const zoomGroup = groups[groups.length - 1];
         const buttons = zoomGroup?.querySelectorAll("button");
         const button = buttons?.[buttons.length - 1];
@@ -640,7 +1206,7 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const active = document.activeElement;
-        const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
+        const groups = document.querySelectorAll(".sub-toolbar .mode-transport-toolbar > .icon-group");
         const zoomGroup = groups[groups.length - 1];
         const buttons = zoomGroup?.querySelectorAll("button");
         const button = buttons?.[buttons.length - 1];
@@ -890,7 +1456,7 @@ function cleanup(processHandle, cdp) {
     assertPass(await evaluate(
       cdp,
       `(() => {
-        const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
+        const groups = document.querySelectorAll(".sub-toolbar .mode-transport-toolbar > .icon-group");
         const zoomGroup = groups[groups.length - 1];
         const buttons = zoomGroup?.querySelectorAll("button");
         buttons?.[buttons.length - 1]?.click();
@@ -951,7 +1517,7 @@ function cleanup(processHandle, cdp) {
     const zoomReset = await evaluate(
       cdp,
       `(() => {
-        const groups = document.querySelectorAll(".sub-toolbar > .icon-group");
+        const groups = document.querySelectorAll(".sub-toolbar .mode-transport-toolbar > .icon-group");
         const zoomGroup = groups[groups.length - 1];
         const button = [...(zoomGroup?.querySelectorAll("button") || [])].find((item) => item.textContent.includes("%"));
         button?.click();
@@ -1359,59 +1925,395 @@ function cleanup(processHandle, cdp) {
     });
 
     const segmentStyleTarget = effectUpdatedProject.subtitle.lanes[0].segments[0];
-    const segmentStyleOpened = await evaluate(
+    const zoomRangeStart = Math.max(0, segmentStyleTarget.start - 2);
+    const zoomRangeEnd = Math.min(effectUpdatedProject.source.duration_seconds, segmentStyleTarget.end + 2);
+    const zoomRangeDuration = zoomRangeEnd - zoomRangeStart;
+    const segmentInspectorReady = await waitFor(
       cdp,
       `(() => {
-        const target = [...document.querySelectorAll(".lyrics-segment")].find(
-          (item) => item.title.startsWith(${JSON.stringify(`${segmentStyleTarget.text}\n`)})
-        );
-        target?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-        return !!target;
-      })()`
-    );
-    assertPass(segmentStyleOpened, "Sub segment settings dialog could not be opened.");
-    const segmentTabs = await waitFor(
-      cdp,
-      `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const tabs = [...(dialog?.querySelectorAll('[role="tab"]') || [])];
-        return tabs.length === 2
-          ? { labels: tabs.map((tab) => tab.textContent.trim()), portalParentIsBody: dialog.parentElement?.parentElement === document.body }
+        const inspector = document.querySelector('.segment-inspector-shell');
+        const sections = [...(inspector?.querySelectorAll('.segment-inspector-section') || [])];
+        const headers = sections.map((section) => section.querySelector('.segment-inspector-header'));
+        return sections.length === 4 && headers.every(Boolean)
+          ? { labels: headers.map((header) => header.textContent.trim()), tabCount: inspector.querySelectorAll('[role="tab"]').length }
           : false;
       })()`,
       10_000,
-      "Sub segment Timing and Style tabs"
+      "Sub segment inspector Timeline, Timing, display-element, and Style accordions"
     );
     assertPass(
-      JSON.stringify(segmentTabs.labels) === JSON.stringify(["Timing", "Style"]) && segmentTabs.portalParentIsBody,
-      "Sub segment settings tabs or modal focus scope are incomplete.",
-      segmentTabs
+      JSON.stringify(segmentInspectorReady.labels) === JSON.stringify(["Timeline", "タイミング", "表示素", "スタイル"]) && segmentInspectorReady.tabCount === 0,
+      "Sub segment inspector accordion contract is incomplete.",
+      segmentInspectorReady
     );
-    const segmentStyleTabPoint = await evaluate(
+    const initialDisplayElements = segmentStyleTarget.display_elements || [];
+    assertPass(initialDisplayElements.length >= 2, "Standard Align did not provide editable display elements.", {
+      segmentId: segmentStyleTarget.id,
+      count: initialDisplayElements.length,
+    });
+    const displayElementUi = await waitFor(
       cdp,
       `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const styleTab = [...(dialog?.querySelectorAll('[role="tab"]') || [])].find((tab) => tab.textContent.trim() === "Style");
-        if (!styleTab) return null;
-        const rect = styleTab.getBoundingClientRect();
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const section = document.querySelector('.segment-inspector-section[data-section="display-elements"]');
+        const timeline = section?.querySelector('.display-element-timeline');
+        const blocks = [...(timeline?.querySelectorAll('.display-element-block') || [])];
+        const merge = section?.querySelector('button[aria-label="右とマージ"]');
+        const addLeft = section?.querySelector('button[aria-label="左に新規"]');
+        const addRight = section?.querySelector('button[aria-label="右に新規"]');
+        const remove = section?.querySelector('button[aria-label="表示素を削除"]');
+        if (!timeline || blocks.length < 2 || !merge || !addLeft || !addRight || !remove) return false;
+        const timelineRect = timeline.getBoundingClientRect();
+        const firstRect = blocks[0].getBoundingClientRect();
+        const lastRect = blocks[blocks.length - 1].getBoundingClientRect();
+        return {
+          count: blocks.length,
+          selectedCount: timeline.querySelectorAll('.display-element-block.selected').length,
+          fillsWidth: Math.abs(firstRect.left - timelineRect.left) <= 2 && Math.abs(lastRect.right - timelineRect.right) <= 2,
+        };
+      })()`,
+      10_000,
+      "display-element inspector timeline"
+    );
+    assertPass(
+      displayElementUi.count === initialDisplayElements.length &&
+        displayElementUi.selectedCount === 1 &&
+        displayElementUi.fillsWidth,
+      "Display-element timeline is not a selected-line 100% partition.",
+      displayElementUi
+    );
+    const displayElementZoomOpened = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="表示素をズーム編集"]');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
       })()`
     );
-    assertPass(segmentStyleTabPoint, "Custom Sub segment Style tab could not be opened.");
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "none" });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: segmentStyleTabPoint.x, y: segmentStyleTabPoint.y, button: "left", clickCount: 1 });
+    assertPass(displayElementZoomOpened, "Display-element zoom editor could not be opened.");
+    const displayElementZoomUi = await waitFor(
+      cdp,
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"][aria-label="表示素ズーム編集"]');
+        const sideTimeline = document.querySelector('.segment-inspector-section[data-section="display-elements"] .display-element-timeline');
+        const zoomTimeline = dialog?.querySelector('.display-element-timeline');
+        const waveform = dialog?.querySelector('.display-element-zoom-waveform[role="slider"]');
+        const loop = dialog?.querySelector('input[type="checkbox"]');
+        const play = dialog?.querySelector('button[aria-label="範囲を再生"]');
+        const scrollRoot = dialog?.querySelector('.display-element-zoom-scroll');
+        const scrollViewport = scrollRoot?.querySelector('.display-element-zoom-scroll-viewport');
+        const verticalScrollbar = [...(scrollRoot?.children || [])]
+          .find((child) => child.classList.contains('scroll-area-scrollbar-vertical'));
+        if (!dialog || !sideTimeline || !zoomTimeline || !waveform || !loop || !play || !scrollRoot || !scrollViewport) return false;
+        const dialogRect = dialog.getBoundingClientRect();
+        const scrollRootRect = scrollRoot.getBoundingClientRect();
+        const scrollViewportRect = scrollViewport.getBoundingClientRect();
+        const scrollbarRect = verticalScrollbar?.getBoundingClientRect();
+        const zoomTimelineRect = zoomTimeline.getBoundingClientRect();
+        const zoomBlocks = [...zoomTimeline.querySelectorAll('.display-element-block')];
+        const firstZoomBlockRect = zoomBlocks[0]?.getBoundingClientRect();
+        const lastZoomBlockRect = zoomBlocks.at(-1)?.getBoundingClientRect();
+        return {
+          viewportWidth: innerWidth,
+          dialogWidth: dialogRect.width,
+          sideTimelineWidth: sideTimeline.getBoundingClientRect().width,
+          zoomTimelineWidth: zoomTimeline.getBoundingClientRect().width,
+          waveformWidth: waveform.getBoundingClientRect().width,
+          loopLabel: loop.closest("label")?.textContent?.trim(),
+          rangeDuration: Number(waveform.getAttribute("aria-valuemax")),
+          firstElementOffset: firstZoomBlockRect ? firstZoomBlockRect.left - zoomTimelineRect.left : null,
+          lastElementOffset: lastZoomBlockRect ? zoomTimelineRect.right - lastZoomBlockRect.right : null,
+          initialFocusIsContent: document.activeElement === dialog.querySelector('.display-element-zoom-content'),
+          hasLeftAdd: !!dialog.querySelector('button[aria-label="左に新規"]'),
+          hasDelete: !!dialog.querySelector('button[aria-label="表示素を削除"]'),
+          noLeftScrollbarGutter: Math.abs(scrollViewportRect.left - scrollRootRect.left) <= 1,
+          scrollbarOnRight: !scrollbarRect || scrollbarRect.width === 0 || Math.abs(scrollbarRect.right - scrollRootRect.right) <= 1,
+        };
+      })()`,
+      10_000,
+      "display-element zoom editor"
+    );
+    assertPass(
+      displayElementZoomUi.zoomTimelineWidth > displayElementZoomUi.sideTimelineWidth * 1.5 &&
+        displayElementZoomUi.waveformWidth > displayElementZoomUi.sideTimelineWidth * 1.5 &&
+        displayElementZoomUi.dialogWidth >= displayElementZoomUi.viewportWidth * 0.78 &&
+        displayElementZoomUi.dialogWidth <= displayElementZoomUi.viewportWidth * 0.82 &&
+        Math.abs(displayElementZoomUi.rangeDuration - zoomRangeDuration) <= 0.001 &&
+        Math.abs(displayElementZoomUi.firstElementOffset - (displayElementZoomUi.zoomTimelineWidth * ((segmentStyleTarget.start - zoomRangeStart) / zoomRangeDuration))) <= 3 &&
+        Math.abs(displayElementZoomUi.lastElementOffset - (displayElementZoomUi.zoomTimelineWidth * ((zoomRangeEnd - segmentStyleTarget.end) / zoomRangeDuration))) <= 3 &&
+        displayElementZoomUi.initialFocusIsContent &&
+        displayElementZoomUi.hasLeftAdd &&
+        displayElementZoomUi.hasDelete &&
+        displayElementZoomUi.noLeftScrollbarGutter &&
+        displayElementZoomUi.scrollbarOnRight &&
+        displayElementZoomUi.loopLabel === "ループ再生",
+      "Display-element zoom editor did not expose the wide shared editor contract.",
+      displayElementZoomUi
+    );
+    await pressSpace(cdp);
     await waitFor(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] input[name="segment-style-mode"]') !== null`,
+      `!!document.querySelector('[role="dialog"][aria-label="表示素ズーム編集"] button[aria-label="範囲を一時停止"]')`,
+      10_000,
+      "zoom editor Space playback"
+    );
+    await pressSpace(cdp);
+    await waitFor(
+      cdp,
+      `!!document.querySelector('[role="dialog"][aria-label="表示素ズーム編集"] button[aria-label="範囲を再生"]')`,
+      10_000,
+      "zoom editor Space pause"
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const dialog = document.querySelector('[role="dialog"][aria-label="表示素ズーム編集"]');
+          const close = dialog?.querySelector('.dialog-header button');
+          close?.focus();
+          return document.activeElement === close;
+        })()`
+      ),
+      "Zoom editor Close button could not receive explicit focus."
+    );
+    await pressSpace(cdp);
+    await waitFor(
+      cdp,
+      `!document.querySelector('[role="dialog"][aria-label="表示素ズーム編集"]')`,
+      10_000,
+      "display-element zoom editor close"
+    );
+    log("SUB_DISPLAY_ELEMENT_ZOOM_OK", displayElementZoomUi);
+    const editableDisplayElementIndex = initialDisplayElements.findIndex((element) => element.text.length > 0);
+    assertPass(editableDisplayElementIndex >= 0, "No text display element was available for inline editing.");
+    const editableDisplayElement = initialDisplayElements[editableDisplayElementIndex];
+    const editedDisplayElementText = `${editableDisplayElement.text} E2E`;
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const items = [...document.querySelectorAll('.segment-inspector-section[data-section="display-elements"] .display-element-list-item')];
+          const item = items[${editableDisplayElementIndex}];
+          if (!item) return false;
+          item.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));
+          return true;
+        })()`
+      ),
+      "Display-element text editor could not be opened."
+    );
+    await waitFor(
+      cdp,
+      `!!document.querySelector('.segment-inspector-section[data-section="display-elements"] .display-element-list-text-input')`,
+      10_000,
+      "display-element inline text input"
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const input = document.querySelector('.segment-inspector-section[data-section="display-elements"] .display-element-list-text-input');
+          if (!input) return false;
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+          setter?.call(input, ${JSON.stringify(editedDisplayElementText)});
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.blur();
+          return true;
+        })()`
+      ),
+      "Display-element text could not be edited."
+    );
+    const textEditedDisplayProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const target = value.subtitle?.lanes?.[0]?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        return target?.display_elements?.find((element) => element.stable_id === editableDisplayElement.stable_id)?.text
+          === editedDisplayElementText;
+      },
+      30_000,
+      "display-element inline text persistence"
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        window.__displayElementOriginalConfirm = window.confirm;
+        window.__displayElementDeleteConfirmCalls = 0;
+        window.confirm = () => {
+          window.__displayElementDeleteConfirmCalls += 1;
+          return false;
+        };
+      })()`
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="表示素を削除"]');
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })()`
+      ),
+      "Text display-element delete could not be invoked."
+    );
+    await sleep(500);
+    const cancelledTextDelete = await evaluate(
+      cdp,
+      `({
+        confirmCalls: window.__displayElementDeleteConfirmCalls,
+        count: document.querySelectorAll('.segment-inspector-section[data-section="display-elements"] .display-element-list-item').length
+      })`
+    );
+    assertPass(
+      cancelledTextDelete.confirmCalls === 1 && cancelledTextDelete.count === initialDisplayElements.length,
+      "Text display-element deletion did not honor the confirmation cancellation.",
+      cancelledTextDelete
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const first = document.querySelector('.segment-inspector-section[data-section="display-elements"] .display-element-list-item');
+          first?.click();
+          return !!first;
+        })()`
+      ),
+      "First display element could not be reselected for merge."
+    );
+    const mergeClicked = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="右とマージ"]');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`
+    );
+    assertPass(mergeClicked, "Display-element merge-right could not be invoked.");
+    const mergedDisplayProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const target = value.subtitle?.lanes?.[0]?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        return target?.display_elements?.length === initialDisplayElements.length - 1 &&
+          target.display_elements[0]?.stable_id === initialDisplayElements[0].stable_id &&
+          target.display_elements[0]?.manual_structure === true;
+      },
+      30_000,
+      "display-element merge-right persistence"
+    );
+    const blankClicked = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="右に新規"]');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`
+    );
+    assertPass(blankClicked, "Display-element blank-right could not be invoked after merge.");
+    const blankDisplayProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const target = value.subtitle?.lanes?.[0]?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        return target?.display_elements?.length === initialDisplayElements.length &&
+          target.display_elements.some((element) =>
+            element.text === "" && element.source === "manual" && element.manual_structure === true &&
+            Math.abs((element.end - element.start) - 0.1) <= 0.000001
+          );
+      },
+      30_000,
+      "display-element blank-right persistence"
+    );
+    const addedRightBlank = blankDisplayProject.subtitle.lanes[0].segments[0].display_elements.find((element) =>
+      element.text === "" && element.source === "manual" && element.manual_structure === true &&
+      Math.abs((element.end - element.start) - 0.1) <= 0.000001
+    );
+    assertPass(addedRightBlank, "The newly-added right blank could not be identified.");
+    assertPass(
+      await evaluate(
+        cdp,
+        `(() => {
+          const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="表示素を削除"]');
+          if (!button || button.disabled) return false;
+          button.click();
+          return true;
+        })()`
+      ),
+      "Blank display-element delete could not be invoked."
+    );
+    const blankDeletedProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const target = value.subtitle?.lanes?.[0]?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        return target?.display_elements?.length === initialDisplayElements.length - 1 &&
+          !target.display_elements.some((element) => element.stable_id === addedRightBlank.stable_id);
+      },
+      30_000,
+      "blank display-element deletion"
+    );
+    assertPass(
+      (await evaluate(cdp, `window.__displayElementDeleteConfirmCalls`)) === 1,
+      "Blank display-element deletion unexpectedly opened a confirmation."
+    );
+    const leftBlankClicked = await evaluate(
+      cdp,
+      `(() => {
+        const button = document.querySelector('.segment-inspector-section[data-section="display-elements"] button[aria-label="左に新規"]');
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+      })()`
+    );
+    assertPass(leftBlankClicked, "Display-element blank-left could not be invoked after deletion.");
+    const leftBlankProject = await waitForJson(
+      subProjectPath,
+      (value) => {
+        const target = value.subtitle?.lanes?.[0]?.segments?.find((segment) => segment.id === segmentStyleTarget.id);
+        return target?.display_elements?.length === initialDisplayElements.length &&
+          target.display_elements.some((element) =>
+            element.text === "" && element.source === "manual" && element.manual_structure === true &&
+            Math.abs((element.end - element.start) - 0.1) <= 0.000001
+          );
+      },
+      30_000,
+      "display-element blank-left persistence"
+    );
+    await evaluate(
+      cdp,
+      `(() => {
+        if (window.__displayElementOriginalConfirm) window.confirm = window.__displayElementOriginalConfirm;
+        delete window.__displayElementOriginalConfirm;
+      })()`
+    );
+    log("SUB_DISPLAY_ELEMENTS_OK", {
+      segmentId: segmentStyleTarget.id,
+      before: initialDisplayElements.length,
+      editedText: textEditedDisplayProject.subtitle.lanes[0].segments[0].display_elements[editableDisplayElementIndex].text,
+      afterMerge: mergedDisplayProject.subtitle.lanes[0].segments[0].display_elements.length,
+      afterBlank: blankDisplayProject.subtitle.lanes[0].segments[0].display_elements.length,
+      afterBlankDelete: blankDeletedProject.subtitle.lanes[0].segments[0].display_elements.length,
+      afterLeftBlank: leftBlankProject.subtitle.lanes[0].segments[0].display_elements.length,
+    });
+    const segmentStyleOpened = await evaluate(
+      cdp,
+      `(() => {
+        const section = document.querySelector('.segment-inspector-section[data-section="style"]');
+        const header = section?.querySelector('.segment-inspector-header');
+        if (!header) return false;
+        if (header.getAttribute('aria-expanded') !== 'true') header.click();
+        return true;
+      })()`
+    );
+    assertPass(segmentStyleOpened, "Custom Sub segment Style accordion could not be opened.");
+    await waitFor(
+      cdp,
+      `document.querySelector('.segment-inspector-section[data-section="style"] input[name^="segment-style-mode-"]') !== null`,
       10_000,
       "Sub segment Style controls"
     );
     const segmentStyleScroll = await evaluate(
       cdp,
       `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const root = dialog?.querySelector(".segment-style-scroll.scroll-area");
+        const root = document.querySelector(".segment-inspector-scroll.scroll-area");
         const viewport = root?.querySelector(".scroll-area-viewport");
         const scrollbar = root?.querySelector(".scroll-area-scrollbar-vertical");
         return root && viewport && scrollbar
@@ -1420,16 +2322,23 @@ function cleanup(processHandle, cdp) {
       })()`
     );
     assertPass(
-      segmentStyleScroll?.viewportClass.includes("segment-style-scroll-viewport") &&
+      segmentStyleScroll?.viewportClass.includes("segment-inspector-scroll-viewport") &&
         segmentStyleScroll?.scrollbarClass.includes("scroll-area-scrollbar-vertical"),
-      "Sub segment Style tab does not use the shared shadcn ScrollArea.",
+      "Sub segment inspector does not use the shared shadcn ScrollArea.",
       segmentStyleScroll
+    );
+    assertPass(
+      await evaluate(
+        cdp,
+        `document.querySelector('.segment-inspector-section[data-section="style"] .segment-style-editor-frame') === null`
+      ),
+      "Inherited Sub segment Style exposed custom font and effect controls."
     );
     const customModeSelected = await evaluate(
       cdp,
       `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const radios = dialog?.querySelectorAll('input[name="segment-style-mode"]');
+        const section = document.querySelector('.segment-inspector-section[data-section="style"]');
+        const radios = section?.querySelectorAll('input[name^="segment-style-mode-"]');
         radios?.[1]?.click();
         return !!radios?.[1];
       })()`
@@ -1437,18 +2346,18 @@ function cleanup(processHandle, cdp) {
     assertPass(customModeSelected, "Custom Sub segment mode could not be selected.");
     await waitFor(
       cdp,
-      `document.querySelector('[role="dialog"][aria-label="セグメント設定"] .segment-style-editor-frame')?.disabled === false`,
+      `document.querySelector('.segment-inspector-section[data-section="style"] .segment-style-editor-frame') !== null`,
       10_000,
       "enabled custom Sub segment Style editor"
     );
     const segmentStyleConfigured = await evaluate(
       cdp,
       `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const sizeLabel = [...(dialog?.querySelectorAll(".subtitle-style-fields label") || [])]
+        const section = document.querySelector('.segment-inspector-section[data-section="style"]');
+        const sizeLabel = [...(section?.querySelectorAll(".subtitle-style-fields label") || [])]
           .find((item) => item.textContent.trim().startsWith("サイズ"));
         const sizeInput = sizeLabel?.querySelector("input");
-        const effectTrigger = dialog?.querySelector(".subtitle-effect-section .radix-select-trigger");
+        const effectTrigger = section?.querySelector(".subtitle-effect-section .radix-select-trigger");
         if (!sizeInput || !effectTrigger) return false;
         const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
         inputSetter.call(sizeInput, "52");
@@ -1500,16 +2409,6 @@ function cleanup(processHandle, cdp) {
       })()`
     );
     assertPass(segmentEffectConfigured, "Custom Sub segment glow effect could not be selected.");
-    const segmentStyleApplied = await evaluate(
-      cdp,
-      `(() => {
-        const dialog = document.querySelector('[role="dialog"][aria-label="セグメント設定"]');
-        const button = dialog?.querySelector('.dialog-actions button[type="submit"]');
-        button?.click();
-        return !!button;
-      })()`
-    );
-    assertPass(segmentStyleApplied, "Custom Sub segment settings could not be applied.");
     const segmentStyleUpdatedProject = await waitForJson(
       subProjectPath,
       (value) => {
@@ -1676,6 +2575,139 @@ function cleanup(processHandle, cdp) {
     );
     log("SUB_OVERLAY_PNG_OK", overlayMetrics);
 
+    const videoPreview = await waitFor(
+      cdp,
+      `(() => {
+        const layer = document.querySelector(".sub-video-preview-layer");
+        const controls = layer?.querySelector(".sub-video-preview-controls");
+        const inputs = [...(controls?.querySelectorAll('input[type="checkbox"]') || [])];
+        const cursor = layer?.querySelector(".display-element-preview-cursor");
+        const track = layer?.querySelector(".display-element-preview-track");
+        const overlay = layer?.querySelector(".sub-video-preview-overlay-region");
+        const controlsRegion = layer?.querySelector(".sub-video-preview-controls-region");
+        const cards = [...(layer?.querySelectorAll(".display-element-preview-card") || [])];
+        const pane = document.querySelector(".video-pane");
+        const video = pane?.querySelector("video");
+        if (!layer || !controls || inputs.length !== 2 || !cursor || !track || !overlay || !controlsRegion || !cards.length || !pane || !video || !video.videoWidth || !video.videoHeight) return false;
+        const layerRect = layer.getBoundingClientRect();
+        const cursorRect = cursor.getBoundingClientRect();
+        const paneRect = pane.getBoundingClientRect();
+        const videoRect = video.getBoundingClientRect();
+        const controlsRect = controls.getBoundingClientRect();
+        const controlsRegionRect = controlsRegion.getBoundingClientRect();
+        const overlayRect = overlay.getBoundingClientRect();
+        const scale = Math.min(videoRect.width / video.videoWidth, videoRect.height / video.videoHeight);
+        const renderedVideoLeft = videoRect.left + (videoRect.width - video.videoWidth * scale) / 2;
+        const trackStyle = getComputedStyle(track);
+        return {
+          labels: [...controls.querySelectorAll("label")].map((label) => label.textContent.trim()),
+          checked: inputs.map((input) => input.checked),
+          tabIndexes: inputs.map((input) => input.tabIndex),
+          cardCount: cards.length,
+          hasActive: cards.some((card) => card.classList.contains("active") && card.classList.contains("selected")),
+          hasSelectedSegment: cards.some((card) => card.classList.contains("selected-segment")),
+          layerInsidePane:
+            layerRect.left >= paneRect.left && layerRect.right <= paneRect.right + 1 &&
+            layerRect.top >= paneRect.top && layerRect.bottom <= paneRect.bottom + 1,
+          controlsOutsideRenderedVideo:
+            controlsRect.right <= renderedVideoLeft + 1 && controlsRegionRect.right <= renderedVideoLeft + 1,
+          controlsLeftAligned:
+            Math.abs(controlsRegionRect.left - paneRect.left) <= 1 &&
+            Math.abs(controlsRect.left - paneRect.left - 12) <= 2,
+          overlayUsesFullPane:
+            Math.abs(overlayRect.left - paneRect.left) <= 1 && Math.abs(overlayRect.right - paneRect.right) <= 1,
+          cursorCentered: Math.abs((cursorRect.left + cursorRect.width / 2) - (layerRect.left + layerRect.width / 2)) <= 1,
+          compositorTrack: trackStyle.willChange.includes("transform") && trackStyle.transform !== "none"
+        };
+      })()`,
+      10_000,
+      "Sub video display-element preview"
+    );
+    assertPass(
+      JSON.stringify(videoPreview.labels) === JSON.stringify(["字幕", "表示素"]) &&
+        videoPreview.checked.every(Boolean) &&
+        videoPreview.tabIndexes.every((value) => value === -1) &&
+        videoPreview.cardCount > 0 &&
+        videoPreview.hasActive &&
+        videoPreview.hasSelectedSegment &&
+        videoPreview.layerInsidePane &&
+        videoPreview.controlsOutsideRenderedVideo &&
+        videoPreview.controlsLeftAligned &&
+        videoPreview.overlayUsesFullPane &&
+        videoPreview.cursorCentered &&
+        videoPreview.compositorTrack,
+      "Sub video preview controls or display-element geometry are invalid.",
+      videoPreview
+    );
+
+    await evaluate(
+      cdp,
+      `document.querySelectorAll('.sub-video-preview-controls input[type="checkbox"]')[0]?.click()`
+    );
+    const subtitlePreviewOff = await waitFor(
+      cdp,
+      `(() => {
+        const result = {
+          subtitleHidden: !document.querySelector(".subtitle-overlay"),
+          elementsRemain: !!document.querySelector(".display-element-preview-overlay"),
+          stored: localStorage.getItem("songcut:sub:subtitle-preview-visible")
+        };
+        return result.subtitleHidden && result.elementsRemain && result.stored === "false" ? result : false;
+      })()`,
+      10_000,
+      "independent subtitle preview disable"
+    );
+    assertPass(
+      subtitlePreviewOff.subtitleHidden && subtitlePreviewOff.elementsRemain && subtitlePreviewOff.stored === "false",
+      "Subtitle preview toggle also hid display elements or was not persisted.",
+      subtitlePreviewOff
+    );
+    await evaluate(
+      cdp,
+      `document.querySelectorAll('.sub-video-preview-controls input[type="checkbox"]')[0]?.click()`
+    );
+    await waitFor(
+      cdp,
+      `document.querySelector(".subtitle-overlay") && localStorage.getItem("songcut:sub:subtitle-preview-visible") === "true"`,
+      10_000,
+      "subtitle preview restore"
+    );
+
+    await evaluate(
+      cdp,
+      `document.querySelectorAll('.sub-video-preview-controls input[type="checkbox"]')[1]?.click()`
+    );
+    const displayElementPreviewOff = await waitFor(
+      cdp,
+      `(() => {
+        const result = {
+          elementsHidden: !document.querySelector(".display-element-preview-overlay"),
+          subtitleRemains: !!document.querySelector(".subtitle-overlay"),
+          stored: localStorage.getItem("songcut:sub:display-element-preview-visible")
+        };
+        return result.elementsHidden && result.subtitleRemains && result.stored === "false" ? result : false;
+      })()`,
+      10_000,
+      "independent display-element preview disable"
+    );
+    assertPass(
+      displayElementPreviewOff.elementsHidden && displayElementPreviewOff.subtitleRemains && displayElementPreviewOff.stored === "false",
+      "Display-element preview toggle also hid subtitles or was not persisted.",
+      displayElementPreviewOff
+    );
+    await evaluate(
+      cdp,
+      `document.querySelectorAll('.sub-video-preview-controls input[type="checkbox"]')[1]?.click()`
+    );
+    await waitFor(
+      cdp,
+      `document.querySelector(".display-element-preview-overlay") && localStorage.getItem("songcut:sub:display-element-preview-visible") === "true"`,
+      10_000,
+      "display-element preview restore"
+    );
+    log("SUB_VIDEO_DISPLAY_ELEMENTS_OK", videoPreview);
+    await captureOptionalScreenshot(cdp, displayPreviewScreenshotPath, "Sub video display-element preview");
+
     const waveformPoint = await evaluate(
       cdp,
       `(() => {
@@ -1758,10 +2790,18 @@ function cleanup(processHandle, cdp) {
     log("SUB_END_BOUNDARY_PLAYBACK_OK", endPlayback);
 
     assertPass(await clickButton(cdp, "タイムライン"), "Add timeline button could not be clicked.");
+    await waitFor(
+      cdp,
+      `!!document.querySelector('[role="dialog"][aria-label="字幕位置を選択"]')`,
+      10_000,
+      "subtitle position dialog"
+    );
     const alignmentNine = await evaluate(
       cdp,
       `(() => {
-        const button = [...document.querySelectorAll(".alignment-grid button")].find((item) => item.innerText.trim() === "9");
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕位置を選択"]');
+        const button = [...(dialog?.querySelectorAll(".alignment-grid button") || [])]
+          .find((item) => item.innerText.trim() === "9");
         if (!button) return false;
         button.click();
         return true;
@@ -1793,7 +2833,9 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const button = [...document.querySelectorAll("button")].find((item) => item.innerText.trim() === "書き出し");
-        return button && !button.disabled && document.body.innerText.includes("字幕動画を書き出しました");
+        const dialog = document.querySelector('[role="dialog"][aria-label="字幕を書き出し"]');
+        const progress = dialog?.querySelector("progress");
+        return button && !button.disabled && progress?.value === 1;
       })()`,
       30 * 60_000,
       "full subtitle video export"
@@ -1819,12 +2861,19 @@ function cleanup(processHandle, cdp) {
       cdp,
       `(() => {
         const dialog = document.querySelector('[role="dialog"][aria-label="字幕を書き出し"]');
-        const button = [...(dialog?.querySelectorAll("button") || [])].find((item) => item.textContent.trim() === "閉じる");
+        if (!dialog) return true;
+        const button = dialog.querySelector('.dialog-actions button') || dialog.querySelector('.dialog-header button');
         button?.click();
         return !!button;
       })()`
     );
     assertPass(exportDialogClosed, "Completed subtitle export progress dialog could not be closed.");
+    await waitFor(
+      cdp,
+      `!document.querySelector('[role="dialog"][aria-label="字幕を書き出し"]')`,
+      10_000,
+      "completed subtitle export dialog close"
+    );
     log("SUB_EXPORT_OK", { outputVideo, assFile, srtFiles, styleFiles, outputDuration, sourceAudioCodec, outputAudioCodec });
 
     const finalScreenshotPath = await captureOptionalScreenshot(cdp, screenshotPath, "final Sub mode");

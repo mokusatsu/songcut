@@ -3,6 +3,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
+.cache/
+.ck/
+.ckignore
+.codex/config.toml
 .pnpm-store/
 .models/
 .hf-home/
@@ -22,6 +26,7 @@ third_party/uta_align/src/*.egg-info/
 build/
 dist/pyinstaller/
 dist/songcut-win-x64/
+dist/songcut-win-x64-*/
 dist/songcut-e2e-*/
 dist/songcut-*-full/
 dist/songcut-*.zip

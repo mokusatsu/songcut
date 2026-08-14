@@ -3,9 +3,11 @@ import {
   BOUNDARY_NUDGE_SECONDS_STORAGE_KEY,
   BOUNDARY_SECONDS_STORAGE_KEY,
   CREATE_SOURCE_FOLDER_STORAGE_KEY,
+  DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY,
   SCRATCH_AUDIO_PROXY_ENABLED_STORAGE_KEY,
   SCRATCH_PREVIEW_STORAGE_KEY,
   SETTINGS_OWNERSHIP,
+  SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY,
   VIDEO_SPLIT_STORAGE_KEY,
   formatBoundaryNudgeSeconds,
   projectOwnedSettingsFromDocument,
@@ -15,10 +17,12 @@ import {
   readModePreferences,
   readScratchAudioProxyEnabled,
   readScratchPreviewMilliseconds,
+  readSubPreviewVisibility,
   readVideoSplitPercent,
   writeBoundaryNudgeSecondsInput,
   writeBoundarySecondsInput,
   writeScratchPreviewMilliseconds,
+  writeSubPreviewVisibility,
   writeVideoSplitPercent,
 } from "@/lib/settingsScopes";
 import { createProjectDocument, DEFAULT_WHISPER_SETTINGS } from "@/lib/project";
@@ -142,6 +146,36 @@ describe("mode preference isolation", () => {
     expect(modes.cut.createSourceFolder).toBe(true);
     expect(modes.sub).not.toHaveProperty("createSourceFolder");
   });
+
+  it("defaults Sub video previews to visible and persists each toggle independently", () => {
+    const target = storage();
+    expect(readSubPreviewVisibility(target)).toEqual({
+      subtitlePreviewVisible: true,
+      displayElementPreviewVisible: true,
+    });
+
+    expect(writeSubPreviewVisibility(target, {
+      subtitlePreviewVisible: false,
+      displayElementPreviewVisible: true,
+    })).toBe(true);
+    expect(target.values.get(SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY)).toBe("false");
+    expect(target.values.get(DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY)).toBe("true");
+    expect(readSubPreviewVisibility(target)).toEqual({
+      subtitlePreviewVisible: false,
+      displayElementPreviewVisible: true,
+    });
+  });
+
+  it("falls back malformed Sub preview settings to visible", () => {
+    const target = storage({
+      [SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY]: "invalid",
+      [DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY]: "0",
+    });
+    expect(readSubPreviewVisibility(target)).toEqual({
+      subtitlePreviewVisible: true,
+      displayElementPreviewVisible: true,
+    });
+  });
 });
 
 describe("settings ownership matrix", () => {
@@ -150,6 +184,8 @@ describe("settings ownership matrix", () => {
     expect(SETTINGS_OWNERSHIP.createSourceFolder).toMatchObject({ scope: "mode", mode: "cut" });
     expect(SETTINGS_OWNERSHIP.waveformDisplayModeCut).toMatchObject({ scope: "mode", mode: "cut" });
     expect(SETTINGS_OWNERSHIP.waveformDisplayModeSub).toMatchObject({ scope: "mode", mode: "sub" });
+    expect(SETTINGS_OWNERSHIP.subtitlePreviewVisible).toMatchObject({ scope: "mode", mode: "sub" });
+    expect(SETTINGS_OWNERSHIP.displayElementPreviewVisible).toMatchObject({ scope: "mode", mode: "sub" });
     expect(SETTINGS_OWNERSHIP.analysisDevice).toMatchObject({ scope: "project", field: "settings.analysis_device" });
     expect(SETTINGS_OWNERSHIP.subtitleState).toMatchObject({ scope: "project", field: "subtitle" });
   });

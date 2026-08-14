@@ -49,7 +49,14 @@ export type CutModePreferences = {
 export type SubModePreferences = {
   waveformDisplayMode: WaveformDisplayMode;
   subtitleStylePresets?: SubtitleStylePreset[];
+  subtitlePreviewVisible: boolean;
+  displayElementPreviewVisible: boolean;
 };
+
+export type SubPreviewVisibility = Pick<
+  SubModePreferences,
+  "subtitlePreviewVisible" | "displayElementPreviewVisible"
+>;
 
 export type ModePreferences = {
   cut: CutModePreferences;
@@ -70,6 +77,8 @@ export const BOUNDARY_SECONDS_STORAGE_KEY = "songcut:boundary-preview-seconds" a
 export const BOUNDARY_NUDGE_SECONDS_STORAGE_KEY = "songcut:boundary-nudge-seconds" as const;
 export const VIDEO_SPLIT_STORAGE_KEY = "songcut:video-split-percent" as const;
 export const CREATE_SOURCE_FOLDER_STORAGE_KEY = "songcut:create-source-folder" as const;
+export const SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY = "songcut:sub:subtitle-preview-visible" as const;
+export const DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY = "songcut:sub:display-element-preview-visible" as const;
 
 export const DEFAULT_SCRATCH_PREVIEW_MILLISECONDS = 100;
 export const MIN_SCRATCH_PREVIEW_MILLISECONDS = 1;
@@ -100,6 +109,8 @@ export const SETTINGS_OWNERSHIP = {
   waveformDisplayModeSub: { scope: "mode", mode: "sub", storage: "localStorage", key: WAVEFORM_DISPLAY_MODE_STORAGE_KEYS.sub },
   waveformDisplayModeLegacy: { scope: "mode", storage: "localStorage", key: LEGACY_WAVEFORM_DISPLAY_MODE_STORAGE_KEY, fallbackFor: "cut" },
   subtitleStylePresets: { scope: "mode", mode: "sub", storage: "localStorage", key: SUBTITLE_STYLE_PRESETS_STORAGE_KEY },
+  subtitlePreviewVisible: { scope: "mode", mode: "sub", storage: "localStorage", key: SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY },
+  displayElementPreviewVisible: { scope: "mode", mode: "sub", storage: "localStorage", key: DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY },
   analysisDevice: { scope: "project", storage: "project", field: "settings.analysis_device" },
   whisperSettings: { scope: "project", storage: "project", field: "settings.whisper" },
   filenameTemplate: { scope: "project", storage: "project", field: "settings.export.filename_template" },
@@ -229,6 +240,26 @@ const createSourceFolderSetting: TypedSetting<boolean> = {
   serialize: (value) => String(Boolean(value)),
 };
 
+const subtitlePreviewVisibleSetting: TypedSetting<boolean> = {
+  key: SUBTITLE_PREVIEW_VISIBLE_STORAGE_KEY,
+  defaultValue: true,
+  parse: parseVisiblePreference,
+  serialize: (value) => String(Boolean(value)),
+};
+
+const displayElementPreviewVisibleSetting: TypedSetting<boolean> = {
+  key: DISPLAY_ELEMENT_PREVIEW_VISIBLE_STORAGE_KEY,
+  defaultValue: true,
+  parse: parseVisiblePreference,
+  serialize: (value) => String(Boolean(value)),
+};
+
+/** 保存済み表示設定をbooleanへ復元し、欠落または不正値は表示ONとして扱う。 */
+function parseVisiblePreference(raw: string | null): boolean {
+  if (raw === "false") return false;
+  return true;
+}
+
 /** `readScratchPreviewMilliseconds`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
 export function readScratchPreviewMilliseconds(storage: StorageLike): number {
   return readTypedSetting(storage, scratchPreviewSetting);
@@ -287,6 +318,25 @@ export function readCreateSourceFolder(storage: StorageLike): boolean {
 /** `writeCreateSourceFolder`の値を検証済みの形式で永続先へ保存する。 */
 export function writeCreateSourceFolder(storage: StorageLike, value: boolean): boolean {
   return writeTypedSetting(storage, createSourceFolderSetting, value);
+}
+
+/** Sub動画プレビューの表示設定を保存先から読み取る。 */
+export function readSubPreviewVisibility(storage: StorageLike): SubPreviewVisibility {
+  return {
+    subtitlePreviewVisible: readTypedSetting(storage, subtitlePreviewVisibleSetting),
+    displayElementPreviewVisible: readTypedSetting(storage, displayElementPreviewVisibleSetting),
+  };
+}
+
+/** Sub動画プレビューの表示設定を同じmode scopeへ保存する。 */
+export function writeSubPreviewVisibility(
+  storage: StorageLike,
+  visibility: SubPreviewVisibility,
+): boolean {
+  return [
+    writeTypedSetting(storage, subtitlePreviewVisibleSetting, visibility.subtitlePreviewVisible),
+    writeTypedSetting(storage, displayElementPreviewVisibleSetting, visibility.displayElementPreviewVisible),
+  ].every(Boolean);
 }
 
 /** `readAppCommonPreferences`の対象を現在の状態または保存先から読み取り、型付きの値として返す。 */
@@ -373,7 +423,7 @@ export function readSubModePreferences(storage: StorageLike): SubModePreferences
   } catch {
     // Keep the empty preset list when persistent storage is unavailable.
   }
-  return { waveformDisplayMode, subtitleStylePresets };
+  return { waveformDisplayMode, subtitleStylePresets, ...readSubPreviewVisibility(storage) };
 }
 
 /** `projectOwnedSettingsFromDocument`のdomain規則を適用し、画面または保存処理で使う値を返す。 */

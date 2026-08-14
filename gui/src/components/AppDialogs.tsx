@@ -1,4 +1,3 @@
-import { CircleAlert, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog } from "@/components/ui/dialog";
@@ -10,8 +9,6 @@ import { clamp, formatTime } from "@/lib/time";
 import { DEFAULT_FILENAME_TEMPLATE, FILENAME_TEMPLATE_PLACEHOLDERS } from "@/lib/exportNaming";
 import type { TimestampCommentFlow } from "@/lib/timestampComments";
 import type { CutOutputItem } from "@/lib/useCutOperations";
-import type { TaskRegistryEntry, TaskSlot } from "@/lib/useTaskRegistry";
-import { useEditorActionFocusProps } from "@/components/ui/editor-focus";
 import type {
   ExportRenderPlan,
   ExportRenderPlanItem,
@@ -19,11 +16,8 @@ import type {
   JobRecord,
   SmartRenderEstimate,
   TimestampCommentCandidate,
-  VideoInfo,
 } from "@/types";
-import { localizeJobMessage, localizeUiMessage, tr } from "@/i18n";
-import type { ScratchProxyState } from "@/lib/scratchProxy";
-import type { useProgressiveWaveform } from "@/lib/useProgressiveWaveform";
+import { localizeJobMessage, tr } from "@/i18n";
 
 export const FFMPEG_DOWNLOAD_URL = "https://www.ffmpeg.org/download.html";
 
@@ -155,7 +149,6 @@ export function TimestampCommentDialogs(props: {
     </Dialog>
   );
 }
-
 function timestampCommentSourceLabel(candidate: TimestampCommentCandidate) {
   return tr(candidate.source === "description" ? "timestamp.description" : "timestamp.comment");
 }
@@ -616,146 +609,4 @@ export function FfmpegCheckDialog(props: {
       </div>
     </Dialog>
   );
-}
-
-/** `TaskStatusPanel`の画面要素を描画し、表示値と利用者操作を子要素へ配線する。 */
-export function TaskStatusPanel({
-  runningTasks,
-  failedTasks,
-  latestTerminalTask,
-  message,
-  videoInfo,
-  scratchProxyState,
-  waveformPhase,
-  waveformProgress,
-  onDismiss,
-  onWaveformRetry
-}: {
-  runningTasks: TaskRegistryEntry[];
-  failedTasks: TaskRegistryEntry[];
-  latestTerminalTask: JobRecord | null;
-  message: string;
-  videoInfo: VideoInfo | null;
-  scratchProxyState: ScratchProxyState;
-  waveformPhase: ReturnType<typeof useProgressiveWaveform>["phase"];
-  waveformProgress: number;
-  onDismiss: (slot: TaskSlot) => void;
-  onWaveformRetry: (() => void) | null;
-}) {
-  const waveformRetryFocusProps = useEditorActionFocusProps<HTMLButtonElement>(onWaveformRetry ?? undefined);
-  const idleJob = runningTasks.length === 0 && failedTasks.length === 0 ? latestTerminalTask : null;
-  const idleJobMessage = localizeJobMessage(idleJob);
-  const uiMessage = localizeUiMessage(message);
-  return (
-    <aside className="status-panel" aria-live="polite">
-      {runningTasks.length ? (
-        <div className="task-status-list">
-          {runningTasks.map((entry) => (
-            <TaskStatusRow key={entry.slot} entry={entry} />
-          ))}
-        </div>
-      ) : null}
-      {failedTasks.length ? (
-        <div className="task-status-list task-status-failures">
-          {failedTasks.map((entry) => (
-            <TaskStatusRow key={entry.slot} entry={entry} onDismiss={() => onDismiss(entry.slot)} />
-          ))}
-        </div>
-      ) : null}
-      {runningTasks.length === 0 && failedTasks.length === 0 ? (
-        <>
-          <div className="status-main">
-            {idleJob?.status === "completed" ? <CheckCircle2 size={16} /> : null}
-            {idleJob ? <strong>{jobKindLabel(idleJob.kind)}</strong> : null}
-            <span>{idleJobMessage || uiMessage || tr("app.idle")}</span>
-          </div>
-          {idleJobMessage && uiMessage && idleJobMessage !== uiMessage ? (
-            <div className="status-secondary-message">{uiMessage}</div>
-          ) : null}
-        </>
-      ) : null}
-      {videoInfo ? (
-        <div className="status-meta">
-          <div className="meta-line">
-            {formatTime(videoInfo.duration)} / {videoInfo.video.width}x{videoInfo.video.height} / {videoInfo.video.codec}
-          </div>
-          <div className="meta-line" data-scratch-proxy-status={scratchProxyState}>
-            {localizedScratchProxyStatusLabel(scratchProxyState)}
-          </div>
-          <div className="meta-line waveform-status-line" data-waveform-status={waveformPhase}>
-            <span>{waveformStatusLabel(waveformPhase, waveformProgress)}</span>
-            {onWaveformRetry ? (
-              <button {...waveformRetryFocusProps} type="button" className="waveform-retry">{tr("controls.retryWaveform")}</button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-    </aside>
-  );
-}
-
-function TaskStatusRow({ entry, onDismiss }: { entry: TaskRegistryEntry; onDismiss?: () => void }) {
-  const dismissFocusProps = useEditorActionFocusProps<HTMLButtonElement>(onDismiss);
-  const { job } = entry;
-  const failed = job.status === "failed" || job.status === "cancelled";
-  return (
-    <div className={`task-status-row task-status-${job.status}`}>
-      <div className="task-status-heading">
-        {failed ? <CircleAlert size={15} /> : null}
-        <strong>{jobKindLabel(job.kind)}</strong>
-        <span>{localizeJobMessage(job)}</span>
-      </div>
-      <span className="task-status-percent">{Math.round(clamp(job.progress, 0, 1) * 100)}%</span>
-      {onDismiss ? (
-        <button {...dismissFocusProps} type="button" className="task-status-dismiss">
-          {tr("common.close")}
-        </button>
-      ) : null}
-      <progress value={clamp(job.progress, 0, 1)} max={1} />
-      {job.error ? <div className="task-status-error">{job.error}</div> : null}
-    </div>
-  );
-}
-
-/** `jobKindLabel`のjob種別をtask status表示用の文言へ変換する。 */
-export function jobKindLabel(kind: string) {
-  if (kind === "analysis") return tr("tasks.analysis");
-  if (kind === "lyrics-analysis") return tr("tasks.lyricsAnalysis");
-  if (kind === "transcription") return tr("tasks.transcription");
-  if (kind === "export") return tr("tasks.export");
-  if (kind === "subtitle-export") return tr("tasks.subtitleExport");
-  if (kind === "subtitle-render") return tr("tasks.subtitleRender");
-  if (kind === "download-whisper") return tr("tasks.download");
-  if (kind === "download-demucs") return tr("tasks.demucsDownload");
-  if (kind === "download-mms") return tr("tasks.mmsDownload");
-  if (kind === "waveform") return tr("tasks.waveform");
-  if (kind === "scratch-proxy") return tr("tasks.proxy");
-  return tr("tasks.generic");
-}
-
-function waveformStatusLabel(phase: ReturnType<typeof useProgressiveWaveform>["phase"], progress: number) {
-  switch (phase) {
-    case "streaming":
-      return tr("app.waveformProgress", { progress: Math.round(clamp(progress, 0, 1) * 100) });
-    case "finalizing":
-      return tr("app.waveformFinalizing");
-    case "ready":
-      return tr("app.waveformReady");
-    case "failed":
-      return tr("app.waveformUnavailable");
-    case "idle":
-      return tr("app.waveformWaiting");
-  }
-}
-
-function localizedScratchProxyStatusLabel(state: ScratchProxyState) {
-  switch (state) {
-    case "disabled": return tr("app.scratchDisabled");
-    case "preparing":
-    case "loading": return tr("app.scratchPreparing");
-    case "ready": return tr("app.scratchReady");
-    case "failed": return tr("app.scratchFailed");
-    case "idle":
-    case "original": return tr("app.scratchOriginal");
-  }
 }
