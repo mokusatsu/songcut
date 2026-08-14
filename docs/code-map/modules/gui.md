@@ -3,23 +3,23 @@
 <!-- code-map:generated:start -->
 ## 概要
 
-Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、Python API との連携、プロジェクト保存・復旧を扱う。
+Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、共有タイムラインのスクラブ・端部自動スクロール、再生範囲制御、Sub動画上の字幕・表示素プレビューと統合字幕ファイル書出し、Python API との連携、プロジェクト保存・復旧を扱う。
 
 ## 指標
 
-- Files: 124
-- Symbols: 981
-- Incoming／Outgoing: 58／28
-- Cohesion: 0.96
-- Node kinds: Class 3、File 124、Function 780、Test 74
+- Files: 170
+- Symbols: 1312
+- Incoming／Outgoing: 64／22
+- Cohesion: 0.98
+- Node kinds: Class 19、File 170、Function 1004、Method 10、Test 109
 
 ## 代表パス
 
 - `gui/src/i18n.ts`
 - `gui/src/App.tsx`
-- `gui/src/components/AppDialogs.tsx`
+- `gui/src/lib/subtitles.ts`
 - `gui/src/types.ts`
-- `gui/src/components/SettingsDialog.tsx`
+- `gui/electron/project-schema.ts`
 
 ## 主なシンボル
 
@@ -30,81 +30,81 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 | `normalizeUiLanguagePreference` | Function | `gui/electron/locale.ts:16` |
 | `loadLocalePreference` | Function | `gui/electron/locale.ts:21` |
 | `preferencesPath` | Function | `gui/electron/locale.ts:43` |
-| `if` | Function | `gui/electron/main.ts:40` |
-| `if` | Function | `gui/electron/main.ts:47` |
-| `createWindow` | Function | `gui/electron/main.ts:153` |
-| `if` | Function | `gui/electron/main.ts:176` |
-| `if` | Function | `gui/electron/main.ts:185` |
-| `if` | Function | `gui/electron/main.ts:327` |
-| `setApplicationMenu` | Function | `gui/electron/main.ts:352` |
-| `applicationMenuTemplate` | Function | `gui/electron/main.ts:356` |
-| `send` | Function | `gui/electron/main.ts:364` |
-| `sendMenuCommand` | Function | `gui/electron/main.ts:614` |
-| `clampMenuZoom` | Function | `gui/electron/main.ts:618` |
-| `normalizeInferenceDevice` | Function | `gui/electron/main.ts:622` |
-| `normalizeWhisperModel` | Function | `gui/electron/main.ts:628` |
-| `normalizeWaveformDisplayMode` | Function | `gui/electron/main.ts:634` |
-| `normalizeMenuBoolean` | Function | `gui/electron/main.ts:640` |
-| `showAboutSongcut` | Function | `gui/electron/main.ts:645` |
-| `formatBuildTime` | Function | `gui/electron/main.ts:654` |
-| `resolveApiBaseUrl` | Function | `gui/electron/main.ts:662` |
-| `if` | Function | `gui/electron/main.ts:664` |
-| `startPythonApi` | Function | `gui/electron/main.ts:671` |
-| `stopPythonApi` | Function | `gui/electron/main.ts:695` |
-| `if` | Function | `gui/electron/main.ts:696` |
-| `findFreePort` | Function | `gui/electron/main.ts:702` |
-| `waitForHealth` | Function | `gui/electron/main.ts:714` |
-| `while` | Function | `gui/electron/main.ts:716` |
-| `listener` | Function | `gui/electron/preload.cts:9` |
-| `listener` | Function | `gui/electron/preload.cts:14` |
-| `sidecarPathForVideo` | Function | `gui/electron/project-schema.ts:332` |
-| `isProjectOperationKindForMode` | Function | `gui/electron/project-schema.ts:337` |
-| `parseProjectText` | Function | `gui/electron/project-schema.ts:342` |
-| `assertProjectDocument` | Function | `gui/electron/project-schema.ts:354` |
-| `if` | Function | `gui/electron/project-schema.ts:357` |
-| `if` | Function | `gui/electron/project-schema.ts:358` |
-| `if` | Function | `gui/electron/project-schema.ts:367` |
-| `if` | Function | `gui/electron/project-schema.ts:387` |
-| `if` | Function | `gui/electron/project-schema.ts:392` |
-| `if` | Function | `gui/electron/project-schema.ts:409` |
-| `normalizeProjectDocument` | Function | `gui/electron/project-schema.ts:460` |
-| `validateModeInvariants` | Function | `gui/electron/project-schema.ts:471` |
-| `if` | Function | `gui/electron/project-schema.ts:474` |
-| `if` | Function | `gui/electron/project-schema.ts:476` |
-| `if` | Function | `gui/electron/project-schema.ts:483` |
-| `if` | Function | `gui/electron/project-schema.ts:486` |
-| `if` | Function | `gui/electron/project-schema.ts:489` |
-| `if` | Function | `gui/electron/project-schema.ts:492` |
-| `assertRecoverySnapshot` | Function | `gui/electron/project-schema.ts:498` |
-| `validateSegments` | Function | `gui/electron/project-schema.ts:507` |
-| `if` | Function | `gui/electron/project-schema.ts:525` |
-| `if` | Function | `gui/electron/project-schema.ts:528` |
-| `if` | Function | `gui/electron/project-schema.ts:530` |
-| `if` | Function | `gui/electron/project-schema.ts:534` |
-| `if` | Function | `gui/electron/project-schema.ts:537` |
-| `if` | Function | `gui/electron/project-schema.ts:540` |
-| `validateSubtitleState` | Function | `gui/electron/project-schema.ts:556` |
-| `if` | Function | `gui/electron/project-schema.ts:584` |
-| `if` | Function | `gui/electron/project-schema.ts:591` |
+| `if` | Function | `gui/electron/main.ts:45` |
+| `if` | Function | `gui/electron/main.ts:64` |
+| `if` | Function | `gui/electron/main.ts:71` |
+| `createWindow` | Function | `gui/electron/main.ts:177` |
+| `if` | Function | `gui/electron/main.ts:225` |
+| `if` | Function | `gui/electron/main.ts:234` |
+| `if` | Function | `gui/electron/main.ts:281` |
+| `if` | Function | `gui/electron/main.ts:404` |
+| `setApplicationMenu` | Function | `gui/electron/main.ts:429` |
+| `applicationMenuTemplate` | Function | `gui/electron/main.ts:433` |
+| `send` | Function | `gui/electron/main.ts:441` |
+| `sendMenuCommand` | Function | `gui/electron/main.ts:691` |
+| `clampMenuZoom` | Function | `gui/electron/main.ts:695` |
+| `normalizeInferenceDevice` | Function | `gui/electron/main.ts:699` |
+| `normalizeWhisperModel` | Function | `gui/electron/main.ts:705` |
+| `normalizeWaveformDisplayMode` | Function | `gui/electron/main.ts:711` |
+| `normalizeMenuBoolean` | Function | `gui/electron/main.ts:717` |
+| `showAboutSongcut` | Function | `gui/electron/main.ts:722` |
+| `formatBuildTime` | Function | `gui/electron/main.ts:731` |
+| `resolveApiBaseUrl` | Function | `gui/electron/main.ts:739` |
+| `if` | Function | `gui/electron/main.ts:741` |
+| `startPythonApi` | Function | `gui/electron/main.ts:748` |
+| `stopPythonApi` | Function | `gui/electron/main.ts:772` |
+| `if` | Function | `gui/electron/main.ts:773` |
+| `findFreePort` | Function | `gui/electron/main.ts:779` |
+| `waitForHealth` | Function | `gui/electron/main.ts:791` |
+| `while` | Function | `gui/electron/main.ts:793` |
+| `listener` | Function | `gui/electron/preload.cts:18` |
+| `listener` | Function | `gui/electron/preload.cts:23` |
+| `sidecarPathForVideo` | Function | `gui/electron/project-schema.ts:401` |
+| `isProjectOperationKindForMode` | Function | `gui/electron/project-schema.ts:406` |
+| `parseProjectText` | Function | `gui/electron/project-schema.ts:411` |
+| `assertProjectDocument` | Function | `gui/electron/project-schema.ts:423` |
+| `if` | Function | `gui/electron/project-schema.ts:426` |
+| `if` | Function | `gui/electron/project-schema.ts:427` |
+| `if` | Function | `gui/electron/project-schema.ts:436` |
+| `if` | Function | `gui/electron/project-schema.ts:456` |
+| `if` | Function | `gui/electron/project-schema.ts:461` |
+| `if` | Function | `gui/electron/project-schema.ts:478` |
+| `normalizeProjectDocument` | Function | `gui/electron/project-schema.ts:529` |
+| `validateModeInvariants` | Function | `gui/electron/project-schema.ts:540` |
+| `if` | Function | `gui/electron/project-schema.ts:543` |
+| `if` | Function | `gui/electron/project-schema.ts:545` |
+| `if` | Function | `gui/electron/project-schema.ts:552` |
+| `if` | Function | `gui/electron/project-schema.ts:555` |
+| `if` | Function | `gui/electron/project-schema.ts:558` |
+| `if` | Function | `gui/electron/project-schema.ts:561` |
+| `assertRecoverySnapshot` | Function | `gui/electron/project-schema.ts:567` |
+| `validateSegments` | Function | `gui/electron/project-schema.ts:576` |
 | `if` | Function | `gui/electron/project-schema.ts:594` |
-| `if` | Function | `gui/electron/project-schema.ts:598` |
-| `if` | Function | `gui/electron/project-schema.ts:610` |
-| `if` | Function | `gui/electron/project-schema.ts:624` |
-| `validateSubtitleEffect` | Function | `gui/electron/project-schema.ts:634` |
-| `if` | Function | `gui/electron/project-schema.ts:647` |
-| `validateSubtitleStyle` | Function | `gui/electron/project-schema.ts:655` |
-| `validateTranscript` | Function | `gui/electron/project-schema.ts:673` |
-| `if` | Function | `gui/electron/project-schema.ts:681` |
-| `validateBoundaryRefinementSummary` | Function | `gui/electron/project-schema.ts:696` |
-| `validateBoundarySegmentDiagnostic` | Function | `gui/electron/project-schema.ts:709` |
-| `for` | Function | `gui/electron/project-schema.ts:712` |
-| `validateBoundarySideDiagnostic` | Function | `gui/electron/project-schema.ts:719` |
-| `for` | Function | `gui/electron/project-schema.ts:722` |
-| `for` | Function | `gui/electron/project-schema.ts:725` |
-| `for` | Function | `gui/electron/project-schema.ts:728` |
-| `whisperSettings` | Function | `gui/electron/project-schema.ts:739` |
-| `validateOperation` | Function | `gui/electron/project-schema.ts:763` |
-| `if` | Function | `gui/electron/project-schema.ts:775` |
+| `if` | Function | `gui/electron/project-schema.ts:597` |
+| `if` | Function | `gui/electron/project-schema.ts:599` |
+| `if` | Function | `gui/electron/project-schema.ts:603` |
+| `if` | Function | `gui/electron/project-schema.ts:606` |
+| `if` | Function | `gui/electron/project-schema.ts:609` |
+| `validateSubtitleState` | Function | `gui/electron/project-schema.ts:625` |
+| `if` | Function | `gui/electron/project-schema.ts:654` |
+| `if` | Function | `gui/electron/project-schema.ts:661` |
+| `if` | Function | `gui/electron/project-schema.ts:664` |
+| `if` | Function | `gui/electron/project-schema.ts:668` |
+| `if` | Function | `gui/electron/project-schema.ts:677` |
+| `if` | Function | `gui/electron/project-schema.ts:680` |
+| `if` | Function | `gui/electron/project-schema.ts:683` |
+| `if` | Function | `gui/electron/project-schema.ts:688` |
+| `if` | Function | `gui/electron/project-schema.ts:691` |
+| `if` | Function | `gui/electron/project-schema.ts:695` |
+| `if` | Function | `gui/electron/project-schema.ts:707` |
+| `if` | Function | `gui/electron/project-schema.ts:721` |
+| `if` | Function | `gui/electron/project-schema.ts:760` |
+| `if` | Function | `gui/electron/project-schema.ts:765` |
+| `if` | Function | `gui/electron/project-schema.ts:788` |
+| `validateAlignmentDiagnostics` | Function | `gui/electron/project-schema.ts:793` |
+| `if` | Function | `gui/electron/project-schema.ts:794` |
+| `validateLyricsAnalysisArtifact` | Function | `gui/electron/project-schema.ts:809` |
+| `for` | Function | `gui/electron/project-schema.ts:811` |
 
 ## ファイル一覧
 
@@ -116,26 +116,47 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/electron/project-schema.ts`
 - `gui/electron/project-store.test.ts`
 - `gui/electron/project-store.ts`
+- `gui/electron/software-decoder.test.ts`
+- `gui/electron/software-decoder.ts`
 - `gui/electron/system-fonts.ts`
 - `gui/electron/waveform-codec.test.ts`
 - `gui/electron/waveform-codec.ts`
 - `gui/src/App.tsx`
 - `gui/src/components/AppDialogs.tsx`
+- `gui/src/components/CutAnalyzeGuideDialog.test.ts`
+- `gui/src/components/CutAnalyzeGuideDialog.tsx`
 - `gui/src/components/CutModePanel.tsx`
-- `gui/src/components/CutSegmentTimingDialog.tsx`
+- `gui/src/components/DisplayElementInspector.test.tsx`
+- `gui/src/components/DisplayElementInspector.tsx`
+- `gui/src/components/DisplayElementZoomDialog.test.tsx`
+- `gui/src/components/DisplayElementZoomDialog.tsx`
 - `gui/src/components/EditorTransportControls.tsx`
 - `gui/src/components/HelpTooltip.tsx`
 - `gui/src/components/JobProgressDialog.test.ts`
 - `gui/src/components/JobProgressDialog.tsx`
+- `gui/src/components/ModeToolbar.test.tsx`
 - `gui/src/components/ModeToolbar.tsx`
-- `gui/src/components/SegmentTimingDialog.test.tsx`
-- `gui/src/components/SegmentTimingDialog.tsx`
+- `gui/src/components/ProjectInformation.tsx`
+- `gui/src/components/SegmentInspector.test.tsx`
+- `gui/src/components/SegmentInspector.tsx`
 - `gui/src/components/SettingsDialog.test.ts`
 - `gui/src/components/SettingsDialog.tsx`
 - `gui/src/components/SubModePanel.test.ts`
+- `gui/src/components/SubModePanel.tsx`
+- `gui/src/components/SubSegmentStyleInspector.test.tsx`
+- `gui/src/components/SubSegmentStyleInspector.tsx`
+- `gui/src/components/SubTimelineEditor.test.ts`
 - `gui/src/components/SubTimelineEditor.tsx`
+- `gui/src/components/SubTimelineMoveInspector.test.tsx`
+- `gui/src/components/SubTimelineMoveInspector.tsx`
+- `gui/src/components/SubVideoPreview.test.tsx`
+- `gui/src/components/SubVideoPreview.tsx`
 - `gui/src/components/SubtitleAlignmentIcon.test.tsx`
 - `gui/src/components/SubtitleAlignmentIcon.tsx`
+- `gui/src/components/SubtitleFileExportDialog.test.tsx`
+- `gui/src/components/SubtitleFileExportDialog.tsx`
+- `gui/src/components/SubtitleStyleEditor.test.tsx`
+- `gui/src/components/TaskStatusPanel.test.tsx`
 - `gui/src/components/TimelineSurface.test.ts`
 - `gui/src/components/TimelineSurface.tsx`
 - `gui/src/components/TimelineWaveform.tsx`
@@ -156,6 +177,7 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/components/ui/toggle.tsx`
 - `gui/src/i18n.test.ts`
 - `gui/src/i18n.ts`
+- `gui/src/lib/api.test.ts`
 - `gui/src/lib/api.ts`
 - `gui/src/lib/appComposition.test.ts`
 - `gui/src/lib/boundaries.test.ts`
@@ -163,11 +185,25 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/boundaryRefinement.test.ts`
 - `gui/src/lib/boundaryRefinement.ts`
 - `gui/src/lib/commonizationContracts.test.ts`
+- `gui/src/lib/displayElementZoomPlayback.test.ts`
+- `gui/src/lib/displayElementZoomPlayback.ts`
+- `gui/src/lib/displayElementZoomSession.test.ts`
+- `gui/src/lib/displayElementZoomSession.ts`
+- `gui/src/lib/displayElements.test.ts`
+- `gui/src/lib/displayElements.ts`
 - `gui/src/lib/editorCommands.test.ts`
 - `gui/src/lib/editorCommands.ts`
 - `gui/src/lib/exportNaming.test.ts`
 - `gui/src/lib/exportNaming.ts`
 - `gui/src/lib/jsdocContracts.test.ts`
+- `gui/src/lib/lineReanalysisCoordinator.test.ts`
+- `gui/src/lib/lineReanalysisCoordinator.ts`
+- `gui/src/lib/mediaDecodeRecovery.test.ts`
+- `gui/src/lib/mediaDecodeRecovery.ts`
+- `gui/src/lib/mediaDiagnostics.test.ts`
+- `gui/src/lib/mediaDiagnostics.ts`
+- `gui/src/lib/mediaPlaybackCoordinator.test.ts`
+- `gui/src/lib/mediaPlaybackCoordinator.ts`
 - `gui/src/lib/modeController.test.ts`
 - `gui/src/lib/modeController.ts`
 - `gui/src/lib/modeSession.test.ts`
@@ -175,6 +211,8 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/modeViewModel.test.ts`
 - `gui/src/lib/modeViewModel.ts`
 - `gui/src/lib/modes.ts`
+- `gui/src/lib/playbackRange.test.ts`
+- `gui/src/lib/playbackRange.ts`
 - `gui/src/lib/project.test.ts`
 - `gui/src/lib/project.ts`
 - `gui/src/lib/projectAdapters.test.ts`
@@ -184,8 +222,11 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/scratchProxy.ts`
 - `gui/src/lib/segmentManagement.test.ts`
 - `gui/src/lib/segmentManagement.ts`
+- `gui/src/lib/segmentSelection.test.ts`
+- `gui/src/lib/segmentSelection.ts`
 - `gui/src/lib/segmentTiming.test.ts`
 - `gui/src/lib/segmentTiming.ts`
+- `gui/src/lib/segmentTimingPolicy.test.ts`
 - `gui/src/lib/settingsScopes.test.ts`
 - `gui/src/lib/settingsScopes.ts`
 - `gui/src/lib/shortcuts.test.ts`
@@ -193,6 +234,9 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/subtitleEffectCatalog.tsx`
 - `gui/src/lib/subtitleEffects.test.ts`
 - `gui/src/lib/subtitleEffects.ts`
+- `gui/src/lib/subtitleFileExport.ts`
+- `gui/src/lib/subtitleLaneOperations.test.ts`
+- `gui/src/lib/subtitleLaneOperations.ts`
 - `gui/src/lib/subtitleStylePresets.test.ts`
 - `gui/src/lib/subtitleStylePresets.ts`
 - `gui/src/lib/subtitles.test.ts`
@@ -227,9 +271,11 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/lib/waveform.ts`
 - `gui/src/lib/waveformPreferences.test.ts`
 - `gui/src/lib/waveformPreferences.ts`
+- `gui/src/lib/waveformSessionCache.ts`
 - `gui/src/main.tsx`
 - `gui/src/types.ts`
 - `gui/src/vite-env.d.ts`
 - `gui/vite.config.ts`
+- `native/windows_font_resolver/include/scut_windows_font_resolver.h`
 - `packaging/e2e_dist_smoke.js`
 <!-- code-map:generated:end -->

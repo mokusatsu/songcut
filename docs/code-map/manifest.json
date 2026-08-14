@@ -9,60 +9,73 @@
     "database": ".codex/code-map/state/graph.sqlite3",
     "external_analysis_dependencies": []
   },
-  "generated_at": "2026-08-10T22:46:38+09:00",
+  "generated_at": "2026-08-14T17:05:23+09:00",
   "repository": "songcut",
   "mode": "verify",
   "vcs": {
     "type": "git",
-    "analyzed_head": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
-    "last_analyzed_commit": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
-    "branch": "codex/SCUT-036-ass-lyric-effects-integration",
-    "base": "c10970c2de270ff7e8a08ef44eea21578f3ca597",
+    "analyzed_head": "93635679a43498e22140aa3980c46d0febfbdd56",
+    "last_analyzed_commit": "93635679a43498e22140aa3980c46d0febfbdd56",
+    "branch": "main",
+    "base": "93635679a43498e22140aa3980c46d0febfbdd56",
     "dirty": true,
-    "tracked_diff_sha256": "01c3329dca8bc1318a30732905d8e956be4480b24f017973559a39a03acbec40",
+    "tracked_diff_sha256": "2775c5fc43f3fbad59e834ae8c833a2ae24b1f3feb8a5e33f73d8f76fb29ff04",
     "changed_paths": [
+      ".codex/code-map/annotations.json",
       "docs/code-map/README.md",
+      "docs/code-map/architecture.md",
       "docs/code-map/change-impact.md",
-      "docs/code-map/manifest.json"
+      "docs/code-map/flows.md",
+      "docs/code-map/hotspots.md",
+      "docs/code-map/manifest.json",
+      "docs/code-map/modules/gui.md",
+      "docs/code-map/modules/native-windows_font_resolver.md",
+      "docs/code-map/modules/packaging.md",
+      "docs/code-map/modules/songcut.md",
+      "docs/code-map/modules/tests.md",
+      "docs/code-map/modules/third_party-uta_align.md"
     ],
-    "untracked_paths": []
+    "untracked_paths": [
+      "docs/code-map/modules/native-windows_font_resolver.md",
+      "docs/code-map/modules/packaging.md"
+    ]
   },
   "snapshot": {
-    "source_tree_sha256": "09c3c02ea52bbf64e266e983b8b7b0eb649ff699f5352068c938d958063887f0",
-    "file_count": 226,
-    "previous_source_tree_sha256": "09c3c02ea52bbf64e266e983b8b7b0eb649ff699f5352068c938d958063887f0"
+    "source_tree_sha256": "a9ea44bd65a8deec75dac3e0fbdbdd1907a95f855a7dbf001164e709f814cc75",
+    "file_count": 279,
+    "previous_source_tree_sha256": "a9ea44bd65a8deec75dac3e0fbdbdd1907a95f855a7dbf001164e709f814cc75"
   },
   "graph": {
     "status": "ready",
     "stats": {
-      "files": 226,
-      "nodes": 2543,
-      "edges": 9305,
-      "components": 5,
+      "files": 279,
+      "nodes": 3128,
+      "edges": 10887,
+      "components": 6,
       "flows": 18,
       "parse_errors": 0,
       "languages": {
         "c_cpp": 3,
         "javascript": 3,
         "powershell": 2,
-        "python": 91,
-        "typescript": 127
+        "python": 100,
+        "typescript": 171
       },
       "node_kinds": {
-        "Class": 159,
-        "External": 82,
-        "File": 226,
-        "Function": 1397,
-        "Method": 90,
-        "Test": 589
+        "Class": 194,
+        "External": 102,
+        "File": 279,
+        "Function": 1710,
+        "Method": 139,
+        "Test": 704
       },
       "edge_kinds": {
-        "call": 6484,
+        "call": 7425,
         "decorator": 9,
-        "external_io": 289,
-        "import": 762,
-        "inherit": 9,
-        "tests": 1752
+        "external_io": 354,
+        "import": 936,
+        "inherit": 10,
+        "tests": 2153
       }
     }
   },
@@ -74,6 +87,8 @@
     "hotspots.md",
     "manifest.json",
     "modules/gui.md",
+    "modules/native-windows_font_resolver.md",
+    "modules/packaging.md",
     "modules/songcut.md",
     "modules/tests.md",
     "modules/third_party-uta_align.md"
@@ -85,67 +100,79 @@
       "anchors": [
         "gui/src/i18n.ts",
         "gui/src/App.tsx",
-        "gui/src/components/AppDialogs.tsx",
+        "gui/src/lib/subtitles.ts",
         "gui/src/types.ts",
-        "gui/src/components/SettingsDialog.tsx"
+        "gui/electron/project-schema.ts"
       ],
       "page": "modules/gui.md",
-      "files": 124,
-      "cohesion": 0.9615
+      "files": 170,
+      "cohesion": 0.9823
     },
     {
       "id": "songcut",
       "name": "songcut",
       "anchors": [
         "songcut/api.py",
-        "gui/src/components/SubModePanel.tsx",
-        "songcut/transcription.py",
+        "tests/test_api.py",
+        "gui/src/components/SubtitleStyleEditor.tsx",
         "songcut/subtitle_export.py",
-        "songcut/ffmpeg_tools.py"
+        "songcut/transcription.py"
       ],
       "page": "modules/songcut.md",
-      "files": 51,
-      "cohesion": 0.7233
+      "files": 62,
+      "cohesion": 0.9364
     },
     {
       "id": "third_party-uta_align",
       "name": "third_party/uta_align",
       "anchors": [
-        "third_party/uta_align/src/uta_align/pipeline.py",
         "third_party/uta_align/src/uta_align/lyrics.py",
-        "third_party/uta_align/src/uta_align/fallback.py",
+        "third_party/uta_align/src/uta_align/pipeline.py",
         "third_party/uta_align/tests/test_candidate_consensus.py",
+        "third_party/uta_align/src/uta_align/fallback.py",
         "third_party/uta_align/src/uta_align/alignment.py"
       ],
       "page": "modules/third_party-uta_align.md",
       "files": 25,
-      "cohesion": 0.8104
+      "cohesion": 0.9018
     },
     {
       "id": "tests",
       "name": "tests",
       "anchors": [
-        "gui/src/lib/waveformSessionCache.ts",
-        "tests/test_api.py",
-        "tests/test_smart_export.py",
         "tests/test_subtitle_export.py",
-        "tests/test_mms_alignment.py"
+        "tools/benchmark_kiritan_display_elements.py",
+        "tests/test_smart_export.py",
+        "tests/test_kiritan_display_benchmark.py",
+        "tests/test_lyrics_artifact_cache.py"
       ],
       "page": "modules/tests.md",
-      "files": 22,
-      "cohesion": 0.0224
+      "files": 14,
+      "cohesion": 0.1276
     },
     {
       "id": "packaging",
       "name": "packaging",
       "anchors": [
+        "packaging/songcut_launcher_entry.py",
+        "packaging/e2e_sub_mode.js",
         "packaging/evaluate_subtitle_frame.py",
         "packaging/e2e_scratch_proxy.js",
-        "packaging/build_dist.ps1",
-        "packaging/build_native_font_resolver.ps1"
+        "packaging/build_dist.ps1"
       ],
-      "page": null,
-      "files": 4,
+      "page": "modules/packaging.md",
+      "files": 6,
+      "cohesion": 0.0
+    },
+    {
+      "id": "native-windows_font_resolver",
+      "name": "native/windows_font_resolver",
+      "anchors": [
+        "native/windows_font_resolver/src/scut_windows_font_resolver.cpp",
+        "native/windows_font_resolver/tests/scut_windows_font_resolver_tests.cpp"
+      ],
+      "page": "modules/native-windows_font_resolver.md",
+      "files": 2,
       "cohesion": 0.0
     }
   ],
@@ -154,6 +181,18 @@
       "id": "flow_87f310366eafeed8",
       "entry_node": "node_e6dcdf7940fe14be",
       "entry_name": "exportClips",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_a42879ed63f86fd1",
+      "entry_node": "node_2cb18d133ba62862",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_452779c9b05a3c29",
+      "entry_node": "node_a8ca137bd9eea847",
+      "entry_name": "moveSelectedSubtitleSegments",
       "confidence": "推定"
     },
     {
@@ -169,9 +208,15 @@
       "confidence": "推定"
     },
     {
-      "id": "flow_2b99029c15ce92cc",
-      "entry_node": "node_f57b89aafb2e8c7e",
-      "entry_name": "switch",
+      "id": "flow_63d1ded3cc9750ae",
+      "entry_node": "node_cfb42205dd592924",
+      "entry_name": "if",
+      "confidence": "推定"
+    },
+    {
+      "id": "flow_c6228872ba7b1bb9",
+      "entry_node": "node_5554255b0e0398ce",
+      "entry_name": "listener",
       "confidence": "推定"
     },
     {
@@ -187,9 +232,9 @@
       "confidence": "推定"
     },
     {
-      "id": "flow_ed7fa71733f22ef7",
-      "entry_node": "node_d3d382554aca303a",
-      "entry_name": "switch",
+      "id": "flow_c0b2c273a3209c57",
+      "entry_node": "node_85c13101aab64c6b",
+      "entry_name": "disposeScratchProxy",
       "confidence": "推定"
     },
     {
@@ -205,44 +250,26 @@
       "confidence": "推定"
     },
     {
-      "id": "flow_44bdc595373a0c96",
-      "entry_node": "node_781d6da74e21eeb4",
-      "entry_name": "if",
-      "confidence": "推定"
-    },
-    {
       "id": "flow_071f16f84c039ff4",
       "entry_node": "node_cd8e444c42f4f77c",
       "entry_name": "updateSegment",
       "confidence": "推定"
     },
     {
-      "id": "flow_8e401bcdf1521ba9",
-      "entry_node": "node_91e33e5936a9c3f1",
+      "id": "flow_af6faea865efb642",
+      "entry_node": "node_0661bca78acf5bd7",
       "entry_name": "if",
       "confidence": "推定"
     },
     {
-      "id": "flow_ee02df1afd6d9353",
-      "entry_node": "node_85c13101aab64c6b",
-      "entry_name": "disposeScratchProxy",
-      "confidence": "推定"
-    },
-    {
-      "id": "flow_5225c9736f1f57ae",
-      "entry_node": "node_2e29a05325e1b36a",
-      "entry_name": "runEditorCommand",
+      "id": "flow_979312b90b2a0970",
+      "entry_node": "node_82942ecdcb899343",
+      "entry_name": "if",
       "confidence": "推定"
     },
     {
       "id": "flow_fa47ffcf8a16cc06",
       "entry_node": "node_41fa20630f2aaa0e",
-      "entry_name": "if",
-      "confidence": "推定"
-    },
-    {
-      "id": "flow_eb35f7b7e4b96eed",
-      "entry_node": "node_754f55c725bfebc3",
       "entry_name": "if",
       "confidence": "推定"
     },

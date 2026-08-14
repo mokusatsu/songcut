@@ -7,19 +7,19 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 
 ## 指標
 
-- Files: 51
-- Symbols: 810
-- Incoming／Outgoing: 72／77
-- Cohesion: 0.72
-- Node kinds: Class 116、File 51、Function 422、Method 70、Test 151
+- Files: 62
+- Symbols: 1045
+- Incoming／Outgoing: 71／51
+- Cohesion: 0.94
+- Node kinds: Class 129、File 62、Function 449、Method 103、Test 302
 
 ## 代表パス
 
 - `songcut/api.py`
-- `gui/src/components/SubModePanel.tsx`
-- `songcut/transcription.py`
+- `tests/test_api.py`
+- `gui/src/components/SubtitleStyleEditor.tsx`
 - `songcut/subtitle_export.py`
-- `songcut/ffmpeg_tools.py`
+- `songcut/transcription.py`
 
 ## 主なシンボル
 
@@ -28,97 +28,95 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 | `time` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:71` |
 | `nullableTime` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:72` |
 | `db` | Function | `gui/src/components/BoundaryRefinementDialog.tsx:73` |
-| `SubModePanel` | Function | `gui/src/components/SubModePanel.tsx:123` |
-| `analyzeLyrics` | Function | `gui/src/components/SubModePanel.tsx:220` |
-| `openLyricsDialog` | Function | `gui/src/components/SubModePanel.tsx:228` |
-| `exportSubtitles` | Function | `gui/src/components/SubModePanel.tsx:241` |
-| `addLane` | Function | `gui/src/components/SubModePanel.tsx:246` |
-| `removeLane` | Function | `gui/src/components/SubModePanel.tsx:259` |
-| `updateLane` | Function | `gui/src/components/SubModePanel.tsx:276` |
-| `update` | Function | `gui/src/components/SubModePanel.tsx:480` |
-| `patch` | Function | `gui/src/components/SubModePanel.tsx:580` |
-| `patchEffect` | Function | `gui/src/components/SubModePanel.tsx:584` |
-| `patchEffectParam` | Function | `gui/src/components/SubModePanel.tsx:588` |
-| `saveStylePreset` | Function | `gui/src/components/SubModePanel.tsx:592` |
-| `applyStylePreset` | Function | `gui/src/components/SubModePanel.tsx:610` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:617` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:772` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:790` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:801` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:817` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:829` |
-| `colorPickerValue` | Function | `gui/src/components/SubModePanel.tsx:934` |
-| `colorPickerResult` | Function | `gui/src/components/SubModePanel.tsx:941` |
-| `effectLabel` | Function | `gui/src/components/SubModePanel.tsx:949` |
-| `effectDescription` | Function | `gui/src/components/SubModePanel.tsx:954` |
-| `parameterLabel` | Function | `gui/src/components/SubModePanel.tsx:959` |
-| `choiceValueForUi` | Function | `gui/src/components/SubModePanel.tsx:964` |
-| `readChoiceValue` | Function | `gui/src/components/SubModePanel.tsx:969` |
-| `choiceLabel` | Function | `gui/src/components/SubModePanel.tsx:976` |
-| `clampCatalogNumber` | Function | `gui/src/components/SubModePanel.tsx:983` |
-| `groupEffectDefinitions` | Function | `gui/src/components/SubModePanel.tsx:992` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:994` |
-| `findSubtitleEffectError` | Function | `gui/src/components/SubModePanel.tsx:1021` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:1022` |
-| `for` | Function | `gui/src/components/SubModePanel.tsx:1028` |
-| `if` | Function | `gui/src/components/SubModePanel.tsx:1043` |
-| `hasSubtitleSegments` | Function | `gui/src/components/SubModePanel.tsx:1050` |
-| `samplePoints` | Test | `gui/src/lib/waveformSessionCache.test.ts:99` |
-| `ComApartmentScope` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:38` |
-| `NameInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:63` |
-| `CandidateInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:69` |
-| `CandidateRef` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:81` |
-| `FileInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:86` |
-| `GlyphInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:94` |
-| `FaceInfo` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:101` |
-| `BlobBuilder` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:114` |
-| `Resolver` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:229` |
-| `ErrorState` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:231` |
-| `Resolver` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:239` |
-| `CallGuard` | Class | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:425` |
-| `CallGuard.CallGuard` | Method | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:427` |
-| `BuildCandidateInfo` | Function | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:437` |
-| `ResolvePath` | Function | `native/windows_font_resolver/src/scut_windows_font_resolver.cpp:516` |
-| `_arguments` | Function | `packaging/e2e_all_subtitle_effects.py:30` |
-| `_effect_defaults` | Function | `packaging/e2e_all_subtitle_effects.py:42` |
-| `_build_lane` | Function | `packaging/e2e_all_subtitle_effects.py:53` |
-| `_create_black_source` | Function | `packaging/e2e_all_subtitle_effects.py:112` |
-| `main` | Function | `packaging/e2e_all_subtitle_effects.py:149` |
-| `main.report` | Function | `packaging/e2e_all_subtitle_effects.py:185` |
-| `log` | Function | `packaging/e2e_sub_mode.js:25` |
-| `assertPass` | Function | `packaging/e2e_sub_mode.js:31` |
-| `sleep` | Function | `packaging/e2e_sub_mode.js:35` |
-| `withTimeout` | Function | `packaging/e2e_sub_mode.js:39` |
-| `captureOptionalScreenshot` | Function | `packaging/e2e_sub_mode.js:48` |
-| `getPage` | Function | `packaging/e2e_sub_mode.js:65` |
-| `connect` | Function | `packaging/e2e_sub_mode.js:77` |
-| `if` | Function | `packaging/e2e_sub_mode.js:83` |
-| `close` | Function | `packaging/e2e_sub_mode.js:105` |
-| `evaluate` | Function | `packaging/e2e_sub_mode.js:112` |
-| `waitFor` | Function | `packaging/e2e_sub_mode.js:122` |
-| `while` | Function | `packaging/e2e_sub_mode.js:125` |
-| `waitForJson` | Function | `packaging/e2e_sub_mode.js:133` |
-| `while` | Function | `packaging/e2e_sub_mode.js:136` |
-| `clickButton` | Function | `packaging/e2e_sub_mode.js:148` |
-| `cleanup` | Function | `packaging/e2e_sub_mode.js:160` |
-| `if` | Function | `packaging/e2e_sub_mode.js:248` |
-| `if` | Function | `packaging/e2e_sub_mode.js:744` |
+| `SubtitleStyleEditor` | Function | `gui/src/components/SubtitleStyleEditor.tsx:70` |
+| `patch` | Function | `gui/src/components/SubtitleStyleEditor.tsx:85` |
+| `patchEffect` | Function | `gui/src/components/SubtitleStyleEditor.tsx:89` |
+| `patchEffectParam` | Function | `gui/src/components/SubtitleStyleEditor.tsx:93` |
+| `saveStylePreset` | Function | `gui/src/components/SubtitleStyleEditor.tsx:97` |
+| `applyStylePreset` | Function | `gui/src/components/SubtitleStyleEditor.tsx:115` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:122` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:277` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:295` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:306` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:330` |
+| `if` | Function | `gui/src/components/SubtitleStyleEditor.tsx:342` |
+| `replacePaletteColor` | Function | `gui/src/components/SubtitleStyleEditor.tsx:425` |
+| `colorPickerValue` | Function | `gui/src/components/SubtitleStyleEditor.tsx:452` |
+| `colorPickerResult` | Function | `gui/src/components/SubtitleStyleEditor.tsx:459` |
+| `effectLabel` | Function | `gui/src/components/SubtitleStyleEditor.tsx:467` |
+| `effectDescription` | Function | `gui/src/components/SubtitleStyleEditor.tsx:472` |
+| `parameterLabel` | Function | `gui/src/components/SubtitleStyleEditor.tsx:477` |
+| `choiceValueForUi` | Function | `gui/src/components/SubtitleStyleEditor.tsx:482` |
+| `readChoiceValue` | Function | `gui/src/components/SubtitleStyleEditor.tsx:487` |
+| `choiceLabel` | Function | `gui/src/components/SubtitleStyleEditor.tsx:494` |
+| `clampCatalogNumber` | Function | `gui/src/components/SubtitleStyleEditor.tsx:501` |
+| `groupEffectDefinitions` | Function | `gui/src/components/SubtitleStyleEditor.tsx:510` |
+| `for` | Function | `gui/src/components/SubtitleStyleEditor.tsx:512` |
 | `parse_args` | Function | `packaging/set_windows_exe_icon.py:10` |
 | `main` | Function | `packaging/set_windows_exe_icon.py:19` |
+| `ProbeRequest` | Class | `songcut/api.py:109` |
+| `BoundaryRefinementRequest` | Class | `songcut/api.py:113` |
+| `BoundaryRefinementRequest.validate_hysteresis` | Method | `songcut/api.py:127` |
+| `BoundaryRefinementRequest.to_config` | Method | `songcut/api.py:132` |
+| `AnalyzeRequest` | Class | `songcut/api.py:138` |
+| `WhisperDownloadRequest` | Class | `songcut/api.py:150` |
+| `DemucsDownloadRequest` | Class | `songcut/api.py:154` |
+| `MmsDownloadRequest` | Class | `songcut/api.py:158` |
+| `TranscriptionSegmentRequest` | Class | `songcut/api.py:162` |
+| `TranscriptionRequest` | Class | `songcut/api.py:168` |
+| `ExportItem` | Class | `songcut/api.py:177` |
+| `ExportRequest` | Class | `songcut/api.py:186` |
+| `ExportPlanRequest` | Class | `songcut/api.py:194` |
+| `ScratchProxyRequest` | Class | `songcut/api.py:199` |
+| `WaveformRequest` | Class | `songcut/api.py:203` |
+| `LyricsAnalysisRequest` | Class | `songcut/api.py:207` |
+| `SourceFingerprintRequest` | Class | `songcut/api.py:218` |
+| `DisplayElementRequest` | Class | `songcut/api.py:223` |
+| `DisplayElementRequest.validate_element` | Method | `songcut/api.py:251` |
+| `DisplayElementRequest.to_display_element` | Method | `songcut/api.py:258` |
+| `LyricsLineSnapshotRequest` | Class | `songcut/api.py:262` |
+| `LyricsLineSnapshotRequest.validate_line` | Method | `songcut/api.py:278` |
+| `LyricsLineContextRequest` | Class | `songcut/api.py:305` |
+| `LyricsLineContextRequest.validate_line` | Method | `songcut/api.py:313` |
+| `LyricsLineAnalysisRequest` | Class | `songcut/api.py:319` |
+| `LyricsLineAnalysisRequest.validate_revisions` | Method | `songcut/api.py:333` |
+| `SubtitleStyleRequest` | Class | `songcut/api.py:341` |
+| `SubtitleEffectRequest` | Class | `songcut/api.py:357` |
+| `SubtitleEffectRequest.validate_and_normalize_params` | Method | `songcut/api.py:364` |
+| `SubtitleEffectEstimateRequest` | Class | `songcut/api.py:374` |
+| `SubtitleSegmentRequest` | Class | `songcut/api.py:381` |
+| `SubtitleSegmentRequest.validate_range` | Method | `songcut/api.py:390` |
+| `SubtitleLaneRequest` | Class | `songcut/api.py:398` |
+| `SubtitleExportRequest` | Class | `songcut/api.py:406` |
+| `SubtitleFileDisplayElementRequest` | Class | `songcut/api.py:414` |
+| `SubtitleFileDisplayElementRequest.validate_range` | Method | `songcut/api.py:422` |
+| `SubtitleFileSegmentRequest` | Class | `songcut/api.py:428` |
+| `SubtitleFileSegmentRequest.validate_range_and_elements` | Method | `songcut/api.py:440` |
+| `SubtitleFileLaneRequest` | Class | `songcut/api.py:455` |
+| `SubtitleFileExportRequest` | Class | `songcut/api.py:465` |
+| `SubtitleFileExportRequest.validate_nonempty_lanes` | Method | `songcut/api.py:476` |
+| `SubtitleRenderItemRequest` | Class | `songcut/api.py:482` |
+| `SubtitleRenderRequest` | Class | `songcut/api.py:489` |
+| `JobRecord` | Class | `songcut/api.py:495` |
+| `_get_lyrics_artifact_cache` | Function | `songcut/api.py:541` |
+| `_lyrics_artifact_payload` | Function | `songcut/api.py:550` |
+| `health` | Function | `songcut/api.py:570` |
+| `get_subtitle_effect_catalog` | Function | `songcut/api.py:584` |
+| `estimate_subtitle_effect` | Function | `songcut/api.py:597` |
+| `ffmpeg_check` | Function | `songcut/api.py:616` |
+| `devices` | Function | `songcut/api.py:621` |
 
 ## ファイル一覧
 
 - `gui/src/components/BoundaryRefinementDialog.tsx`
-- `gui/src/components/SubModePanel.tsx`
-- `gui/src/lib/waveformSessionCache.test.ts`
-- `native/windows_font_resolver/src/scut_windows_font_resolver.cpp`
-- `packaging/e2e_all_subtitle_effects.py`
-- `packaging/e2e_sub_mode.js`
+- `gui/src/components/SubtitleStyleEditor.tsx`
 - `packaging/set_windows_exe_icon.py`
+- `packaging/songcut_api_entry.py`
 - `songcut/__init__.py`
 - `songcut/api.py`
 - `songcut/boundary_refiner.py`
 - `songcut/cli.py`
+- `songcut/element_reconciliation.py`
 - `songcut/evaluate.py`
 - `songcut/features.py`
 - `songcut/ffmpeg_process.py`
@@ -128,6 +126,8 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `songcut/hardware.py`
 - `songcut/io.py`
 - `songcut/lyrics_alignment.py`
+- `songcut/lyrics_artifact_cache.py`
+- `songcut/lyrics_elements.py`
 - `songcut/metadata.py`
 - `songcut/mms_alignment.py`
 - `songcut/review.py`
@@ -147,15 +147,26 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `songcut/windows_font_resolver.py`
 - `songcut/youtube_metadata.py`
 - `songcut_cli.py`
+- `tests/test_api.py`
 - `tests/test_boundary_refiner.py`
 - `tests/test_cli_integration.py`
+- `tests/test_element_reconciliation.py`
 - `tests/test_evaluate.py`
 - `tests/test_ffmpeg_process.py`
 - `tests/test_ffmpeg_tools.py`
+- `tests/test_gui_pipeline.py`
 - `tests/test_hardware.py`
 - `tests/test_lyrics_alignment.py`
+- `tests/test_lyrics_elements.py`
+- `tests/test_lyrics_line_api.py`
+- `tests/test_mms_alignment.py`
+- `tests/test_review.py`
+- `tests/test_scratch_proxy.py`
+- `tests/test_source_separation.py`
 - `tests/test_timestamps.py`
 - `tests/test_transcription.py`
+- `tests/test_uta_alignment.py`
+- `tests/test_waveform.py`
 - `tests/test_whisper_execution.py`
 - `tests/test_windows_font_native.py`
 - `tests/test_windows_font_resolver.py`

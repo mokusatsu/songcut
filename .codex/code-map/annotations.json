@@ -2,7 +2,7 @@
   "schema_version": 1,
   "components": {
     "gui": {
-      "summary": "Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、Python API との連携、プロジェクト保存・復旧を扱う。"
+      "summary": "Electron メインプロセスと React レンダラーで構成されるデスクトップ編集 UI。Cut/Sub の編集操作、共有タイムラインのスクラブ・端部自動スクロール、再生範囲制御、Sub動画上の字幕・表示素プレビューと統合字幕ファイル書出し、Python API との連携、プロジェクト保存・復旧を扱う。"
     },
     "songcut": {
       "summary": "FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境界調整、波形生成、クリップ・字幕書き出しを提供する Python バックエンド。"
@@ -17,5 +17,9 @@
       "summary": "Windows 配布物の構築、パッケージ済み GUI の E2E スモーク検証、字幕フレーム評価などを担う配布・検証補助。"
     }
   },
-  "flows": {}
+  "flows": {
+    "flow_452779c9b05a3c29": {
+      "summary": "選択中のSubセグメントを既存のLyricsLaneへ一括移動する入口。移動先がない、選択がない、同一Timelineだけ、または時刻範囲が重複する場合は状態を変えず拒否し、成功時のみ対象レーンを更新する。"
+    }
+  }
 }

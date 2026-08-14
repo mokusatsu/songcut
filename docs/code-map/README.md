@@ -2,28 +2,28 @@
 ## 現在のスナップショット
 
 - Repository: `songcut`
-- Generated: `2026-08-10T22:46:38+09:00`
+- Generated: `2026-08-14T17:05:23+09:00`
 - Mode: `verify`
 - Engine: embedded Python `2.0.0`
-- VCS head: `c10970c2de270ff7e8a08ef44eea21578f3ca597`
+- VCS head: `93635679a43498e22140aa3980c46d0febfbdd56`
 - Dirty: `yes`
-- Files／Nodes／Edges: 226／2543／9305
-- Components／Flows: 5／18
+- Files／Nodes／Edges: 279／3128／10887
+- Components／Flows: 6／18
 
 ## 最初に読む場所
 
 - [`gui`](modules/gui.md): `gui`を中心とする依存クラスタ。代表シンボル: initializeRendererI18n, tr, currentUiLanguage, if
 - [`songcut`](modules/songcut.md): `songcut`を中心とする依存クラスタ。代表シンボル: ProbeRequest, BoundaryRefinementRequest, validate_hysteresis, to_config
-- [`third_party-uta_align`](modules/third_party-uta_align.md): `third_party/uta_align`を中心とする依存クラスタ。代表シンボル: _context_token_count, _truncate_context, _local_lyric_context, _request_with_strategy
-- [`tests`](modules/tests.md): `tests`を中心とする依存クラスタ。代表シンボル: put, get, invalidate, clear
-- `packaging`: `packaging`を中心とする依存クラスタ。代表シンボル: extract_frame, weighted_bounds, quantile_bounds, weighted_centroid
+- [`third_party-uta_align`](modules/third_party-uta_align.md): `third_party/uta_align`を中心とする依存クラスタ。代表シンボル: parse_lyrics_text, load_lyrics, _context_token_count, _truncate_context
+- [`tests`](modules/tests.md): `tests`を中心とする依存クラスタ。代表シンボル: BenchmarkDataError, MonoLabel, duration, LyricMora
+- [`packaging`](modules/packaging.md): `packaging`を中心とする依存クラスタ。代表シンボル: _set_windows_dll_directory, spawn_external_process, distribution_root, configure_logging
 
 主要入口:
 - `exportClips`（`flow_87f310366eafeed8`、推定）
+- `if`（`flow_a42879ed63f86fd1`、推定）
+- `moveSelectedSubtitleSegments`（`flow_452779c9b05a3c29`、推定）
 - `if`（`flow_acbaab781455b14f`、推定）
 - `checkRecoveryOnStartup`（`flow_4d28b202844b5aa9`、推定）
-- `switch`（`flow_2b99029c15ce92cc`、推定）
-- `send`（`flow_0da193a90ef9fbb2`、推定）
 
 ## 地図
 
