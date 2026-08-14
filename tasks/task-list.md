@@ -110,6 +110,6 @@
 | SCUT-057 | 配布・起動 | PyInstaller外部Electron起動時のDLL検索パス分離 | 保留 | 最高 | SCUT-038 | DLL検索パス分離は検証済みだがsandbox GPU異常は未解消。PyInstaller非経由でも再現 | [詳細・証拠](../tasks/SCUT-057.md) |
 | SCUT-058 | 配布・調査 | CodexSandboxOnlineのElectron GPU子プロセス起動障害特定 | 未着手 | 最高 | SCUT-057 | `0xC0000135`の欠落moduleまたはtoken／ACL制約を実測で特定する | [詳細・証拠](../tasks/SCUT-058.md) |
 | SCUT-059 | Cut/Sub・再生 | スクラッチ後の通常再生ライフサイクル競合の解消 | 実環境検証待ち | 最高 | SCUT-053 | スクラッチ停止後の通常再生・シーク反復を共通media制御と回帰テストで固定し、停止時の媒体／renderer診断ログを追加した。通常デスクトップE2Eが残る | [詳細・証拠](../tasks/SCUT-059.md) |
-| SCUT-060 | Cut/Sub・再生 | 動画デコードエラーの復旧とソフトウェアデコード再起動 | 完了 | 最高 | SCUT-059 | `MEDIA_ERR_DECODE`時に利用者へ通知しvideo要素を一度だけ再構築する。Settingsから当該アプリ起動だけをソフトウェアデコードへ切り替えて再起動でき、回帰テスト・通常ポータブルE2Eで確認した | [詳細・証拠](../tasks/SCUT-060.md) |
+| SCUT-060 | Cut/Sub・再生 | 動画デコードエラーの復旧とソフトウェアデコード再起動 | 完了 | 最高 | SCUT-059 | `MEDIA_ERR_DECODE`時に利用者へ通知しvideo要素を一度だけ再構築する。Settingsから当該アプリ起動だけをソフトウェアデコードへ切り替えて再起動でき、回帰テスト・通常ポータブルE2Eで確認した。利用者はElectron最新版への更新後、指定再現操作でデコードエラーが発生しなくなったことを確認した | [詳細・証拠](../tasks/SCUT-060.md) |
 | SCUT-061 | 配布・互換性 | Electron 43.4.0更新とダイアログ最終場所の維持 | 完了 | 最高 | なし | Electronを43.4.0へ更新し、ファイル／フォルダー選択が最後に確定した場所を次回も開く。通常portable buildと実バイナリ43.4.0を確認済み | [詳細・証拠](../tasks/SCUT-061.md) |
 | SCUT-062 | 配布・軽量化 | 配布物third_partyをffmpegに限定 | 完了 | 高 | SCUT-061 | `build_dist.ps1`が生成する配布物のthird_partyへffmpeg以外をコピーしない。再ビルドはユーザー指示により未実行 | [詳細・証拠](../tasks/SCUT-062.md) |
