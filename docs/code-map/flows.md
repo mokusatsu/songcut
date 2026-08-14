@@ -94,11 +94,11 @@
 
 - Flow ID: `flow_0da193a90ef9fbb2`
 - 信頼度: 推定
-- 入口: `gui/electron/main.ts:441`の`send`
+- 入口: `gui/electron/main.ts:461`の`send`
 
 | Step | シンボル | 種別 | 根拠 |
 |---:|---|---|---|
-| 1 | `send` | Function | `gui/electron/main.ts:441` |
+| 1 | `send` | Function | `gui/electron/main.ts:461` |
 | 2 | `send` | External | `外部I/O` |
 
 ### 9. `atomicWriteJson`
@@ -132,23 +132,23 @@
 
 - Flow ID: `flow_9cb8fa5a5e44dcfc`
 - 信頼度: 推定
-- 入口: `gui/electron/main.ts:404`の`if`
+- 入口: `gui/electron/main.ts:424`の`if`
 
 | Step | シンボル | 種別 | 根拠 |
 |---:|---|---|---|
-| 1 | `if` | Function | `gui/electron/main.ts:404` |
-| 2 | `sendMenuCommand` | Function | `gui/electron/main.ts:691` |
+| 1 | `if` | Function | `gui/electron/main.ts:424` |
+| 2 | `sendMenuCommand` | Function | `gui/electron/main.ts:711` |
 | 3 | `webContents.send` | External | `外部I/O` |
 
 ### 12. `sendMenuCommand`
 
 - Flow ID: `flow_79222e1d6e0b5911`
 - 信頼度: 推定
-- 入口: `gui/electron/main.ts:691`の`sendMenuCommand`
+- 入口: `gui/electron/main.ts:711`の`sendMenuCommand`
 
 | Step | シンボル | 種別 | 根拠 |
 |---:|---|---|---|
-| 1 | `sendMenuCommand` | Function | `gui/electron/main.ts:691` |
+| 1 | `sendMenuCommand` | Function | `gui/electron/main.ts:711` |
 | 2 | `webContents.send` | External | `外部I/O` |
 
 ### 13. `updateSegment`

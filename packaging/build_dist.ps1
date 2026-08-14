@@ -324,6 +324,20 @@ finally {
   Pop-Location
 }
 
+# Electron 43 downloads its platform runtime lazily when the package is first
+# required. Resolve it here so a clean `pnpm install` can still produce a
+# portable package without relying on an earlier interactive Electron launch.
+Push-Location $GuiRoot
+try {
+  & $NodeExe -e "require('electron')"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Electron runtime preparation failed with exit code $LASTEXITCODE"
+  }
+}
+finally {
+  Pop-Location
+}
+
 $PreviousPythonPath = $env:PYTHONPATH
 $env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($PreviousPythonPath)) {
   $LocalAssSitePackages
@@ -470,9 +484,14 @@ $PackageJson = Get-Content -Raw -Path $PackageJsonTarget | ConvertFrom-Json
 $PackageJson.version = $AppVersion
 $PackageJson | ConvertTo-Json -Depth 20 | Set-Content -Path $PackageJsonTarget -Encoding UTF8
 
-$ThirdPartySource = Join-Path $RepoRoot "third_party"
-if (Test-Path $ThirdPartySource) {
-  Copy-Item -Path $ThirdPartySource -Destination (Join-Path $PackageRoot "third_party") -Recurse
+# Keep the portable package's third_party directory limited to the FFmpeg
+# runtime.  Other repositories under third_party are build inputs only.
+$BundledFfmpegSource = Join-Path $RepoRoot "third_party\ffmpeg"
+if (Test-Path -LiteralPath $BundledFfmpegSource -PathType Container) {
+  $ThirdPartyTarget = Join-Path $PackageRoot "third_party"
+  $BundledFfmpegTarget = Join-Path $ThirdPartyTarget "ffmpeg"
+  New-Item -ItemType Directory -Force -Path $ThirdPartyTarget | Out-Null
+  Copy-Item -LiteralPath $BundledFfmpegSource -Destination $BundledFfmpegTarget -Recurse
 }
 
 $BundledModels = @(

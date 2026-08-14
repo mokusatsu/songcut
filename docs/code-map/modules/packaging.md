@@ -27,13 +27,13 @@ Windows 配布物の構築、パッケージ済み GUI の E2E スモーク検�
 |---|---|---|
 | `Resolve-ToolPath` | Function | `packaging/build_dist.ps1:13` |
 | `ConvertTo-ZipEntryName` | Function | `packaging/build_dist.ps1:43` |
-| `transformers` | Class | `packaging/build_dist.ps1:371` |
-| `pandas` | Class | `packaging/build_dist.ps1:373` |
-| `PIL` | Class | `packaging/build_dist.ps1:375` |
-| `pytest` | Class | `packaging/build_dist.ps1:377` |
-| `torchaudio` | Class | `packaging/build_dist.ps1:379` |
-| `openvino` | Class | `packaging/build_dist.ps1:381` |
-| `openvino` | Class | `packaging/build_dist.ps1:383` |
+| `transformers` | Class | `packaging/build_dist.ps1:385` |
+| `pandas` | Class | `packaging/build_dist.ps1:387` |
+| `PIL` | Class | `packaging/build_dist.ps1:389` |
+| `pytest` | Class | `packaging/build_dist.ps1:391` |
+| `torchaudio` | Class | `packaging/build_dist.ps1:393` |
+| `openvino` | Class | `packaging/build_dist.ps1:395` |
+| `openvino` | Class | `packaging/build_dist.ps1:397` |
 | `Resolve-MSBuildPath` | Test | `packaging/build_native_font_resolver.ps1:21` |
 | `log` | Function | `packaging/e2e_scratch_proxy.js:19` |
 | `assertPass` | Function | `packaging/e2e_scratch_proxy.js:23` |

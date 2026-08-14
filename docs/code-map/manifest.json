@@ -6,51 +6,52 @@
     "name": "codex-embedded-code-map",
     "version": "2.0.0",
     "runtime": "python-stdlib",
-    "database": ".codex/code-map/state/graph.sqlite3",
+    "database": ".codex-temp/code-map-scut061-20260814181013/graph.sqlite3",
     "external_analysis_dependencies": []
   },
-  "generated_at": "2026-08-14T17:05:23+09:00",
+  "generated_at": "2026-08-14T18:17:30+09:00",
   "repository": "songcut",
-  "mode": "verify",
+  "mode": "update",
   "vcs": {
     "type": "git",
-    "analyzed_head": "93635679a43498e22140aa3980c46d0febfbdd56",
-    "last_analyzed_commit": "93635679a43498e22140aa3980c46d0febfbdd56",
+    "analyzed_head": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
+    "last_analyzed_commit": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
     "branch": "main",
-    "base": "93635679a43498e22140aa3980c46d0febfbdd56",
+    "base": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
     "dirty": true,
-    "tracked_diff_sha256": "2775c5fc43f3fbad59e834ae8c833a2ae24b1f3feb8a5e33f73d8f76fb29ff04",
+    "tracked_diff_sha256": "9a4ca7c7be21846a840d4bd5f7ca01d6f2f3195eeb788d32af8553093f665fc2",
     "changed_paths": [
-      ".codex/code-map/annotations.json",
+      ".gitignore",
       "docs/code-map/README.md",
       "docs/code-map/architecture.md",
       "docs/code-map/change-impact.md",
       "docs/code-map/flows.md",
-      "docs/code-map/hotspots.md",
       "docs/code-map/manifest.json",
       "docs/code-map/modules/gui.md",
-      "docs/code-map/modules/native-windows_font_resolver.md",
-      "docs/code-map/modules/packaging.md",
-      "docs/code-map/modules/songcut.md",
-      "docs/code-map/modules/tests.md",
-      "docs/code-map/modules/third_party-uta_align.md"
+      "gui/electron/locale.test.ts",
+      "gui/electron/locale.ts",
+      "gui/electron/main.ts",
+      "gui/package.json",
+      "gui/pnpm-lock.yaml",
+      "packaging/build_dist.ps1",
+      "tasks/SCUT-061.md",
+      "tasks/task-list.md"
     ],
     "untracked_paths": [
-      "docs/code-map/modules/native-windows_font_resolver.md",
-      "docs/code-map/modules/packaging.md"
+      "tasks/SCUT-061.md"
     ]
   },
   "snapshot": {
-    "source_tree_sha256": "a9ea44bd65a8deec75dac3e0fbdbdd1907a95f855a7dbf001164e709f814cc75",
+    "source_tree_sha256": "b17430d8b213413249fa079570f0ee6b181b795a2b1416e358caf23f5f009b13",
     "file_count": 279,
-    "previous_source_tree_sha256": "a9ea44bd65a8deec75dac3e0fbdbdd1907a95f855a7dbf001164e709f814cc75"
+    "previous_source_tree_sha256": "d57bce4763dffe40095ae9a9ada3c6d183b44ecfb304c9f88cbace6a291ded26"
   },
   "graph": {
     "status": "ready",
     "stats": {
       "files": 279,
-      "nodes": 3128,
-      "edges": 10887,
+      "nodes": 3136,
+      "edges": 10909,
       "components": 6,
       "flows": 18,
       "parse_errors": 0,
@@ -65,17 +66,17 @@
         "Class": 194,
         "External": 102,
         "File": 279,
-        "Function": 1710,
+        "Function": 1717,
         "Method": 139,
-        "Test": 704
+        "Test": 705
       },
       "edge_kinds": {
-        "call": 7425,
+        "call": 7444,
         "decorator": 9,
         "external_io": 354,
-        "import": 936,
+        "import": 935,
         "inherit": 10,
-        "tests": 2153
+        "tests": 2157
       }
     }
   },
@@ -106,7 +107,7 @@
       ],
       "page": "modules/gui.md",
       "files": 170,
-      "cohesion": 0.9823
+      "cohesion": 0.9824
     },
     {
       "id": "songcut",

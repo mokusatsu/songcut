@@ -21,9 +21,11 @@ import type { ProjectDocumentV1, RecoverySnapshot, SourceIdentity, WhisperModelK
 import { initializeMainI18n, mainI18n } from "./i18n.js";
 import { listSystemFonts } from "./system-fonts.js";
 import {
+  loadLastDialogDirectory,
   loadLocalePreference,
   normalizeUiLanguage,
   normalizeUiLanguagePreference,
+  saveLastDialogDirectory,
   saveLocalePreference,
   type UiLanguage,
   type UiLanguagePreference,
@@ -68,6 +70,7 @@ if (process.env.SONGCUT_E2E_USER_DATA_DIR) {
 const startupLocalePreference = loadLocalePreference(app.getPath("userData"));
 let localePreference: UiLanguagePreference = startupLocalePreference;
 let uiLanguage: UiLanguage = "en";
+let lastDialogDirectory = loadLastDialogDirectory(app.getPath("userData"));
 if (startupLocalePreference !== "system") {
   app.commandLine.appendSwitch("lang", startupLocalePreference);
 }
@@ -301,6 +304,23 @@ ipcMain.handle("songcut:cancel-close", () => {
   closeRequestPending = false;
 });
 
+async function showOpenDialogWithHistory(options: Electron.OpenDialogOptions) {
+  const dialogOptions = lastDialogDirectory ? { ...options, defaultPath: lastDialogDirectory } : options;
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+  const selectedPath = result.filePaths[0];
+  if (!result.canceled && selectedPath) {
+    lastDialogDirectory = dialogOptions.properties?.includes("openDirectory") ? selectedPath : path.dirname(selectedPath);
+    try {
+      await saveLastDialogDirectory(app.getPath("userData"), lastDialogDirectory);
+    } catch {
+      console.warn("[songcut-dialog] last dialog directory could not be saved");
+    }
+  }
+  return result;
+}
+
 ipcMain.handle("songcut:selectVideo", async () => {
   if (process.env.SONGCUT_E2E_VIDEO) return process.env.SONGCUT_E2E_VIDEO;
   const options = {
@@ -311,7 +331,7 @@ ipcMain.handle("songcut:selectVideo", async () => {
       { name: mainI18n.t("dialog.allFiles"), extensions: ["*"] }
     ]
   } satisfies Electron.OpenDialogOptions;
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  const result = await showOpenDialogWithHistory(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
@@ -321,7 +341,7 @@ ipcMain.handle("songcut:openProject", async () => {
     properties: ["openFile"],
     filters: [{ name: mainI18n.t("dialog.project"), extensions: ["songcut"] }]
   } satisfies Electron.OpenDialogOptions;
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  const result = await showOpenDialogWithHistory(options);
   if (result.canceled || !result.filePaths[0]) return null;
   return loadProject(result.filePaths[0]);
 });
@@ -365,7 +385,7 @@ ipcMain.handle("songcut:selectRelinkSource", async (_event, expectedName: string
       { name: mainI18n.t("dialog.allFiles"), extensions: ["*"] }
     ]
   } satisfies Electron.OpenDialogOptions;
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  const result = await showOpenDialogWithHistory(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 
@@ -375,7 +395,7 @@ ipcMain.handle("songcut:selectOutputDirectory", async () => {
     title: mainI18n.t("dialog.outputFolder"),
     properties: ["openDirectory", "createDirectory"]
   } satisfies Electron.OpenDialogOptions;
-  const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+  const result = await showOpenDialogWithHistory(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
 });
 

@@ -6,6 +6,7 @@ __pycache__/
 .cache/
 .ck/
 .ckignore
+.codex-temp/
 .codex/config.toml
 .pnpm-store/
 .models/

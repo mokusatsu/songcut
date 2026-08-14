@@ -8,10 +8,10 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 ## 指標
 
 - Files: 170
-- Symbols: 1312
+- Symbols: 1320
 - Incoming／Outgoing: 64／22
 - Cohesion: 0.98
-- Node kinds: Class 19、File 170、Function 1004、Method 10、Test 109
+- Node kinds: Class 19、File 170、Function 1011、Method 10、Test 110
 
 ## 代表パス
 
@@ -26,37 +26,45 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 | シンボル | 種別 | 根拠 |
 |---|---|---|
 | `initializeMainI18n` | Function | `gui/electron/i18n.ts:163` |
-| `normalizeUiLanguage` | Function | `gui/electron/locale.ts:11` |
-| `normalizeUiLanguagePreference` | Function | `gui/electron/locale.ts:16` |
-| `loadLocalePreference` | Function | `gui/electron/locale.ts:21` |
-| `preferencesPath` | Function | `gui/electron/locale.ts:43` |
-| `if` | Function | `gui/electron/main.ts:45` |
-| `if` | Function | `gui/electron/main.ts:64` |
-| `if` | Function | `gui/electron/main.ts:71` |
-| `createWindow` | Function | `gui/electron/main.ts:177` |
-| `if` | Function | `gui/electron/main.ts:225` |
-| `if` | Function | `gui/electron/main.ts:234` |
-| `if` | Function | `gui/electron/main.ts:281` |
-| `if` | Function | `gui/electron/main.ts:404` |
-| `setApplicationMenu` | Function | `gui/electron/main.ts:429` |
-| `applicationMenuTemplate` | Function | `gui/electron/main.ts:433` |
-| `send` | Function | `gui/electron/main.ts:441` |
-| `sendMenuCommand` | Function | `gui/electron/main.ts:691` |
-| `clampMenuZoom` | Function | `gui/electron/main.ts:695` |
-| `normalizeInferenceDevice` | Function | `gui/electron/main.ts:699` |
-| `normalizeWhisperModel` | Function | `gui/electron/main.ts:705` |
-| `normalizeWaveformDisplayMode` | Function | `gui/electron/main.ts:711` |
-| `normalizeMenuBoolean` | Function | `gui/electron/main.ts:717` |
-| `showAboutSongcut` | Function | `gui/electron/main.ts:722` |
-| `formatBuildTime` | Function | `gui/electron/main.ts:731` |
-| `resolveApiBaseUrl` | Function | `gui/electron/main.ts:739` |
-| `if` | Function | `gui/electron/main.ts:741` |
-| `startPythonApi` | Function | `gui/electron/main.ts:748` |
-| `stopPythonApi` | Function | `gui/electron/main.ts:772` |
-| `if` | Function | `gui/electron/main.ts:773` |
-| `findFreePort` | Function | `gui/electron/main.ts:779` |
-| `waitForHealth` | Function | `gui/electron/main.ts:791` |
-| `while` | Function | `gui/electron/main.ts:793` |
+| `withPreferencesDirectory` | Test | `gui/electron/locale.test.ts:17` |
+| `normalizeUiLanguage` | Function | `gui/electron/locale.ts:15` |
+| `normalizeUiLanguagePreference` | Function | `gui/electron/locale.ts:20` |
+| `loadLocalePreference` | Function | `gui/electron/locale.ts:25` |
+| `loadLastDialogDirectory` | Function | `gui/electron/locale.ts:30` |
+| `saveLastDialogDirectory` | Function | `gui/electron/locale.ts:45` |
+| `loadPreferences` | Function | `gui/electron/locale.ts:51` |
+| `updatePreferences` | Function | `gui/electron/locale.ts:60` |
+| `savePreferences` | Function | `gui/electron/locale.ts:68` |
+| `preferencesPath` | Function | `gui/electron/locale.ts:76` |
+| `if` | Function | `gui/electron/main.ts:47` |
+| `if` | Function | `gui/electron/main.ts:66` |
+| `if` | Function | `gui/electron/main.ts:74` |
+| `createWindow` | Function | `gui/electron/main.ts:180` |
+| `if` | Function | `gui/electron/main.ts:228` |
+| `if` | Function | `gui/electron/main.ts:237` |
+| `if` | Function | `gui/electron/main.ts:284` |
+| `showOpenDialogWithHistory` | Function | `gui/electron/main.ts:307` |
+| `if` | Function | `gui/electron/main.ts:313` |
+| `if` | Function | `gui/electron/main.ts:424` |
+| `setApplicationMenu` | Function | `gui/electron/main.ts:449` |
+| `applicationMenuTemplate` | Function | `gui/electron/main.ts:453` |
+| `send` | Function | `gui/electron/main.ts:461` |
+| `sendMenuCommand` | Function | `gui/electron/main.ts:711` |
+| `clampMenuZoom` | Function | `gui/electron/main.ts:715` |
+| `normalizeInferenceDevice` | Function | `gui/electron/main.ts:719` |
+| `normalizeWhisperModel` | Function | `gui/electron/main.ts:725` |
+| `normalizeWaveformDisplayMode` | Function | `gui/electron/main.ts:731` |
+| `normalizeMenuBoolean` | Function | `gui/electron/main.ts:737` |
+| `showAboutSongcut` | Function | `gui/electron/main.ts:742` |
+| `formatBuildTime` | Function | `gui/electron/main.ts:751` |
+| `resolveApiBaseUrl` | Function | `gui/electron/main.ts:759` |
+| `if` | Function | `gui/electron/main.ts:761` |
+| `startPythonApi` | Function | `gui/electron/main.ts:768` |
+| `stopPythonApi` | Function | `gui/electron/main.ts:792` |
+| `if` | Function | `gui/electron/main.ts:793` |
+| `findFreePort` | Function | `gui/electron/main.ts:799` |
+| `waitForHealth` | Function | `gui/electron/main.ts:811` |
+| `while` | Function | `gui/electron/main.ts:813` |
 | `listener` | Function | `gui/electron/preload.cts:18` |
 | `listener` | Function | `gui/electron/preload.cts:23` |
 | `sidecarPathForVideo` | Function | `gui/electron/project-schema.ts:401` |
@@ -97,14 +105,6 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 | `if` | Function | `gui/electron/project-schema.ts:691` |
 | `if` | Function | `gui/electron/project-schema.ts:695` |
 | `if` | Function | `gui/electron/project-schema.ts:707` |
-| `if` | Function | `gui/electron/project-schema.ts:721` |
-| `if` | Function | `gui/electron/project-schema.ts:760` |
-| `if` | Function | `gui/electron/project-schema.ts:765` |
-| `if` | Function | `gui/electron/project-schema.ts:788` |
-| `validateAlignmentDiagnostics` | Function | `gui/electron/project-schema.ts:793` |
-| `if` | Function | `gui/electron/project-schema.ts:794` |
-| `validateLyricsAnalysisArtifact` | Function | `gui/electron/project-schema.ts:809` |
-| `for` | Function | `gui/electron/project-schema.ts:811` |
 
 ## ファイル一覧
 

@@ -7,6 +7,10 @@ export type UiLanguagePreference = "system" | UiLanguage;
 
 const preferencesFilename = "app-preferences.json";
 
+type AppPreferences = Record<string, unknown>;
+
+let preferencesWriteQueue: Promise<void> = Promise.resolve();
+
 /** `normalizeUiLanguage`の入力を許容範囲と既定値に沿った安全な値へ正規化する。 */
 export function normalizeUiLanguage(locale: string): UiLanguage {
   return locale.trim().toLowerCase().split(/[-_]/, 1)[0] === "ja" ? "ja" : "en";
@@ -19,12 +23,13 @@ export function normalizeUiLanguagePreference(value: unknown): UiLanguagePrefere
 
 /** `loadLocalePreference`の対象をローカル環境から読み取り、型付きの値として返す。 */
 export function loadLocalePreference(userDataDirectory: string): UiLanguagePreference {
-  try {
-    const parsed = JSON.parse(readFileSync(preferencesPath(userDataDirectory), "utf8")) as { uiLanguage?: unknown };
-    return normalizeUiLanguagePreference(parsed.uiLanguage);
-  } catch {
-    return "system";
-  }
+  return normalizeUiLanguagePreference(loadPreferences(userDataDirectory).uiLanguage);
+}
+
+/** 最後に確定したファイル／フォルダーダイアログの場所を読み取る。 */
+export function loadLastDialogDirectory(userDataDirectory: string): string | undefined {
+  const value = loadPreferences(userDataDirectory).lastDialogDirectory;
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 /** `saveLocalePreference`の値を検証済みの形式で永続先へ保存する。 */
@@ -33,10 +38,38 @@ export async function saveLocalePreference(
   preference: UiLanguagePreference,
 ): Promise<void> {
   const normalized = normalizeUiLanguagePreference(preference);
+  await updatePreferences(userDataDirectory, { uiLanguage: normalized });
+}
+
+/** 最後に確定したファイル／フォルダーダイアログの場所を保存する。 */
+export async function saveLastDialogDirectory(userDataDirectory: string, directory: string): Promise<void> {
+  const normalized = directory.trim();
+  if (!normalized) return;
+  await updatePreferences(userDataDirectory, { lastDialogDirectory: normalized });
+}
+
+function loadPreferences(userDataDirectory: string): AppPreferences {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(preferencesPath(userDataDirectory), "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as AppPreferences) : {};
+  } catch {
+    return {};
+  }
+}
+
+function updatePreferences(userDataDirectory: string, updates: AppPreferences): Promise<void> {
+  const operation = preferencesWriteQueue.then(() =>
+    savePreferences(userDataDirectory, { ...loadPreferences(userDataDirectory), ...updates }),
+  );
+  preferencesWriteQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function savePreferences(userDataDirectory: string, preferences: AppPreferences): Promise<void> {
   await mkdir(userDataDirectory, { recursive: true });
   const destination = preferencesPath(userDataDirectory);
   const temporary = `${destination}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ uiLanguage: normalized }, null, 2)}\n`, "utf8");
+  await writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, "utf8");
   await rename(temporary, destination);
 }
 
