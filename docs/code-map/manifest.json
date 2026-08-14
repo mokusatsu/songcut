@@ -6,45 +6,31 @@
     "name": "codex-embedded-code-map",
     "version": "2.0.0",
     "runtime": "python-stdlib",
-    "database": ".codex-temp/code-map-scut061-20260814181013/graph.sqlite3",
+    "database": ".codex/code-map/state/graph.sqlite3",
     "external_analysis_dependencies": []
   },
-  "generated_at": "2026-08-14T18:17:30+09:00",
+  "generated_at": "2026-08-14T20:47:32+09:00",
   "repository": "songcut",
-  "mode": "update",
+  "mode": "verify",
   "vcs": {
     "type": "git",
-    "analyzed_head": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
-    "last_analyzed_commit": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
+    "analyzed_head": "d21884c22bb478ca00221d03344da900c47c6029",
+    "last_analyzed_commit": "d21884c22bb478ca00221d03344da900c47c6029",
     "branch": "main",
-    "base": "5b34d47250cc5c26877fb37d23ba34e589bbcbad",
+    "base": "d21884c",
     "dirty": true,
-    "tracked_diff_sha256": "9a4ca7c7be21846a840d4bd5f7ca01d6f2f3195eeb788d32af8553093f665fc2",
+    "tracked_diff_sha256": "9b5b13a15619f7887262b7b549267e343235be936ac30c831d85165aefaaa7b2",
     "changed_paths": [
-      ".gitignore",
       "docs/code-map/README.md",
-      "docs/code-map/architecture.md",
       "docs/code-map/change-impact.md",
-      "docs/code-map/flows.md",
-      "docs/code-map/manifest.json",
-      "docs/code-map/modules/gui.md",
-      "gui/electron/locale.test.ts",
-      "gui/electron/locale.ts",
-      "gui/electron/main.ts",
-      "gui/package.json",
-      "gui/pnpm-lock.yaml",
-      "packaging/build_dist.ps1",
-      "tasks/SCUT-061.md",
-      "tasks/task-list.md"
+      "docs/code-map/manifest.json"
     ],
-    "untracked_paths": [
-      "tasks/SCUT-061.md"
-    ]
+    "untracked_paths": []
   },
   "snapshot": {
-    "source_tree_sha256": "b17430d8b213413249fa079570f0ee6b181b795a2b1416e358caf23f5f009b13",
+    "source_tree_sha256": "a1922fc0eb7754a14f2fa32d1741d98eb3b9cd0b125567136b18f0747d98bee9",
     "file_count": 279,
-    "previous_source_tree_sha256": "d57bce4763dffe40095ae9a9ada3c6d183b44ecfb304c9f88cbace6a291ded26"
+    "previous_source_tree_sha256": "a1922fc0eb7754a14f2fa32d1741d98eb3b9cd0b125567136b18f0747d98bee9"
   },
   "graph": {
     "status": "ready",

@@ -10,10 +10,10 @@
 
 | 項目 | 値 |
 |---|---|
-| 進行中 | なし（SCUT-059は実環境検証待ち） |
-| 次のタスクID | `SCUT-063` |
+| 進行中 | なし（SCUT-059は実環境検証待ち、SCUT-063は完了） |
+| 次のタスクID | `SCUT-064` |
 | ブランチ | `main` |
-| 今回開始時HEAD | `6bf1074` |
+| 今回開始時HEAD | `9581e4b` |
 
 ## 運用ルール
 
@@ -113,3 +113,4 @@
 | SCUT-060 | Cut/Sub・再生 | 動画デコードエラーの復旧とソフトウェアデコード再起動 | 完了 | 最高 | SCUT-059 | `MEDIA_ERR_DECODE`時に利用者へ通知しvideo要素を一度だけ再構築する。Settingsから当該アプリ起動だけをソフトウェアデコードへ切り替えて再起動でき、回帰テスト・通常ポータブルE2Eで確認した。利用者はElectron最新版への更新後、指定再現操作でデコードエラーが発生しなくなったことを確認した | [詳細・証拠](../tasks/SCUT-060.md) |
 | SCUT-061 | 配布・互換性 | Electron 43.4.0更新とダイアログ最終場所の維持 | 完了 | 最高 | なし | Electronを43.4.0へ更新し、ファイル／フォルダー選択が最後に確定した場所を次回も開く。通常portable buildと実バイナリ43.4.0を確認済み | [詳細・証拠](../tasks/SCUT-061.md) |
 | SCUT-062 | 配布・軽量化 | 配布物third_partyをffmpegに限定 | 完了 | 高 | SCUT-061 | `build_dist.ps1`が生成する配布物のthird_partyへffmpeg以外をコピーしない。再ビルドはユーザー指示により未実行 | [詳細・証拠](../tasks/SCUT-062.md) |
+| SCUT-063 | 配布・品質保証 | 1.1.83 Release build | 完了 | 高 | SCUT-062 | Git commit count 83を基準にportable packageとFull／通常版Release ZIPを生成し、必須構成・third_party限定・archive構成を検証する | [詳細・証拠](../tasks/SCUT-063.md) |
