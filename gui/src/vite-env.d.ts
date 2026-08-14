@@ -7,6 +7,7 @@ type WaveformDisplayMode = "rms" | "peak" | "peak-rms" | "symmetric-peak";
 type UiLanguage = "en" | "ja";
 type UiLanguagePreference = "system" | UiLanguage;
 type TimestampExportFormat = "timestamp-comment" | "youtube-chapter" | "tsv-excel" | "csv" | "audacity-label";
+type SoftwareDecoderResumeSession = { projectPath?: string; videoPath?: string };
 
 type SongcutMenuCommand =
   | { type: "load-movie" }
@@ -69,6 +70,8 @@ type SongcutMenuState = {
         preference: UiLanguagePreference;
         restartRequired: boolean;
       }>;
+      reloadWithSoftwareDecoder(session?: SoftwareDecoderResumeSession): Promise<void>;
+      getSoftwareDecoderResumeSession(): Promise<SoftwareDecoderResumeSession | null>;
     onCloseRequested(callback: () => void): () => void;
     onMenuCommand(callback: (command: SongcutMenuCommand) => void): () => void;
     sendMenuCommandForTest?(command: SongcutMenuCommand): void;

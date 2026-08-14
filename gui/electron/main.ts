@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { statSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -28,6 +28,30 @@ import {
   type UiLanguage,
   type UiLanguagePreference,
 } from "./locale.js";
+import {
+  SOFTWARE_DECODER_RELAUNCH_FLAG,
+  SOFTWARE_DECODER_RESTART_EXIT_CODE,
+  SOFTWARE_DECODER_RESTART_REQUEST_ENV,
+  buildSoftwareDecoderRelaunchArgs,
+  createSoftwareDecoderResumeSessionReader,
+  decoderModeForArgs,
+  hasSoftwareDecoderFlag,
+  normalizeSoftwareDecoderResumeSession,
+} from "./software-decoder.js";
+
+const startupSoftwareDecoder = hasSoftwareDecoderFlag(process.argv);
+const startupDecoderMode = decoderModeForArgs(process.argv);
+const readSoftwareDecoderResumeSession = createSoftwareDecoderResumeSessionReader(process.argv);
+if (startupDecoderMode === "software") {
+  // Chromium must receive this before app.whenReady(); this targets video
+  // decode only and intentionally does not disable the whole GPU process.
+  app.commandLine.appendSwitch("disable-accelerated-video-decode");
+}
+console.info(
+  `[songcut-decoder] mode=${startupDecoderMode} startup-flag=${
+    startupSoftwareDecoder ? SOFTWARE_DECODER_RELAUNCH_FLAG : "none"
+  }`,
+);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -213,6 +237,34 @@ ipcMain.handle("songcut:set-locale-preference", async (_event, value: unknown) =
   localePreference = normalizeUiLanguagePreference(value);
   await saveLocalePreference(app.getPath("userData"), localePreference);
   return { preference: localePreference, restartRequired: localePreference !== startupLocalePreference };
+});
+
+ipcMain.handle("songcut:get-software-decoder-resume-session", () => readSoftwareDecoderResumeSession());
+
+ipcMain.handle("songcut:reload-with-software-decoder", (_event, value: unknown) => {
+  const session = normalizeSoftwareDecoderResumeSession(value);
+  const launcherRestartRequestPath = process.env[SOFTWARE_DECODER_RESTART_REQUEST_ENV];
+  const currentArgs = process.argv.slice(1);
+  const args = buildSoftwareDecoderRelaunchArgs(
+    launcherRestartRequestPath ? currentArgs.filter((arg) => arg !== app.getAppPath()) : currentArgs,
+    session,
+  );
+  console.info(
+    `[songcut-decoder] relaunch-request mode=software resume=${session ? "present" : "none"} ` +
+      `transport=${launcherRestartRequestPath ? "launcher" : "electron"} flag=${SOFTWARE_DECODER_RELAUNCH_FLAG}`,
+  );
+  if (launcherRestartRequestPath) {
+    // The portable launcher keeps its bundled Python API alive, waits for this
+    // exit code, then starts a replacement Electron child with these args.
+    writeFileSync(launcherRestartRequestPath, JSON.stringify({ args }), "utf8");
+    app.exit(SOFTWARE_DECODER_RESTART_EXIT_CODE);
+    return;
+  }
+
+  app.relaunch({ args });
+  // app.quit() may be delayed by the application's close-confirmation flow.
+  // Relaunch must follow the Electron lifecycle example and exit immediately.
+  app.exit(0);
 });
 
 ipcMain.handle("songcut:confirm-close", () => {

@@ -5,6 +5,15 @@ contextBridge.exposeInMainWorld("songcut", {
   listSystemFonts: () => ipcRenderer.invoke("songcut:listSystemFonts") as Promise<string[]>,
   getLocaleSettings: () => ipcRenderer.invoke("songcut:get-locale-settings"),
   setLocalePreference: (preference: unknown) => ipcRenderer.invoke("songcut:set-locale-preference", preference),
+  reloadWithSoftwareDecoder: (session?: { projectPath?: string; videoPath?: string }) =>
+    (session === undefined
+      ? ipcRenderer.invoke("songcut:reload-with-software-decoder")
+      : ipcRenderer.invoke("songcut:reload-with-software-decoder", session)) as Promise<void>,
+  getSoftwareDecoderResumeSession: () =>
+    ipcRenderer.invoke("songcut:get-software-decoder-resume-session") as Promise<{
+      projectPath?: string;
+      videoPath?: string;
+    } | null>,
   onCloseRequested: (callback: () => void) => {
     const listener = () => callback();
     ipcRenderer.on("songcut:close-requested", listener);

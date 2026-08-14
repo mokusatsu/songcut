@@ -13,7 +13,7 @@ const en = {
   },
   settings: {
     title: "Settings", commonTab: "Common", aiModelsTab: "AI Models", playback: "Playback", scratchDuration: "Scratch preview duration",
-    useProxy: "Use scratch audio proxy", waveform: "Waveform display", peak: "Peak Envelope", peakRms: "Peak + RMS", symmetricPeak: "Symmetric Peak",
+    useProxy: "Use scratch audio proxy", decoderRecovery: "Decoder recovery", softwareDecoder: "Reload with software decoder", softwareDecoderHelp: "Restarts this app session with hardware video decoding disabled. This can use more CPU.", waveform: "Waveform display", peak: "Peak Envelope", peakRms: "Peak + RMS", symmetricPeak: "Symmetric Peak",
     waveformAmplitudeRange: "Amplitude range", waveformAmplitudeStandard: "Standard", waveformAmplitudeSingingMc: "Singing / MC Contrast",
     waveformAmplitudeSingingMcHelp: "Shows sustained music and singing more boldly while keeping MC and quieter sections thinner. Useful for spotting where songs and talk segments begin and end.",
     display: "Display", analysis: "Analysis", transcription: "Transcription",
@@ -127,6 +127,7 @@ const en = {
     progressNote: "Smart-render clips copy eligible GOPs and re-encode their boundaries; other clips are fully re-encoded.",
   },
   dialogs: {
+    videoDecodeErrorTitle: "Video decoder error", videoDecodeError: "Video decoding stopped. songcut rebuilt the video preview once at the last position. If it does not recover, use Settings to reload this session with the software decoder.",
     whisperNotReady: "Whisper model is not ready", whisperMissing: "The selected {{model}} model is not installed. Downloading is always an explicit action.",
     analyzeWithout: "Analyze without transcription", downloadAnalyze: "Download & Analyze",
     whisperDownloadTitle: "Download Whisper model",
@@ -258,7 +259,7 @@ const ja: TranslationShape<typeof en> = {
   },
   settings: {
     title: "設定", commonTab: "共通", aiModelsTab: "AIモデル", playback: "再生", scratchDuration: "スクラッチ試聴時間",
-    useProxy: "スクラッチ音声プロキシを使用", waveform: "波形表示", peak: "ピーク包絡", peakRms: "ピーク + RMS", symmetricPeak: "対称ピーク",
+    useProxy: "スクラッチ音声プロキシを使用", decoderRecovery: "デコーダー復旧", softwareDecoder: "ソフトウェアデコーダーで再読み込み", softwareDecoderHelp: "このアプリ起動だけ、ハードウェア動画デコードを無効にして再起動します。CPU使用率が上がる場合があります。", waveform: "波形表示", peak: "ピーク包絡", peakRms: "ピーク + RMS", symmetricPeak: "対称ピーク",
     waveformAmplitudeRange: "振幅レンジ", waveformAmplitudeStandard: "標準", waveformAmplitudeSingingMc: "歌唱・MC強調",
     waveformAmplitudeSingingMcHelp: "歌や伴奏が続く部分を太く、MCや静かな部分を細く表示します。曲中の歌唱区間とトーク区間を見分けたいときに適しています。",
     display: "表示", analysis: "解析", transcription: "文字起こし",
@@ -372,6 +373,7 @@ const ja: TranslationShape<typeof en> = {
     progressNote: "スマートレンダー対象クリップは利用可能な GOP をコピーして境界のみ再エンコードし、その他は全体を再エンコードします。",
   },
   dialogs: {
+    videoDecodeErrorTitle: "動画デコーダーエラー", videoDecodeError: "動画のデコードが停止したため、最後の位置で動画プレビューを一度再構築しました。復旧しない場合は設定から、このセッションをソフトウェアデコーダーで再読み込みしてください。",
     whisperNotReady: "Whisper モデルの準備ができていません", whisperMissing: "選択した {{model}} モデルは未インストールです。ダウンロードは明示的な操作でのみ行います。",
     analyzeWithout: "文字起こしなしで解析", downloadAnalyze: "ダウンロードして解析",
     whisperDownloadTitle: "Whisperモデルをダウンロード",

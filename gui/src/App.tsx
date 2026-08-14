@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import type { AnalysisDevice, WhisperSettings } from "@/lib/api";
 import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
+import { MEDIA_ERR_DECODE, planVideoDecodeRecovery, type VideoDecodeRecovery } from "@/lib/mediaDecodeRecovery";
 import { CutModePanel } from "@/components/CutModePanel";
 import { CutSegmentTimingDialog } from "@/components/CutSegmentTimingDialog";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
@@ -209,6 +210,8 @@ export default function App(props: {
 }) {
   const editorRootRef = useRef<HTMLElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoDecodeRecoveryRef = useRef<VideoDecodeRecovery | null>(null);
+  const videoDecodeRecoveryAttemptRef = useRef<number | null>(null);
   const [mode, setMode] = useState<AppMode>("cut");
   const [subtitleState, setSubtitleState] = useState<SubtitleProjectState>(createDefaultSubtitleState);
   const subtitleStateRef = useRef<SubtitleProjectState>(subtitleState);
@@ -226,6 +229,7 @@ export default function App(props: {
   const scratchProxyIdRef = useRef<string | null>(null);
   const scratchProxyConfigurationGenerationRef = useRef(0);
   const videoLoadGenerationRef = useRef(0);
+  const videoPlaybackIntentRef = useRef(false);
   const scratchAudioProxyEnabledRef = useRef(true);
   const selectedSegmentRef = useRef<Segment | null>(null);
   const runningJobRef = useRef<JobRecord | null>(null);
@@ -240,6 +244,7 @@ export default function App(props: {
   const subtitleEffectCatalogState = useSubtitleEffectCatalog(apiBaseUrl);
   const [videoPath, setVideoPath] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
+  const [videoElementGeneration, setVideoElementGeneration] = useState(0);
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [guideText, setGuideText] = useState("");
   const [timestampCommentFlow, setTimestampCommentFlow] = useState<TimestampCommentFlow>(closeTimestampCommentFlow);
@@ -257,6 +262,7 @@ export default function App(props: {
     String(DEFAULT_SCRATCH_PREVIEW_MILLISECONDS)
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [videoDecodeErrorOpen, setVideoDecodeErrorOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("common");
   const [boundaryDiagnosticOpen, setBoundaryDiagnosticOpen] = useState(false);
   const [scratchAudioProxyEnabled, setScratchAudioProxyEnabled] = useState(readScratchAudioProxyEnabled);
@@ -643,7 +649,22 @@ export default function App(props: {
   useEffect(() => {
     if (!apiBaseUrl || recoveryCheckedRef.current) return;
     recoveryCheckedRef.current = true;
-    void checkRecoveryOnStartup();
+    void (async () => {
+      try {
+        const session = await window.songcut.getSoftwareDecoderResumeSession();
+        if (session?.projectPath) {
+          await loadProjectPath(session.projectPath, true);
+          return;
+        }
+        if (session?.videoPath) {
+          await loadVideo(session.videoPath, true);
+          return;
+        }
+        await checkRecoveryOnStartup();
+      } catch (error) {
+        setMessage(`Software decoder session could not be restored: ${String(error)}`);
+      }
+    })();
   }, [apiBaseUrl]);
 
   useEffect(() => {
@@ -735,6 +756,7 @@ export default function App(props: {
       setCurrentTime(video.currentTime);
     };
     const onPlay = () => {
+      videoPlaybackIntentRef.current = true;
       if (scratchPreviewTimeRef.current !== null) {
         playbackStopAtRef.current = null;
         return;
@@ -749,20 +771,58 @@ export default function App(props: {
       setPlaying(false);
     };
     const onEnded = () => {
+      videoPlaybackIntentRef.current = false;
       playbackStopAtRef.current = null;
       setPlaying(false);
+    };
+    const onError = () => {
+      const error = video.error;
+      const resumePlayback = scratchPreviewTimeRef.current === null && (videoPlaybackIntentRef.current || !video.paused);
+      const recoveryPlan = planVideoDecodeRecovery({
+        errorCode: error?.code,
+        hasSource: Boolean(videoUrl),
+        sourceLoadGeneration: videoLoadGenerationRef.current,
+        attemptedSourceLoadGeneration: videoDecodeRecoveryAttemptRef.current,
+        currentTime: video.currentTime,
+        resumePlayback,
+      });
+      if (recoveryPlan.kind === "ignore") {
+        if (error?.code === MEDIA_ERR_DECODE) setVideoDecodeErrorOpen(true);
+        else setMessage(`Playback error: ${error?.message || `media error ${error?.code ?? "unknown"}`}`);
+        return;
+      }
+
+      videoDecodeRecoveryAttemptRef.current = recoveryPlan.recovery.sourceLoadGeneration;
+      videoDecodeRecoveryRef.current = recoveryPlan.recovery;
+      scratchPreviewGenerationRef.current += 1;
+      if (scratchPreviewTimerRef.current !== null) {
+        window.clearTimeout(scratchPreviewTimerRef.current);
+        scratchPreviewTimerRef.current = null;
+      }
+      scratchPreviewTimeRef.current = null;
+      const scratchMedia = scratchPreviewMediaRef.current;
+      scratchPreviewMediaRef.current = null;
+      if (scratchMedia && scratchMedia !== video) scratchMedia.pause();
+      video.pause();
+      playbackStopAtRef.current = null;
+      setPlaying(false);
+      setCurrentTime(recoveryPlan.recovery.restoreTime);
+      setVideoDecodeErrorOpen(true);
+      setVideoElementGeneration((generation) => generation + 1);
     };
     video.addEventListener("timeupdate", onTime);
     video.addEventListener("seeked", onTime);
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("ended", onEnded);
+    video.addEventListener("error", onError);
     return () => {
       video.removeEventListener("timeupdate", onTime);
       video.removeEventListener("seeked", onTime);
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("ended", onEnded);
+      video.removeEventListener("error", onError);
       if (scratchPreviewTimerRef.current !== null) {
         window.clearTimeout(scratchPreviewTimerRef.current);
         scratchPreviewTimerRef.current = null;
@@ -772,7 +832,27 @@ export default function App(props: {
       scratchPreviewMediaRef.current?.pause();
       scratchPreviewMediaRef.current = null;
     };
-  }, [videoUrl]);
+  }, [videoElementGeneration, videoUrl]);
+
+  useEffect(() => {
+    const recovery = videoDecodeRecoveryRef.current;
+    const video = videoRef.current;
+    if (!recovery || !video || recovery.sourceLoadGeneration !== videoLoadGenerationRef.current) return;
+
+    const restore = () => {
+      if (videoDecodeRecoveryRef.current !== recovery) return;
+      const duration = Number.isFinite(video.duration) ? video.duration : recovery.restoreTime;
+      const restoreTime = Math.max(0, Math.min(recovery.restoreTime, duration));
+      video.currentTime = restoreTime;
+      setCurrentTime(restoreTime);
+      videoDecodeRecoveryRef.current = null;
+      if (recovery.resumePlayback) void video.play().catch(() => undefined);
+    };
+
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) restore();
+    else video.addEventListener("loadedmetadata", restore, { once: true });
+    return () => video.removeEventListener("loadedmetadata", restore);
+  }, [videoElementGeneration, videoUrl]);
 
   useEffect(() => {
     const jobId = analysis?.transcription_job_id;
@@ -1867,6 +1947,28 @@ export default function App(props: {
     if (milliseconds !== scratchPreviewMilliseconds) setMessage(`Scratch preview duration set to ${milliseconds} ms.`);
   }
 
+  /** 現在のprojectを保存してから、一回限りのソフトウェアデコード起動へ引き継ぐ。 */
+  async function reloadWithSoftwareDecoder() {
+    if (runningJob) {
+      setMessage("A running task must finish before restarting with the software decoder.");
+      return;
+    }
+    closeSettings();
+    try {
+      const result = await persistence.flush();
+      if (projectDocumentRef.current && !result.sidecarSaved) {
+        setMessage("The current project could not be saved, so software decoder reload was cancelled.");
+        return;
+      }
+      await window.songcut.reloadWithSoftwareDecoder({
+        ...(projectPath ? { projectPath } : {}),
+        ...(videoPath ? { videoPath } : {}),
+      });
+    } catch (error) {
+      setMessage(`Software decoder reload failed: ${String(error)}`);
+    }
+  }
+
   /** `playStartBoundary`のmedia操作を現在の選択範囲と再生状態へ反映する。 */
   function playStartBoundary() {
     if (!selectedSegment) return;
@@ -2359,7 +2461,7 @@ export default function App(props: {
           </TabsList>
         </Tabs>
         {videoUrl ? (
-          <video ref={videoRef} src={videoUrl} className="video" controls={false} />
+          <video key={videoElementGeneration} ref={videoRef} src={videoUrl} className="video" controls={false} />
         ) : (
           <div className="empty-video">
             <FileVideo2 size={42} />
@@ -2612,6 +2714,25 @@ export default function App(props: {
           seek(start);
         }}
       />
+      <Dialog
+        open={videoDecodeErrorOpen}
+        title={tr("dialogs.videoDecodeErrorTitle")}
+        onClose={() => setVideoDecodeErrorOpen(false)}
+      >
+        <p className="dialog-message">{tr("dialogs.videoDecodeError")}</p>
+        <div className="dialog-actions">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setVideoDecodeErrorOpen(false);
+              openSettings("common");
+            }}
+          >
+            {tr("common.settings")}
+          </Button>
+          <Button onClick={() => setVideoDecodeErrorOpen(false)}>{tr("common.ok")}</Button>
+        </div>
+      </Dialog>
       <SettingsDialog
         open={settingsOpen}
         initialTab={settingsInitialTab}
@@ -2697,6 +2818,9 @@ export default function App(props: {
         onFfmpegCheck={() => {
           closeSettings();
           void runFfmpegCheck(true);
+        }}
+        onReloadWithSoftwareDecoder={() => {
+          void reloadWithSoftwareDecoder();
         }}
         onLocalePreference={(preference) => {
           const previousPreference = localePreference;

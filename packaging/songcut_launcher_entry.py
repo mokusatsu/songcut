@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 import threading
+import tempfile
 import time
 import urllib.error
+import uuid
 import urllib.request
 from pathlib import Path
 
@@ -17,6 +20,42 @@ from songcut.api import find_free_port
 
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+SOFTWARE_DECODER_RESTART_EXIT_CODE = 75
+SOFTWARE_DECODER_RESTART_REQUEST_ENV = "SONGCUT_LAUNCHER_RESTART_REQUEST"
+SOFTWARE_DECODER_RESUME_ARG_PREFIX = "--songcut-software-decoder-resume="
+
+
+def create_software_decoder_restart_request_path() -> Path:
+    """Return a unique, one-shot request path shared with the Electron child."""
+    return Path(tempfile.gettempdir()) / f"songcut-software-decoder-restart-{uuid.uuid4().hex}.json"
+
+
+def consume_software_decoder_restart_args(request_path: Path) -> list[str] | None:
+    """Read and remove the launcher's one-shot decoder-restart request."""
+    try:
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    finally:
+        try:
+            request_path.unlink(missing_ok=True)
+        except OSError:
+            logging.warning("Could not remove software decoder restart request.")
+
+    args = payload.get("args") if isinstance(payload, dict) else None
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        return None
+    return args
+
+
+def redact_electron_args_for_logging(args: list[str]) -> list[str]:
+    """Keep one-shot resume paths out of launcher logs while retaining diagnostic flags."""
+    return [
+        f"{SOFTWARE_DECODER_RESUME_ARG_PREFIX}<redacted>"
+        if arg.startswith(SOFTWARE_DECODER_RESUME_ARG_PREFIX)
+        else arg
+        for arg in args
+    ]
 
 
 def distribution_root() -> Path:
@@ -121,22 +160,36 @@ def run(argv: list[str] | None = None) -> int:
         if not app_dir.exists():
             raise FileNotFoundError(f"Electron application directory was not found: {app_dir}")
 
-        electron_args = [str(electron_exe), *(argv or sys.argv[1:]), str(app_dir)]
-        logging.info("Launching Electron: %s", electron_args)
-        with log_path.open("a", encoding="utf-8") as log_file:
-            electron_process = subprocess.Popen(
-                electron_args,
-                cwd=root,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=log_file,
-                stderr=log_file,
-                text=True,
-                creationflags=CREATE_NO_WINDOW,
-            )
-            return_code = electron_process.wait()
-        logging.info("Electron exited with code %s", return_code)
-        return int(return_code or 0)
+        electron_launch_args = list(argv if argv is not None else sys.argv[1:])
+        while True:
+            restart_request_path = create_software_decoder_restart_request_path()
+            electron_env = env.copy()
+            electron_env[SOFTWARE_DECODER_RESTART_REQUEST_ENV] = str(restart_request_path)
+            electron_args = [str(electron_exe), *electron_launch_args, str(app_dir)]
+            logging.info("Launching Electron: %s", redact_electron_args_for_logging(electron_args))
+            with log_path.open("a", encoding="utf-8") as log_file:
+                electron_process = subprocess.Popen(
+                    electron_args,
+                    cwd=root,
+                    env=electron_env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_file,
+                    stderr=log_file,
+                    text=True,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                return_code = electron_process.wait()
+            logging.info("Electron exited with code %s", return_code)
+            if return_code != SOFTWARE_DECODER_RESTART_EXIT_CODE:
+                restart_request_path.unlink(missing_ok=True)
+                return int(return_code or 0)
+
+            next_args = consume_software_decoder_restart_args(restart_request_path)
+            if next_args is None:
+                logging.error("Software decoder restart request was missing or invalid.")
+                return 1
+            logging.info("Restarting Electron with the one-shot software decoder mode.")
+            electron_launch_args = next_args
     except Exception as exc:
         logging.exception("songcut launcher failed.")
         show_startup_error(log_path, exc)

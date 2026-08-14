@@ -85,6 +85,7 @@ export function SettingsDialog(props: {
   onPrepareMmsModel: () => void;
   onTranscribe: () => void;
   onFfmpegCheck: () => void;
+  onReloadWithSoftwareDecoder: () => void;
   onLocalePreference: (preference: UiLanguagePreference) => void;
 }) {
   const [activeTab, setActiveTab] = useState<SettingsTab>(props.initialTab);
@@ -147,6 +148,15 @@ export function SettingsDialog(props: {
                 </div>
                 <Button variant="secondary" onClick={props.onFfmpegCheck} disabled={!props.apiReady}>
                   {tr("settings.ffmpegCheck")}
+                </Button>
+              </section>
+              <section className="settings-section settings-tools" aria-labelledby="decoder-recovery-settings-heading">
+                <div>
+                  <h3 id="decoder-recovery-settings-heading">{tr("settings.decoderRecovery")}</h3>
+                  <p>{tr("settings.softwareDecoderHelp")}</p>
+                </div>
+                <Button variant="secondary" onClick={props.onReloadWithSoftwareDecoder}>
+                  {tr("settings.softwareDecoder")}
                 </Button>
               </section>
               <section className="settings-section" aria-labelledby="language-settings-heading">
