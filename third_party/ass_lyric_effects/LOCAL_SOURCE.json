@@ -1,0 +1,13 @@
+{
+  "distribution": "ass-lyric-effects",
+  "version": "3.0.0",
+  "source_git_head": "4af57f7b8275e18b737c246fcb5d3fb67a625d54",
+  "packaged_local_source_changes": [
+    "src/ass_lyric_effects/_natural36_engine.py"
+  ],
+  "source_module_sha256": "4846d93076bddc7fc6ab86342e8da2f0d7958b3bf377a461d365619dd2084a95",
+  "wheel_file": "ass_lyric_effects-3.0.0-py3-none-any.whl",
+  "wheel_sha256": "c9ec21d353543215aaaed7424b775732714c344d05356b5ec9eeef20fc212fed",
+  "catalog_schema_version": "1.0",
+  "catalog_effect_count": 97
+}

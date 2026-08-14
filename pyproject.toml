@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local VSinger singing-stream segment extractor for Intel CPU/NPU-class machines."
 requires-python = ">=3.11"
 dependencies = [
-  "ass-lyric-effects @ https://raw.githubusercontent.com/mokusatsu/ASS_Lyric_Effects/715af13f227aa0a1d9a1f78250224292c278fcf8/source/ass_lyric_effects-3.0.0-py3-none-any.whl#sha256=e3246edcc5d64e44766d6b99faa855e7386a76b4849c63a094381c1350000f72",
+  "ass-lyric-effects @ file:./third_party/ass_lyric_effects/ass_lyric_effects-3.0.0-py3-none-any.whl#sha256=c9ec21d353543215aaaed7424b775732714c344d05356b5ec9eeef20fc212fed",
   "numpy>=2.0",
   "win-safesubprocess>=0.1,<0.2",
 ]

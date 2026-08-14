@@ -13,6 +13,8 @@ third_party/
 third_party/*
 !third_party/uta_align/
 !third_party/uta_align/**
+!third_party/ass_lyric_effects/
+!third_party/ass_lyric_effects/**
 third_party/uta_align/**/__pycache__/
 third_party/uta_align/**/*.pyc
 third_party/uta_align/.pytest_cache/

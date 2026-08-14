@@ -298,6 +298,21 @@ $AppVersion = "$BaseVersion.$BuildNumber"
 
 New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
 
+$LocalAssWheel = Join-Path $RepoRoot "third_party\ass_lyric_effects\ass_lyric_effects-3.0.0-py3-none-any.whl"
+if (-not (Test-Path -LiteralPath $LocalAssWheel -PathType Leaf)) {
+  throw "Local ASS_Lyric_Effects wheel was not found: $LocalAssWheel"
+}
+$LocalAssWheelHash = (Get-FileHash -LiteralPath $LocalAssWheel -Algorithm SHA256).Hash.ToLowerInvariant()
+$LocalAssSitePackages = Join-Path $RepoRoot "build\ass_lyric_effects_site\$LocalAssWheelHash"
+$LocalAssModule = Join-Path $LocalAssSitePackages "ass_lyric_effects"
+if (-not (Test-Path -LiteralPath $LocalAssModule -PathType Container)) {
+  New-Item -ItemType Directory -Force -Path $LocalAssSitePackages | Out-Null
+  & $PythonExe -m pip install --no-deps --no-cache-dir --target $LocalAssSitePackages $LocalAssWheel
+  if ($LASTEXITCODE -ne 0) {
+    throw "Installing local ASS_Lyric_Effects wheel failed with exit code $LASTEXITCODE"
+  }
+}
+
 Push-Location $GuiRoot
 try {
   & $PnpmExe --config.verify-deps-before-run=warn run build
@@ -309,7 +324,16 @@ finally {
   Pop-Location
 }
 
-& $PythonExe -m PyInstaller `
+$PreviousPythonPath = $env:PYTHONPATH
+$env:PYTHONPATH = if ([string]::IsNullOrWhiteSpace($PreviousPythonPath)) {
+  $LocalAssSitePackages
+}
+else {
+  "$LocalAssSitePackages$([System.IO.Path]::PathSeparator)$PreviousPythonPath"
+}
+
+try {
+  & $PythonExe -m PyInstaller `
   --noconfirm `
   --clean `
   --onedir `
@@ -317,6 +341,7 @@ finally {
   --contents-directory runtime `
   --name songcut `
   --icon $AppIcon `
+  --paths $LocalAssSitePackages `
   --paths (Join-Path $RepoRoot "third_party\uta_align\src") `
   --distpath $PyinstallerDist `
   --workpath $PyinstallerWork `
@@ -363,9 +388,18 @@ finally {
   --hidden-import uvicorn.protocols.http.auto `
   --hidden-import uvicorn.protocols.websockets.auto `
   --hidden-import httptools.parser.parser `
-  (Join-Path $RepoRoot "packaging\songcut_launcher_entry.py")
-if ($LASTEXITCODE -ne 0) {
-  throw "PyInstaller failed with exit code $LASTEXITCODE"
+    (Join-Path $RepoRoot "packaging\songcut_launcher_entry.py")
+  if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller failed with exit code $LASTEXITCODE"
+  }
+}
+finally {
+  if ($null -eq $PreviousPythonPath) {
+    Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+  }
+  else {
+    $env:PYTHONPATH = $PreviousPythonPath
+  }
 }
 
 if (Test-Path $PackageRoot) {

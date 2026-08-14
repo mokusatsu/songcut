@@ -2092,6 +2092,7 @@ tr.selected:hover {
 .sub-timeline-content {
   position: relative;
   min-height: 350px;
+  padding-bottom: var(--sub-scrollbar-size);
 }
 
 .sub-waveform-surface {
