@@ -53,3 +53,5 @@ package-dir = { uta_align = "third_party/uta_align/src/uta_align" }
 
 [tool.pytest.ini_options]
 pythonpath = [".", "third_party/uta_align/src"]
+testpaths = ["tests"]
+addopts = ["-ra", "--durations=25"]

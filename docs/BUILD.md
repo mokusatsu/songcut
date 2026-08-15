@@ -46,6 +46,23 @@ Run the Python tests with:
 python -m pytest
 ```
 
+The Python test run is restricted to `tests/` by `pyproject.toml` and prints a
+`[pytest-progress]` line for collection, each test phase, elapsed time, and a
+30-second heartbeat for a phase that remains active. Use
+`--songcut-progress-interval 60` for a quieter long run or
+`--no-songcut-progress` to disable these project-specific lines.
+
+With the Codex-bundled Python runtime, the first `librosa.stft` call can spend a
+long time creating Numba's cache temporary file below the installed librosa
+package. Point `NUMBA_CACHE_DIR` at a writable temporary directory when this
+occurs. If the existing `.pytest_cache` is read-only, also disable pytest's
+cache provider:
+
+```powershell
+$env:NUMBA_CACHE_DIR=(Join-Path (Get-Location) '.codex-temp\numba-cache')
+python -m pytest -p no:cacheprovider
+```
+
 Subtitle effects require the MSVC native DLL that queries DirectWrite for the
 physical font face. `build_native_font_resolver.ps1` locates MSBuild through
 Visual Studio Installer's `vswhere.exe`, builds the x64 Release DLL, and runs
