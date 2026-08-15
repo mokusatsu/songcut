@@ -1,0 +1,108 @@
+name: tmp-export-omniasr-openvino-fp16
+
+on:
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsndfile1
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install fairseq2 \
+            --extra-index-url https://fair.pkg.atmeta.com/fairseq2/whl/pt2.8.0/cpu \
+            torch==2.8.0+cpu -f https://download.pytorch.org/whl/torch \
+            torchaudio==2.8.0+cpu -f https://download.pytorch.org/whl/torchaudio \
+            onnx==1.17.0 onnxruntime==1.17.1 soundfile librosa openvino
+          pip install --no-deps omnilingual_asr
+          pip install retrying pandas polars pyarrow xxhash
+
+      - name: Export ONNX and OpenVINO FP16 IR
+        shell: bash
+        run: |
+          cat > /tmp/export.py <<'PY'
+          import os
+          from pathlib import Path
+          import torch
+          import openvino as ov
+          from fairseq2.nn.batch_layout import BatchLayout
+          from omnilingual_asr.models.inference.pipeline import ASRInferencePipeline
+
+          class ModelWrapper(torch.nn.Module):
+              def __init__(self, model):
+                  super().__init__()
+                  self.model = model
+              def forward(self, x):
+                  batch_layout = BatchLayout(shape=x.shape, seq_lens=[x.shape[1]])
+                  logits, _ = self.model(x, batch_layout)
+                  return logits
+
+          out = Path('omniASR-CTC-300M-openvino-fp16')
+          out.mkdir(exist_ok=True)
+
+          pipeline = ASRInferencePipeline(model_card='omniASR_CTC_300M', device='cpu', dtype=torch.float32)
+          wrapper = ModelWrapper(pipeline.model).eval()
+
+          with (out / 'tokens.txt').open('w', encoding='utf-8') as f:
+              vocab = pipeline.tokenizer._model.vocabulary_size
+              for i in range(vocab):
+                  f.write(f"{pipeline.tokenizer._model.index_to_token(i)} {i}\n")
+
+          x = torch.rand(1, 16000 * 10, dtype=torch.float32)
+          onnx_path = out / 'model.onnx'
+          torch.onnx.export(
+              wrapper, x, str(onnx_path), opset_version=14,
+              input_names=['x'], output_names=['logits'],
+              dynamic_axes={'x': {0: 'N', 1: 'num_samples'}, 'logits': {0: 'N', 1: 'num_frames'}},
+          )
+
+          ov_model = ov.convert_model(str(onnx_path))
+          ov.save_model(ov_model, str(out / 'model.xml'), compress_to_fp16=True)
+
+          core = ov.Core()
+          m = core.read_model(str(out / 'model.xml'))
+          compiled = core.compile_model(m, 'CPU')
+          inp = compiled.input(0)
+          outp = compiled.output(0)
+          test = torch.zeros(1, 16000, dtype=torch.float32).numpy()
+          res = compiled({inp: test})[outp]
+
+          (out / 'README.txt').write_text(
+              'Model: facebook/omniASR-CTC-300M (official omnilingual_asr model card omniASR_CTC_300M)\n'
+              'Format: OpenVINO IR, FP16-compressed weights\n'
+              'Input: x, float32, shape [N, num_samples], 16 kHz mono PCM normalized to roughly [-1,1]\n'
+              'Output: logits, shape [N, num_frames, vocab_size]\n'
+              f'Vocabulary size: {pipeline.tokenizer._model.vocabulary_size}\n'
+              f'OpenVINO version: {ov.__version__}\n'
+              f'Validation input shape: {test.shape}\n'
+              f'Validation output shape: {res.shape}\n'
+              'CTC decode: argmax over vocabulary per frame, collapse repeated token ids, remove blank according to tokenizer vocabulary.\n',
+              encoding='utf-8'
+          )
+          print('VALIDATION_OUTPUT_SHAPE', res.shape)
+          print('IR_XML_BYTES', (out/'model.xml').stat().st_size)
+          print('IR_BIN_BYTES', (out/'model.bin').stat().st_size)
+          PY
+          python /tmp/export.py
+          rm omniASR-CTC-300M-openvino-fp16/model.onnx
+          sha256sum omniASR-CTC-300M-openvino-fp16/* > omniASR-CTC-300M-openvino-fp16/SHA256SUMS.txt
+          zip -r omniASR-CTC-300M-openvino-fp16.zip omniASR-CTC-300M-openvino-fp16
+          ls -lh omniASR-CTC-300M-openvino-fp16.zip omniASR-CTC-300M-openvino-fp16/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omniASR-CTC-300M-openvino-fp16
+          path: omniASR-CTC-300M-openvino-fp16.zip
+          compression-level: 0
+          retention-days: 1
