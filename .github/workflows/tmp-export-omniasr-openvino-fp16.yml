@@ -1,6 +1,9 @@
 name: tmp-export-omniasr-openvino-fp16
 
 on:
+  push:
+    branches:
+      - tmp/omniasr-openvino-fp16-20260815
   workflow_dispatch:
 
 jobs:
@@ -32,7 +35,6 @@ jobs:
         shell: bash
         run: |
           cat > /tmp/export.py <<'PY'
-          import os
           from pathlib import Path
           import torch
           import openvino as ov
