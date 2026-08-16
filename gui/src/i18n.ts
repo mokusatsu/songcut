@@ -99,7 +99,7 @@ const en = {
     displayElementBoundary: "Drag shared display element boundary",
     manualBoundaryConflict: "The lyric line cannot exclude or move a manually edited display element.",
     reanalysis: {
-      waiting: "Reanalysis pending", running: "Reanalyzing", cancelling: "Cancelling previous reanalysis",
+      waiting: "Waiting for reanalysis", running: "Reanalyzing", cancelling: "Cancelling previous reanalysis",
       stale: "Reanalysis result is stale", conflict: "Manual edit conflict", failed: "Reanalysis failed",
       idle: "Ready",
     },

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   DisplayElementInspector,
   displayElementDeleteNeedsConfirmation,
+  type DisplayElementInspectorProps,
   type DisplayElementInspectorLabels,
 } from "@/components/DisplayElementInspector";
 import type { DisplayElement, LyricsSegment } from "@/lib/subtitles";
@@ -67,7 +68,12 @@ function segment(elements?: DisplayElement[]): LyricsSegment {
   };
 }
 
-function render(segmentValue: LyricsSegment, currentTime = 10.25, zoom = false) {
+function render(
+  segmentValue: LyricsSegment,
+  currentTime = 10.25,
+  zoom = false,
+  status?: DisplayElementInspectorProps["status"],
+) {
   return renderToStaticMarkup(
     <DisplayElementInspector
       segment={segmentValue}
@@ -78,6 +84,8 @@ function render(segmentValue: LyricsSegment, currentTime = 10.25, zoom = false) 
       onCommit={() => undefined}
       onBoundaryLockChange={() => undefined}
       onOpenZoom={zoom ? () => undefined : undefined}
+      status={status}
+      statusText={status ? "Waiting for reanalysis" : undefined}
     />,
   );
 }
@@ -148,6 +156,25 @@ describe("DisplayElementInspector", () => {
     expect(markup).toContain("display-element-playhead");
     expect(markup).toContain("left:40%;width:20%");
     expect(markup).toContain("var(--display-element-zoom-playhead-percent, 48.00000000000001%)");
+  });
+
+  it("shows pending status and disables display-element editing while reanalysis is pending", () => {
+    const markup = render(
+      segment([
+        element("a", "A", 10, 10.4),
+        element("b", "B", 10.4, 10.7),
+        element("c", "C", 10.7, 11),
+      ]),
+      10.25,
+      true,
+      "waiting",
+    );
+    expect(markup).toContain("Waiting for reanalysis");
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain('aria-busy="true"');
+    expect(markup).toContain('data-reanalysis-busy="true"');
+    expect((markup.match(/disabled=""/g) ?? []).length).toBe(6);
+    expect(markup).toContain('aria-disabled="true"');
   });
 
   it("requires delete confirmation only when an element contains text", () => {

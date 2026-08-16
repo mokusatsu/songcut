@@ -1,5 +1,5 @@
 /** 行再解析の固定debounce。仕様値のため設定化しない。 */
-export const LINE_REANALYSIS_DELAY_MILLISECONDS = 10_000;
+export const LINE_REANALYSIS_DELAY_MILLISECONDS = 3_000;
 
 export type LineReanalysisStatus =
   | "idle"
@@ -80,7 +80,7 @@ export class LineReanalysisCoordinator<TPayload, TResult> {
     this.cancelPrevious(rowId, entry);
   }
 
-  /** 本文または行境界が実際に確定変更された後、最新snapshotを10秒予約する。 */
+  /** 本文または行境界が実際に確定変更された後、最新snapshotを3秒予約する。 */
   commit(rowId: string): void {
     const entry = this.entry(rowId);
     entry.editing = false;
@@ -100,7 +100,7 @@ export class LineReanalysisCoordinator<TPayload, TResult> {
     else this.setStatus(rowId, entry, "idle");
   }
 
-  /** Escape・pointer-cancel・無変更blur。既存dirtyだけは新たに10秒予約する。 */
+  /** Escape・pointer-cancel・無変更blur。既存dirtyだけは新たに3秒予約する。 */
   exitWithoutChange(rowId: string): void {
     const entry = this.entry(rowId);
     entry.editing = false;
