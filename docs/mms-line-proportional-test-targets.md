@@ -28,6 +28,74 @@ fallbackを誤って見逃しやすいfixtureを記録する。
 | `07` | 2 | `いつだってすすめあばんちゅる` | `star_ratio` | `star_ratio=0.5778`、speed=`9.5238` |
 | `09` | 2 | `ひとりじゃすすめないのです` | `star_ratio` | `star_ratio=0.5897`、`low_confidence=0.1984`、speed=`5.6373` |
 
+## SCUT-067 test-only probe（2026-08-16）
+
+上表の7行について、`tools/probe_omniasr_ctc_targets.py`でローカルの
+`omniASR-CTC-300M-openvino-fp16`をCPU実行した。MMSの結果や本体の表示素を変更せず、
+行target＋次行3文字のCTC強制整列だけを行った比較である。境界誤差は、現行snapshotの
+`line-proportional`結果と、probeのblank=0候補を、同じGTの表示素終端で比較した。
+
+| 曲/行 | 現行中央値 / P90 (秒) | omni候補中央値 / P90 (秒) | 判定 |
+|---|---:|---:|---|
+| `02/1` | `1.0244 / 1.4870` | `0.3709 / 0.9502` | 明確な改善候補 |
+| `03/2` | `0.5136 / 0.9245` | `1.3318 / 2.1441` | 悪化 |
+| `04/0` | `0.5756 / 0.8574` | `0.3160 / 0.5177` | 境界は改善、品質根拠不足 |
+| `05/2` | `0.8034 / 0.9275` | `0.1608 / 0.9737` | 中央値のみ改善、P90悪化 |
+| `06/2` | `0.0768 / 0.2392` | `0.2185 / 0.3927` | 悪化 |
+| `07/2` | `0.0646 / 0.1291` | `0.1417 / 0.2632` | 悪化 |
+| `09/2` | `0.1580 / 0.5205` | `0.2824 / 0.3577` | 中央値悪化、P90のみ改善 |
+
+公式`omniASR_tokenizer.model`を取得し、`tokens.txt`の9812 pieceと全ID一致することを確認した。
+CTC blankは公式fairseq2の`ctc_loss`既定値に合わせてID 0（piece `<s>`）とした。frame mappingも
+現行IRの`[1,16000]`→`[1,49,9812]`で320 samples（0.02秒）を確認し、manifestへ固定した。
+`manifest.json`とApache-2.0の`LICENSE`はartifactへ追加したが、公式モデルリポジトリには別個の
+`NOTICE`はない。また、既存OpenVINO変換のconverter revisionは記録されていない。したがって、
+02/1と04/0を含む候補結果だけでomniASR採用を決めず、上表の7対象を引き続き回帰対象とする。
+
+## SCUT-071 修正後の4系列比較（2026-08-16）
+
+SCUT-067の旧結果は、`ctc_token_end`を表示素の終了境界として採点し、固定値
+`0.02秒/frame`で絶対時刻へ換算していたため、下表の採用性能比較から除外する。
+修正後は、各表示素のonsetを取得し、内部境界を「GT表示素の終端から次表示素の
+予測onset」へ統一した。最終表示素の行末は内部境界に含めず、最終partitionは
+既存の`align_display_elements`で生成した。
+
+| 曲/行 | Standard Align final median / P90 (秒) | `line-proportional` median / P90 (秒) | Everyric2準拠 omni median / P90 (秒) | SCUT-067局所＋anchor median / P90 (秒) |
+|---|---:|---:|---:|---:|
+| `02/1` | `N/E`（境界数不一致） | `N/E`（境界数不一致） | `0.0364 / 0.2204` | `N/E`（先頭blank追加で境界数不一致） |
+| `03/2` | `1.0273 / 1.0273` | `1.0273 / 1.0273` | `1.0273 / 1.0273` | `1.0273 / 1.0273` |
+| `04/0` | `0.5964 / 0.8606` | `0.5964 / 0.8606` | `0.5428 / 0.6886` | `0.5428 / 0.6886` |
+| `05/2` | `0.8341 / 0.9380` | `0.8341 / 0.9380` | `0.6982 / 0.9978` | `0.6982 / 0.9978` |
+| `06/2` | `0.1446 / 0.2437` | `0.1446 / 0.2437` | `0.1446 / 0.2051` | `0.1446 / 0.2051` |
+| `07/2` | `0.0778 / 0.1318` | `0.0778 / 0.1318` | `0.0169 / 0.0862` | `0.0169 / 0.0862` |
+| `09/2` | `0.1925 / 0.5217` | `0.1925 / 0.5217` | `0.3042 / 0.6355` | `0.3042 / 0.6355` |
+
+集約値は、Standard Align finalが`46/62`境界評価可能、median=`0.2347`、P90=`0.8514`、
+`line-proportional`も同じ値、Everyric2準拠omniASRが`62/62`、median=`0.1213`、
+P90=`0.6804`、SCUT-067局所＋anchorが`46/62`、median=`0.2021`、P90=`0.6870`だった。
+4系列ともordering／containment／partition違反は0件である。`N/E`は短い側へ
+`zip`せず、境界数不一致を明示した結果であり、改善値へ補完していない。
+onsetのみの集約はEveryric2が`52`件、MAE=`0.0334`、median=`0.0279`、P90=`0.0630`、
+SCUT-067局所＋anchorが`52`件、MAE=`0.0311`、median=`0.0276`、P90=`0.0597`で、
+いずれも1行は予測onset欠落のため`not_evaluable`となった。したがって、onset誤差と
+最終partition境界誤差を混ぜずに解釈する。
+
+Everyric2系列は同一曲を30秒chunk・5秒overlapで推論し、chunkごとの入力samples・
+出力frames・frame-to-time比と、overlap中央所有方式を結果JSONへ保存した。行ごとの
+再推論はせず、曲単位emissionから行前後0.2秒を切り出して現行行targetだけを強制整列した。
+SCUT-067系列は比較対象として次行のtokenized先頭3 tokenをanchorへ使い、anchor所有範囲と
+`anchor_start_error_seconds`を診断値へ分離した。
+
+実行結果は`.codex-temp/omniasr-target-probe-scut071-final-20260816.json`、schemaは
+`scut-071.onset-first.v1`である。対象は7行、Everyric2 chunk数は順に`12, 10, 11, 13, 13, 9, 13`。
+公式artifact manifest revisionは`8e35f0cc28fa6099e0c14d56db85ce0423baa691`、
+OpenVINO IRは`model.xml`=`101a6f46a18d752307b96fa90b3f833f2cbc5c8056265a1670a8bbd859d0db66`、
+`model.bin`=`8e902705be79bd9001dd802aebead7b82f9513d3bb59ae649b5dde3acbdf3427`、
+tokenizerは`b954cc166b0c9e0271b953fa226fa27ca706a25b7029e84579fe2c60a2b451fe`である。
+converter revision／変換元checkpointはartifactへ記録されておらず、独立参照logitsもないため、
+OpenVINO変換一致検査は`not_comparable`として記録した。よって、集約値が改善しても
+SCUT-067本体routerへ統合する根拠とはせず、SCUT-067の状態は`実環境検証待ち`に維持する。
+
 ### この一覧を使うときの注意
 
 - 主因は `rejection_reasons` の値で判定する。`boundary_conflict`、window端集中、

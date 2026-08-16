@@ -252,22 +252,37 @@ omniASR採用結果だけにoptional fieldとして、少なくとも次を保�
 
 ## 開始記録
 
-- 未着手。開始時にbranch、HEAD、worktree状態、既存dirty差分、model artifactの所在とrevision、Kiritan基準値の再実行結果を記録する。
+- 2026-08-15: SCUT-066完了後、`main` / HEAD `2dcea33`で着手。SCUT-064〜066の既存差分と未stage状態を保持し、omniASRの本体統合前にモデル実体・metadata・既存注入点を再確認する。
+- 2026-08-16: SCUT-067を再開。`main` / HEAD `2dcea33`、既存dirty差分を保持したまま、`docs/mms-line-proportional-test-targets.md`の現行7対象を同一条件で再確認し、通常portable buildを並行実行する。
 
 ## 実施証跡
 
-- 未着手。実行コマンド、変更ファイル、テスト件数、変換一致結果、model hash、ローカルbenchmark、CPU実測、portable build、archive内容、コードマップ検証を追記する。
+- 2026-08-15: モデルは`third_party/omniASR-fp16/omniASR-CTC-300M-openvino-fp16`にあり、README記載は16kHz mono・語彙9812・FP16 OpenVINO IR。`model.xml`、`model.bin`、`tokens.txt`、`README.txt`のSHA256は同ディレクトリの`SHA256SUMS.txt`と一致し、tokens IDは0〜9811の連番だった。
+- 2026-08-15: `tokens.txt`には`<pad>` ID 1はあるが`<blank>`／`<blk>`／`<epsilon>`がなく、CTC blank IDを確定できない。IRは動的shapeで、OpenVINOの`get_any_name()`で取得した出力名は`logits`だった。tokenizer、frame-to-time、padding、入力正規化、converter／upstream revisionはartifact内に固定されていない。
+- 2026-08-15: `manifest.json`、LICENSE、NOTICE、tokenizer modelがなく、portable配布経路も未実装。既存backend／GUIのsource enumにomniASR由来値はなく、runner・provider・generic emission interfaceも存在しない。推測で本体routerやpackage配線を追加する段階ではない。
+- 2026-08-15: 安全な次段階は、metadata・blank・license・revisionを確定した後に、純粋なprovider/router注入点を設けてrouting／fallback／不変条件テストを先に追加することと判定した。今回、コード・テスト・配布物・commitは追加していない。
+- 2026-08-15: bundled PythonのOpenVINOでCPU compile／ゼロ入力推論を実行した。compileは1.261秒、推論は1.237秒、出力は`(1, 49, 9812)`・float32・finiteだった。これはIRがruntimeでロードでき、語彙次元が9812であることのpreflightであり、音声のCTC decode、token／frame対応、品質合格を証明するものではない。
+- 2026-08-15: MMS非退行の対象回帰は`tests/test_mms_alignment.py`が13 passed／1 skipped（実MMS E2E未指定）、Kiritan benchmarkが14 passed、line APIが6 passed。Windowsの既定pytest temp権限エラーは`.codex-temp`の`--basetemp`指定で解消した。omniASRの採用判定を含む実音声benchmarkは未実施。
+- 2026-08-16: `docs/mms-line-proportional-test-targets.md`の7行を、同一Kiritan音声・GTに対してtest-only probeで再評価した。`tools/probe_omniasr_ctc_targets.py`がローカルOpenVINO artifactをCPUでcompileし、16kHz・zero-mean/unit-variance、公式SentencePieceによる行target＋次行3文字anchor、CTC強制整列を実行した。生成物は`.codex-temp/omniasr-target-probe-official-20260816.json`で、raw logitsは保存していない。
+- 2026-08-16: 現行`line-proportional`とblank=0候補の表示素終端誤差（median/P90秒）は、02/1=`1.0244/1.4870`→`0.3709/0.9502`、03/2=`0.5136/0.9245`→`1.3318/2.1441`、04/0=`0.5756/0.8574`→`0.3160/0.5177`、05/2=`0.8034/0.9275`→`0.1608/0.9737`、06/2=`0.0768/0.2392`→`0.2185/0.3927`、07/2=`0.0646/0.1291`→`0.1417/0.2632`、09/2=`0.1580/0.5205`→`0.2824/0.3577`だった。改善候補はあるが全対象での非退行ではなく、04/0・05/2はtarget確率も低いため、本体採用判定には使わない。
+- 2026-08-16: test-only実装として`tools/probe_omniasr_ctc_targets.py`と`tests/test_omniasr_alignment.py`を追加した。最終focused pytestは44 passed／1 skipped、`py_compile`、`git diff --check`が成功した。omniASR provider/router、schema、GUI、portable配線は変更していない。
+- 2026-08-16: Hugging Faceの公式`facebook/omniASR-CTC-300M` revision `8e35f0cc28fa6099e0c14d56db85ce0423baa691`から、変換済み`.xml/.bin`は取得せず、`omniASR_tokenizer.model`、公式`README.md`、リンク先upstreamのApache-2.0 `LICENSE`だけをartifactへ取得した。SentencePiece vocab sizeは9812、`tokens.txt`との全piece一致、special IDは`bos=0`、`pad=1`、`eos=2`、`unk=3`だった。既存変換artifactのSHA256は`model.xml=101a6f46a18d752307b96fa90b3f833f2cbc5c8056265a1670a8bbd859d0db66`、`model.bin=8e902705be79bd9001dd802aebead7b82f9513d3bb59ae649b5dde3acbdf3427`、`tokens.txt=a7a044c52cb29cbe8b0dc1953e92cefd4ca16b0ed968177b6beab21f9a7d0b31`、更新後`README.txt=fe24f4b880e553441a8b509a18ea2192513991f55bd39d6c3115682ee5901c54`、tokenizer=`b954cc166b0c9e0271b953fa226fa27ca706a25b7029e84579fe2c60a2b451fe`。`manifest.json`へ固定したが、converter revisionは既存artifactに記録されていない。公式model repositoryには別個のNOTICEはない。
+- 2026-08-16: 実tokenizer・CTC blank=0・320 samples/frameでprobeを再実行した結果は、前回のblank=0候補と同一で、02/1=`0.3709/0.9502`、03/2=`1.3318/2.1441`、04/0=`0.3160/0.5177`、05/2=`0.1608/0.9737`、06/2=`0.2185/0.3927`、07/2=`0.1417/0.2632`、09/2=`0.2824/0.3577`（median/P90秒）だった。公式file取得後も7対象全体の非退行条件は満たしていない。
+- 2026-08-16: 既存`tools/benchmark_kiritan_display_elements.py --generate-prediction --device cpu`を現行dirty版とHEAD相当で再実行した。8曲・24行・381内部境界、ordering／containment／partition違反は0、中央値28.5317ms、P90 108.8587msで、7対象のrejection reasonと要素数はHEADから変わらなかった（02/1・03/2・05/2・06/2・07/2・09/2=`star_ratio`、04/0=`isolated_first_token`）。SCUT-066の空白表示素差は合成fixtureだけで、対象7行のfallback改善には寄与していない。
+- 2026-08-16: `PYTHONPATH=src;.`でbundled Pythonの全pytestを`.codex-temp`配下の一時領域へ実行し、`342 passed, 3 skipped, 1 subtests passed in 59.85s`。skipはWhisper／MMS実音声E2Eとffmpeg依存テストで、失敗はなかった。
+- 2026-08-16: `packaging/build_dist.ps1`をCodex bundled Python／Node／pnpm／Gitで通常ビルドし、exit code 0、version `1.1.84`、`dist/songcut-win-x64`の必要6項目（`songcut.exe`、`runtime`、`app/dist`、`app/dist-electron`、`electron/songcut-electron.exe`、`README.txt`）を確認した。通常ビルドのためRelease ZIPは新規作成・更新していない。PyInstallerログにはtorch関連optional hidden-importの非致命メッセージが残るため、別途パッケージ警告として扱う。
+- 2026-08-16: code-map maintainerのmaintain／verify／validate（`docs/code-map`、警告なし）と`git diff --check`を完了した。既存dirty差分は保持し、SCUT-067の本体router、provenance、GUI、portable配線は変更していない。
 
 ## 状態判断
 
-未着手。brief定義のみ。実装開始、commit、push、PR作成は別途明示された範囲で行う。
+実環境検証待ち。公式tokenizer、license、model revision、CTC blank=0、320-sample frame mappingをartifactとmanifestへ固定したが、既存OpenVINO変換のconverter revisionが不明で、7対象全体の非退行も満たしていない。3曲以上・12行以上の未追跡失敗セットと変換provenanceが揃うまで、本体router・provenance・portable配線は追加しない。
 
 ## task-list追記
 
-`tasks/task-list.md`の「次のタスクID」を`SCUT-068`へ更新し、一覧へ次の行を追加する。
+初期コミットで`tasks/task-list.md`への登録は完了している。現在の一覧では本タスクを`実環境検証待ち`、次の未使用IDを`SCUT-070`として管理する。
 
 ```markdown
-| SCUT-067 | AI・解析 | Standard AlignへのomniASR-CTC局所救済エンジン追加 | 未着手 | 高 | SCUT-041, SCUT-043 | MMSが`line-proportional`へ落ちた日本語行だけをomniASRで局所救済し、MMS合格行・行境界・手動表示素を維持する | [詳細・証拠](../tasks/SCUT-067.md) |
+| SCUT-067 | AI・解析 | Standard AlignへのomniASR-CTC局所救済エンジン追加 | 実環境検証待ち | 高 | SCUT-041, SCUT-043 | MMSが`line-proportional`へ落ちた日本語行だけをomniASRで局所救済し、MMS合格行・行境界・手動表示素を維持する | [詳細・証拠](../tasks/SCUT-067.md) |
 ```
 
 ## 根拠資料
@@ -280,6 +295,8 @@ omniASR採用結果だけにoptional fieldとして、少なくとも次を保�
 - [Everyric2 omniASR engine](https://github.com/onpe5679/Everyric2/blob/b968a58655696e806d7abcb732e78ac9b4207963/everyric2/alignment/omniasr_engine.py)
 - [Everyric2 alignment target](https://github.com/onpe5679/Everyric2/blob/b968a58655696e806d7abcb732e78ac9b4207963/everyric2/text/align_target.py)
 - [facebook/omniASR-CTC-300M model card](https://huggingface.co/facebook/omniASR-CTC-300M)
+- [facebook/omniASR-CTC-300M official file list](https://huggingface.co/facebook/omniASR-CTC-300M/tree/main)
+- [fairseq2 Wav2Vec2 CTC model](https://raw.githubusercontent.com/facebookresearch/fairseq2/main/src/fairseq2/models/wav2vec2/asr/model.py)
 
 SCUT-041の原文は次の不変条件を定めている。
 

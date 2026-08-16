@@ -7,11 +7,11 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 
 ## 指標
 
-- Files: 170
-- Symbols: 1320
-- Incoming／Outgoing: 64／22
+- Files: 173
+- Symbols: 1347
+- Incoming／Outgoing: 66／23
 - Cohesion: 0.98
-- Node kinds: Class 19、File 170、Function 1011、Method 10、Test 110
+- Node kinds: Class 19、File 173、Function 1018、Method 10、Test 127
 
 ## 代表パス
 
@@ -137,6 +137,8 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/src/components/ModeToolbar.test.tsx`
 - `gui/src/components/ModeToolbar.tsx`
 - `gui/src/components/ProjectInformation.tsx`
+- `gui/src/components/SegmentAddDialog.test.tsx`
+- `gui/src/components/SegmentAddDialog.tsx`
 - `gui/src/components/SegmentInspector.test.tsx`
 - `gui/src/components/SegmentInspector.tsx`
 - `gui/src/components/SettingsDialog.test.ts`
@@ -278,4 +280,5 @@ Electron メインプロセスと React レンダラーで構成されるデス�
 - `gui/vite.config.ts`
 - `native/windows_font_resolver/include/scut_windows_font_resolver.h`
 - `packaging/e2e_dist_smoke.js`
+- `tests/conftest.py`
 <!-- code-map:generated:end -->

@@ -7,11 +7,11 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 
 ## 指標
 
-- Files: 62
-- Symbols: 1045
-- Incoming／Outgoing: 71／51
-- Cohesion: 0.94
-- Node kinds: Class 129、File 62、Function 449、Method 103、Test 302
+- Files: 57
+- Symbols: 945
+- Incoming／Outgoing: 68／73
+- Cohesion: 0.88
+- Node kinds: Class 113、File 57、Function 446、Method 93、Test 236
 
 ## 代表パス
 
@@ -143,7 +143,6 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `songcut/uta_alignment.py`
 - `songcut/waveform.py`
 - `songcut/whisper_execution.py`
-- `songcut/windows_font_native.py`
 - `songcut/windows_font_resolver.py`
 - `songcut/youtube_metadata.py`
 - `songcut_cli.py`
@@ -157,17 +156,13 @@ FastAPI と CLI を入口に、動画・音声の解析、文字起こし、境�
 - `tests/test_gui_pipeline.py`
 - `tests/test_hardware.py`
 - `tests/test_lyrics_alignment.py`
-- `tests/test_lyrics_elements.py`
 - `tests/test_lyrics_line_api.py`
-- `tests/test_mms_alignment.py`
 - `tests/test_review.py`
 - `tests/test_scratch_proxy.py`
-- `tests/test_source_separation.py`
 - `tests/test_timestamps.py`
 - `tests/test_transcription.py`
 - `tests/test_uta_alignment.py`
 - `tests/test_waveform.py`
 - `tests/test_whisper_execution.py`
 - `tests/test_windows_font_native.py`
-- `tests/test_windows_font_resolver.py`
 <!-- code-map:generated:end -->

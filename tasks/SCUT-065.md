@@ -25,6 +25,16 @@ Subの「Timeline追加」と「セグメント追加」を混同せず、1本�
 - 指定外の選択モデル、Timeline上限、拍グリッド規則、重複規則を変更しない。
 - SCUT-064の文書作業、既存の未コミット変更、stage、commit、push、PR作成に手を加えない。
 
+## 実施計画（2026-08-15）
+
+1. 初期コミット`2dcea33`を基準に、Timeline追加とセグメント追加の実装入口・状態更新・位置計算・既存テストを別々に追跡する。
+2. Timeline数1／2／3本、active Timeline、選択なし／単一／複数選択、別Timelineに残った選択、空きなし、グリッド不足、busy中を再現マトリクスへ落とし、既存pure logicとVitestで観測する。
+3. 報告された「2本目で追加できない」操作がTimeline追加かセグメント追加かを切り分け、再現しない場合は確認した状態・操作・現行仕様との差分を記録する。
+4. 既存の即時追加を変更せず、将来のSegment追加Dialogの入力値・確定時の状態・空き／重複判定・Cancel・focus復帰・回帰テストを実装者が補完せずに着手できる粒度へ固定する。
+5. 既存Vitestと`git diff --check`を実行し、アプリコード、GUI文言、i18n、保存形式、配布物に差分がないことを確認する。
+
+このbriefとtask-listの行は初期コミットで既に登録されていたため、タスクIDを再利用した重複登録は行わない。上記計画を追記してから、登録済みの新規タスク`SCUT-065`を`調査中`へ遷移し、完了条件の検証後に完了へ更新する。
+
 ## 完了条件
 
 - Timeline数（1、2、3本）、選択中Timeline（1本目、2本目）、選択セグメントの有無、処理中状態ごとのTimeline追加結果を、操作手順・観測値・根拠箇所付きで記録する。
@@ -52,3 +62,13 @@ Subの「Timeline追加」と「セグメント追加」を混同せず、1本�
 - 2026-08-14: ユーザー指示により登録。状態は未着手、優先度は中、依存はなし。
 - 登録開始時は `main`、HEAD `1214708`。既存の `tasks/task-list.md` 変更と未追跡の `tasks/SCUT-064.md` は保持対象とした。
 - 登録時にアプリケーションコード、GUI、i18n、テスト、配布物は変更していない。SCUT-065の調査・仕様策定・実装は未開始。
+- 2026-08-15: `main`、HEAD `2dcea33`を作業基点として計画を確定し、既存のSCUT-065 brief／task-list登録を確認して調査を開始。SCUT-064の文書差分は変更せず保持した。
+- 2026-08-15: Timeline追加は`SubModePanel.tsx:309-328`の位置Dialogと`addLane`（同ファイル`217-228`）、セグメント追加は`App.tsx:2297-2316`の即時処理と`App.tsx:2865-2879`のcapabilityで別経路であることを確認した。
+- 2026-08-15: `subtitles.ts:433-465`の`addFourBeatSegment`は、active lane内のselected segment直後、またはactive lane末尾から、正規化済みrhythm grid上の最大16区間を探し、空きなし・grid不足・重複時は`null`を返す。再生位置は参照していない。
+- 2026-08-15: 既存pure logicの再現マトリクスでは、選択なしはactive lane末尾、active laneの単一選択はその直後、別Timelineに残った選択はactive lane末尾、複数選択はprimary選択だけを参照する。1本目は空きがあれば追加可能、2本目は自身の選択後または末尾に空きがあれば追加可能、1本目の選択を残したまま2本目をactiveにした場合も2本目末尾基準になるが、末尾が埋まっていればボタンが無効になる。Timeline 3本ではTimeline追加だけが無効、busy中は両追加操作が無効である。報告された「2本目では必ず失敗」は再現しなかった。
+- 2026-08-15: 関連Vitest 7ファイル51件（`SubModePanel.test.ts` 9、`SubTimelineEditor.test.ts` 10、`subtitles.test.ts` 18、`subtitleLaneOperations.test.ts` 4、`modeController.test.ts` 3、`modeSession.test.ts` 2、`segmentSelection.test.ts` 5）が成功した。実UIクリックE2Eは未実施のため、操作経路の実環境再現は未確認として仕様証跡と分離した。
+- 2026-08-15: `docs/GUI_FOCUS_POLICY.ja.md`を確認し、将来Dialogは共通`Dialog`、通常のTab操作、Cancel後のopen元／editor anchor復帰、IME中のshortcut抑止を受入れ項目へ含めた。アプリコード、GUI文言、i18n、保存形式、テスト、配布物の変更はない。
+
+## 状態判断
+
+完了。Timeline追加とセグメント追加を別経路として原因範囲を確定し、現行の2本目Timeline条件付き無効化を再現マトリクス・根拠箇所・既存Vitestで記録した。追加先、4位置、選択条件、異Timeline参照、空き／グリッド／重複、Cancel、focus、将来テストをbriefの仕様として固定した。実UIクリックE2Eだけは未確認として明示し、アプリコード等は変更していない。

@@ -34,6 +34,61 @@ def test_split_preserves_source_partition_and_joins_small_kana_sokuon_long_vowel
     assert [seed.pronunciation for seed in seeds] == ["kya", "q", "puu"]
 
 
+def test_split_keeps_each_whitespace_character_as_an_empty_pronunciation_seed() -> None:
+    text = "A  B"
+    seeds = split_display_elements(text, line_id="spaces", romanize=lambda value, _language: value.lower())
+    mappings = map_pronunciation_to_tokens(seeds, {"a": 1, "b": 2})
+
+    assert [seed.text for seed in seeds] == ["A", " ", " ", "B"]
+    assert [(seed.source_start, seed.source_end) for seed in seeds] == [(0, 1), (1, 2), (2, 3), (3, 4)]
+    assert "".join(seed.text for seed in seeds) == text
+    assert [seed.pronunciation for seed in seeds] == ["a", "", "", "b"]
+    assert [(seed.pronunciation_start, seed.pronunciation_end) for seed in seeds] == [
+        (0, 1),
+        (1, 1),
+        (1, 1),
+        (1, 2),
+    ]
+    assert [(mapping.token_start, mapping.token_end) for mapping in mappings] == [(0, 1), (1, 1), (1, 1), (1, 2)]
+    assert all(mapping.token_count == 0 for mapping in mappings[1:3])
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("A B", ["A", " ", "B"]),
+        ("A  B", ["A", " ", " ", "B"]),
+        (" A ", [" ", "A", " "]),
+        ("\u3000A\tB", ["\u3000", "A", "\t", "B"]),
+    ],
+)
+def test_split_keeps_whitespace_at_each_line_position(
+    text: str,
+    expected: list[str],
+) -> None:
+    seeds = split_display_elements(text, romanize=lambda value, _language: value.lower())
+
+    assert [seed.text for seed in seeds] == expected
+    assert "".join(seed.text for seed in seeds) == text
+    assert [(seed.source_start, seed.source_end) for seed in seeds] == [
+        (index, index + 1) for index in range(len(text))
+    ]
+    assert [seed.text for seed in seeds if seed.text.isspace()] == [character for character in text if character.isspace()]
+    assert all(seed.pronunciation == "" for seed in seeds if seed.text.isspace())
+    assert all(
+        seed.pronunciation_start == seed.pronunciation_end
+        for seed in seeds
+        if seed.text.isspace()
+    )
+
+
+def test_punctuation_does_not_cross_a_whitespace_boundary() -> None:
+    seeds = split_display_elements("A , B", romanize=lambda value, _language: value)
+
+    assert [seed.text for seed in seeds] == ["A", " ", ",", " ", "B"]
+    assert [(seed.source_start, seed.source_end) for seed in seeds] == [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)]
+
+
 def test_combining_mark_and_variation_selector_stay_with_previous_grapheme() -> None:
     seeds = split_display_elements("\u304b\u3099\u6f22\ufe0f", romanize=lambda value, _language: value)
 
@@ -129,6 +184,75 @@ def test_align_returns_monotonic_elements_inside_line_and_inserts_blank_gap() ->
     assert any(element.is_blank for element in result.elements)
     assert all(element.end > element.start for element in result.elements)
     assert all(left.end <= right.start + 1e-9 for left, right in zip(result.elements, result.elements[1:]))
+
+
+def test_adjacent_ctc_spans_repartition_a_whitespace_seed_without_a_blank() -> None:
+    seeds = split_display_elements("A B", romanize=lambda value, _language: value.lower())
+    mappings = map_pronunciation_to_tokens(seeds, {"a": 1, "b": 2})
+    tokens = [
+        CtcTokenSpan(0, 1, "a", 1, 1.0, 1.5, 0.9),
+        CtcTokenSpan(1, 2, "b", 1, 1.5, 2.0, 0.9),
+    ]
+
+    result = align_display_elements(seeds, tokens, line_start=1.0, line_end=2.0, mappings=mappings)
+
+    assert result.source == "mms-ctc-interpolated"
+    assert [element.text for element in result.elements] == ["A", " ", "B"]
+    assert not any(element.is_blank for element in result.elements)
+    assert result.elements[0].start == pytest.approx(1.0)
+    assert result.elements[-1].end == pytest.approx(2.0)
+    assert all(element.duration >= 0.001 for element in result.elements)
+    assert all(left.end == pytest.approx(right.start) for left, right in zip(result.elements, result.elements[1:]))
+    assert (result.elements[1].token_start, result.elements[1].token_end) == (1, 1)
+
+
+def test_whitespace_partition_survives_line_proportional_fallback() -> None:
+    seeds = split_display_elements("A B", romanize=lambda value, _language: value.lower())
+    mappings = map_pronunciation_to_tokens(seeds, {"a": 1, "b": 2})
+    tokens = [
+        CtcTokenSpan(0, 1, "a", 1, 1.0, 1.5, 0.05),
+        CtcTokenSpan(1, 2, "b", 1, 1.5, 2.0, 0.05),
+    ]
+
+    result = align_display_elements(seeds, tokens, line_start=1.0, line_end=2.0, mappings=mappings)
+
+    assert result.source == "line-proportional"
+    assert [element.text for element in result.elements] == ["A", " ", "B"]
+    assert all(element.duration >= 0.001 for element in result.elements)
+    assert all(left.end == pytest.approx(right.start) for left, right in zip(result.elements, result.elements[1:]))
+
+
+def test_partial_ctc_partition_keeps_whitespace_between_known_anchors() -> None:
+    seeds = split_display_elements("A B C", romanize=lambda value, _language: value.lower())
+    mappings = map_pronunciation_to_tokens(seeds, {"a": 1, "b": 2, "c": 3})
+    tokens = [
+        CtcTokenSpan(0, 1, "a", 1, 1.0, 1.4, 0.9),
+        CtcTokenSpan(2, 3, "c", 1, 1.6, 2.0, 0.9),
+    ]
+
+    result = align_display_elements(seeds, tokens, line_start=1.0, line_end=2.0, mappings=mappings)
+
+    assert result.source == "mms-ctc-interpolated"
+    assert result.diagnostics.partial is True
+    assert [element.text for element in result.elements] == ["A", " ", "B", " ", "C"]
+    assert all(element.duration >= 0.001 for element in result.elements)
+    assert result.elements[0].start == pytest.approx(1.0)
+    assert result.elements[-1].end == pytest.approx(2.0)
+    assert all(left.end == pytest.approx(right.start) for left, right in zip(result.elements, result.elements[1:]))
+
+
+def test_whitespace_only_line_uses_textual_elements_not_empty_blanks() -> None:
+    seeds = split_display_elements(" \t\u3000", romanize=lambda value, _language: value)
+
+    result = align_display_elements(seeds, [], line_start=4.0, line_end=4.1)
+
+    assert result.source == "line-proportional"
+    assert [element.text for element in result.elements] == [" ", "\t", "\u3000"]
+    assert not any(element.is_blank for element in result.elements)
+    assert all(element.duration >= 0.001 for element in result.elements)
+    assert result.elements[0].start == pytest.approx(4.0)
+    assert result.elements[-1].end == pytest.approx(4.1)
+    assert all(left.end == pytest.approx(right.start) for left, right in zip(result.elements, result.elements[1:]))
 
 
 def test_partial_ctc_uses_pronunciation_weighted_interpolation() -> None:

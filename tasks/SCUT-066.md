@@ -55,3 +55,15 @@ Standard Alignが生成する表示素で、空白文字が直前の文字へ結
 - 登録時のbranchは`main`、HEADは`1214708`。既存の`tasks/task-list.md`変更と未追跡の`tasks/SCUT-064.md`、`tasks/SCUT-065.md`は保持対象とし、上書きしていない。
 - 登録前の調査で、`split_display_elements`が空白を含む非発音文字を直前の表示素へ結合すること、`_interpolate_missing_bounds`がtoken span終端と次span開始の間だけを使うため隣接spanでは空白を生成できないこと、LRCが表示素本文と開始時刻をそのまま書き出すことを確認した。
 - タスク登録時にアプリケーションコード、テスト、schema、GUI、配布物は変更していない。登録前の`git diff --check`は成功している。
+
+## 実施記録
+
+- 2026-08-15: SCUT-065完了後、`main` / HEAD `2dcea33`で着手。既存のSCUT-064/065ドキュメント差分と未stage状態を保持し、SCUT-066の変更対象を`songcut/lyrics_elements.py`と対象pytestに限定する。
+- 2026-08-15: 実装前の確認で、`split_display_elements`の非発音文字結合、空発音seedの重み、`_interpolate_missing_bounds`のゼロ幅区間未処理、`_to_partition`のblank挿入経路を確認した。
+- 2026-08-15: `str.isspace()`の各code pointを独立seedにし、空の発音・token範囲と原文source rangeを保持した。空白を跨がない既存の小かな・促音・長音・句読点規則は維持した。
+- 2026-08-15: CTCの隣接spanで空白区間がゼロ幅になる場合は、直接の前後anchorを含む局所範囲だけを重み再partitionし、本文空白を`text == ""` blankと混同しないようにした。既存の手動マージが新seedへ遡及分割されない連続source-range保護も追加した。
+- 2026-08-15: `tests/test_lyrics_elements.py`、`tests/test_element_reconciliation.py`、`tests/test_api.py`を実行し、合計65件が成功。`tests/test_subtitle_export.py -k lrc`は3件成功し、空白本文と開始時刻タグを確認した。対象ファイルの`compileall`と`git diff --check`も成功した。GUI／portable buildはPython側の変更のみのため未実施。
+
+## 状態判断
+
+完了。新規Standard Alignのseed分割、隣接／部分CTC、line-proportional、空白行、句読点境界、LRC保持、既存手動マージ保護を対象テストで確認した。既存の保存済み／手動表示素のmigrationや公開schema/API変更は行っていない。

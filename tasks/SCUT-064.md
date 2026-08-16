@@ -50,3 +50,12 @@
 
 - 2026-08-14: ユーザー指示により登録。登録時は`main`、HEAD `1214708`、作業ツリーはclean。ユーザー向け文書・画像・配布物はまだ変更していない。
 - 2026-08-14: 表示素編集は、編集後の利用者向け活用経路が不足するため今回の変更対象から明示的に除外した。
+- 2026-08-15: 初期登録・SCUT-068/069変更をコミットした`main`、HEAD `2dcea33`を開始基点としてSCUT-064を開始。開始時点で対象文書への未確認変更はなく、画像とportable packageは既存物を保持した。
+- 2026-08-15: ソース実装とi18nを照合し、Subの`書き出し`は字幕付き動画＋Timeline別ファイル、`Export Sub`はSRT/LRC/ASSとTimeline選択による一つの字幕ファイル、`情報`はメディア準備・実行中／失敗タスクのDialogであることを確認した。
+- 2026-08-15: `dist/songcut-win-x64`のportable版を起動し、Cut初期画面の`Information`と`Project information` Dialogで、Mode・Media preparation・Background tasksが表示されることを確認した。既存`out/e2e-sub-mode/e2e-sub-mode.log`のportable Sub E2Eは`SUB_E2E_OK`、字幕付き動画、2本のSRT／style、ASS出力を記録している。
+- 2026-08-15: `gui/src/i18n.ts`と`SubtitleFileExportDialog.tsx`で、`Export Sub`の実ボタン名、SRT/LRC/ASS、Timeline選択、単一字幕ファイルDialogを照合した。portable package内に対応するdocs画像コピーはなく、画像は追加・更新せず既存参照を保持した。
+- 2026-08-15: README、docs/INDEX、日英USAGEの目的別導線・書き出し分離・情報／保存／復旧説明を更新。5文書の相対Markdownリンク／画像参照検査は成功し、`git diff --check`も成功した。
+
+## 状態判断
+
+完了。ユーザー向け文書、目的別導線、Subの二つの書き出し経路、情報・保存・復旧の説明を日英で対応させ、表示素編集を変更せず、portable／既存E2E／ソース照合とリンク・差分検査の証拠を記録した。

@@ -242,6 +242,7 @@ _SMALL_KANA = frozenset(
 _SOKUON = frozenset("っッ")
 _LONG_VOWEL = "ー"
 _VARIATION_RANGES = ((0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
+_MIN_ELEMENT_DURATION = 0.001
 
 
 def _is_combining_or_variation(character: str) -> bool:
@@ -274,8 +275,9 @@ def _raw_graphemes(text: str) -> list[tuple[str, int, int]]:
     for offset, character in enumerate(text):
         if _is_combining_or_variation(character) and output:
             previous, start, _end = output[-1]
-            output[-1] = (previous + character, start, offset + 1)
-            continue
+            if not previous.isspace():
+                output[-1] = (previous + character, start, offset + 1)
+                continue
         if _is_small_kana(character) and character not in _SOKUON and output:
             previous, start, _end = output[-1]
             # 長音・句読点に続く小かなは独立表示素にする。
@@ -284,7 +286,7 @@ def _raw_graphemes(text: str) -> list[tuple[str, int, int]]:
                 continue
         if character == _LONG_VOWEL and output:
             previous, start, _end = output[-1]
-            if previous and previous[-1] not in _SOKUON:
+            if previous and not _is_non_pronouncing(previous) and previous[-1] not in _SOKUON:
                 output[-1] = (previous + character, start, offset + 1)
                 continue
         output.append((character, offset, offset + 1))
@@ -327,6 +329,16 @@ def _contextual_pronunciations(
 
     if not individual:
         return ()
+    nonempty_positions = [index for index, pronunciation in enumerate(individual) if pronunciation]
+    if not nonempty_positions:
+        return tuple("" for _ in individual)
+    if len(nonempty_positions) != len(individual):
+        nonempty = tuple(individual[index] for index in nonempty_positions)
+        mapped = _contextual_pronunciations(nonempty, contextual)
+        output = [""] * len(individual)
+        for index, pronunciation in zip(nonempty_positions, mapped):
+            output[index] = pronunciation
+        return tuple(output)
     source = "".join(individual)
     if not contextual:
         return tuple(individual)
@@ -417,39 +429,57 @@ def split_display_elements(
 
     結合文字・variation selector は直前 code point に結合し、小書きかなは直前の
     発音単位へ、促音 ``っ/ッ`` は独立要素へ、長音記号は直前要素へ含める。句読点・
-    記号・空白は独立 token を作らず、直前の発音要素（先頭なら直後の要素）へ付加
-    するため、seed を連結した ``text`` は常に原文と一致する。
+    記号は空白で区切られた各範囲内で、直前の発音要素（先頭なら直後の要素）へ付加
+    する。空白は一文字ずつ独立した表示素にするため、seed を連結した ``text`` は
+    常に原文と一致する。
     """
 
     if not text:
         return ()
     raw = _raw_graphemes(text)
     grouped: list[tuple[str, int, int]] = []
-    pending: list[tuple[str, int, int]] = []
-    for grapheme, start, end in raw:
-        if _is_non_pronouncing(grapheme):
-            if grouped:
-                previous, previous_start, _previous_end = grouped[-1]
-                grouped[-1] = (previous + grapheme, previous_start, end)
-            else:
-                pending.append((grapheme, start, end))
-            continue
+
+    def flush_non_whitespace(segment: list[tuple[str, int, int]]) -> None:
+        pending: list[tuple[str, int, int]] = []
+        segment_grouped: list[tuple[str, int, int]] = []
+        for grapheme, start, end in segment:
+            if _is_non_pronouncing(grapheme):
+                if segment_grouped:
+                    previous, previous_start, _previous_end = segment_grouped[-1]
+                    segment_grouped[-1] = (previous + grapheme, previous_start, end)
+                else:
+                    pending.append((grapheme, start, end))
+                continue
+            if pending:
+                prefix = "".join(item[0] for item in pending)
+                start = pending[0][1]
+                grapheme = prefix + grapheme
+                pending.clear()
+            segment_grouped.append((grapheme, start, end))
         if pending:
-            prefix = "".join(item[0] for item in pending)
-            start = pending[0][1]
-            grapheme = prefix + grapheme
-            pending.clear()
-        grouped.append((grapheme, start, end))
-    if pending:
-        if grouped:
-            previous, previous_start, _previous_end = grouped[-1]
-            grouped[-1] = (previous + "".join(item[0] for item in pending), previous_start, pending[-1][2])
+            if segment_grouped:
+                previous, previous_start, _previous_end = segment_grouped[-1]
+                segment_grouped[-1] = (previous + "".join(item[0] for item in pending), previous_start, pending[-1][2])
+            else:
+                segment_grouped = pending
+        grouped.extend(segment_grouped)
+
+    non_whitespace: list[tuple[str, int, int]] = []
+    for item in raw:
+        if item[0].isspace():
+            flush_non_whitespace(non_whitespace)
+            non_whitespace = []
+            grouped.append(item)
         else:
-            grouped = pending
+            non_whitespace.append(item)
+    flush_non_whitespace(non_whitespace)
 
     convert = romanize or _default_romanize
     individual_pronunciations: list[str] = []
     for element_text, _source_start, _source_end in grouped:
+        if element_text.isspace():
+            individual_pronunciations.append("")
+            continue
         try:
             individual_pronunciations.append(_normalize_pronunciation(convert(element_text, language)))
         except Exception:
@@ -749,7 +779,7 @@ def _token_seed_assignments(
                 count = (
                     mapping.token_count
                     if mapping is not None
-                    else max(1, len(seed.pronunciation.replace(" ", "")))
+                    else len(seed.pronunciation.replace(" ", ""))
                 )
                 if count <= 0:
                     continue
@@ -789,6 +819,17 @@ def _interpolate_missing_bounds(
     output = dict(known)
     if not seeds:
         return output
+
+    def assign_bounds(first: int, last: int, start: float, end: float) -> bool:
+        if end <= start:
+            return False
+        segment = _proportional_bounds(start, end, weights[first : last + 1])
+        if len(segment) != last - first + 1:
+            return False
+        for seed_position, bounds in zip(range(first, last + 1), segment):
+            output[seeds[seed_position].index] = bounds
+        return True
+
     missing_positions = [position for position, seed in enumerate(seeds) if seed.index not in known]
     position = 0
     while position < len(missing_positions):
@@ -805,13 +846,29 @@ def _interpolate_missing_bounds(
         if last_position + 1 < len(seeds):
             right_seed = seeds[last_position + 1]
             right_bound = output.get(right_seed.index, (line_end, line_end))[0]
-        segment = _proportional_bounds(
-            min(left_bound, right_bound),
-            max(left_bound, right_bound),
-            weights[first_position : last_position + 1],
-        )
-        for missing_position, bounds in zip(range(first_position, last_position + 1), segment):
-            output[seeds[missing_position].index] = bounds
+
+        gap_start = min(left_bound, right_bound)
+        gap_end = max(left_bound, right_bound)
+        missing_count = last_position - first_position + 1
+        if gap_end - gap_start < _MIN_ELEMENT_DURATION * missing_count:
+            # 隣接CTC spanでは空白の割当て区間がゼロ幅になる。直接の前後
+            # anchorを含む局所範囲を、既存のseed重みで再partitionして、anchor
+            # 自体の境界も一緒に動かす。
+            local_first = first_position - 1 if first_position > 0 else first_position
+            local_last = last_position + 1 if last_position + 1 < len(seeds) else last_position
+            local_start = (
+                output[seeds[local_first].index][0]
+                if seeds[local_first].index in output
+                else line_start
+            )
+            local_end = (
+                output[seeds[local_last].index][1]
+                if seeds[local_last].index in output
+                else line_end
+            )
+            assign_bounds(local_first, local_last, local_start, local_end)
+        else:
+            assign_bounds(first_position, last_position, gap_start, gap_end)
         position += 1
     return output
 
@@ -912,9 +969,9 @@ def align_display_elements(
 
     token が全体品質を満たす場合は ``mms-ctc``、一部表示素の token が欠落した
     場合は token 数重み補間の ``mms-ctc-interpolated``、行全体が不採用の場合は
-    ``line-proportional`` を使用する。どの経路でも行内の空白区間は ``text == ""``
-    の blank 要素として補い、正時間長要素だけを返す。beat snap や隣接行の変更は
-    行わない。
+    ``line-proportional`` を使用する。本文中の空白文字は本文を保持する表示素として
+    内挿し、音声由来の空白区間だけを ``text == ""`` の blank 要素として補う。
+    どの経路でも正時間長要素だけを返し、beat snap や隣接行の変更は行わない。
     """
 
     seed_list = tuple(seeds)
@@ -922,9 +979,9 @@ def align_display_elements(
         diagnostics = DisplayAlignmentDiagnostics(rejection_reasons=("line_range",))
         return DisplayAlignmentResult((), diagnostics, "line-proportional", parent_revision)
     mapping_by_seed = {mapping.seed_index: mapping for mapping in (mappings or ())}
-    expected = sum(max(0, mapping.token_count) for mapping in mapping_by_seed.values()) or sum(
-        max(1, len(seed.pronunciation.replace(" ", ""))) for seed in seed_list
-    )
+    expected = sum(max(0, mapping.token_count) for mapping in mapping_by_seed.values())
+    if expected <= 0:
+        expected = sum(len(seed.pronunciation.replace(" ", "")) for seed in seed_list)
     diagnostics = evaluate_display_alignment_quality(
         tokens,
         expected_token_count=expected,
@@ -969,6 +1026,9 @@ def align_display_elements(
     for seed in seed_list:
         valid = [token for token in assignments.get(seed.index, ()) if token.end > token.start and not token.is_star]
         if not valid:
+            mapping = mapping_by_seed.get(seed.index)
+            if mapping is not None:
+                token_bounds[seed.index] = (mapping.token_start, mapping.token_end)
             continue
         raw_start = min(token.start for token in valid)
         raw_end = max(token.end for token in valid)

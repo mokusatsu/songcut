@@ -103,6 +103,45 @@ def test_manual_merge_and_blank_survive_reanalysis() -> None:
     assert_partition(result.elements)
 
 
+def test_manual_merged_whitespace_element_is_not_split_by_new_auto_seeds() -> None:
+    existing = (
+        element(
+            0,
+            "A B",
+            0,
+            3,
+            stable_id="merged-spaces",
+            source_start=0,
+            source_end=3,
+            manual_start=True,
+            manual_end=True,
+            manual_structure=True,
+            source="manual",
+        ),
+    )
+    generated = (
+        element(0, "A", 0, 1, stable_id="new-a", source_start=0, source_end=1),
+        element(1, " ", 1, 2, stable_id="new-space", source_start=1, source_end=2),
+        element(2, "B", 2, 3, stable_id="new-b", source_start=2, source_end=3),
+    )
+
+    result = reconcile_display_elements(
+        line_id="line",
+        old_text="A B",
+        new_text="A B",
+        existing=existing,
+        generated=generated,
+        line_start=0,
+        line_end=3,
+        parent_revision=4,
+    )
+
+    assert [item.text for item in result.elements] == ["A B"]
+    assert result.elements[0].stable_id == "merged-spaces"
+    assert result.orphaned_manual_element_ids == ()
+    assert_partition(result.elements)
+
+
 def test_deleted_manual_text_is_kept_as_orphaned_conflict() -> None:
     existing = (
         element(0, "あ", 0, 1.5, stable_id="manual-a", source_start=0, source_end=1,

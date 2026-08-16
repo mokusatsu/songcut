@@ -7,19 +7,19 @@ Python バックエンド、Electron/React の状態・操作・永続化、お�
 
 ## 指標
 
-- Files: 14
-- Symbols: 189
-- Incoming／Outgoing: 1／34
-- Cohesion: 0.13
-- Node kinds: Class 7、File 14、Function 36、Method 5、Test 127
+- Files: 19
+- Symbols: 279
+- Incoming／Outgoing: 42／39
+- Cohesion: 0.02
+- Node kinds: Class 16、File 19、Function 12、Method 10、Test 222
 
 ## 代表パス
 
+- `songcut/windows_font_native.py`
 - `tests/test_subtitle_export.py`
-- `tools/benchmark_kiritan_display_elements.py`
 - `tests/test_smart_export.py`
+- `tests/test_mms_alignment.py`
 - `tests/test_kiritan_display_benchmark.py`
-- `tests/test_lyrics_artifact_cache.py`
 
 ## 主なシンボル
 
@@ -32,6 +32,38 @@ Python バックエンド、Electron/React の状態・操作・永続化、お�
 | `_create_black_source` | Function | `packaging/e2e_all_subtitle_effects.py:112` |
 | `main` | Function | `packaging/e2e_all_subtitle_effects.py:149` |
 | `main.report` | Function | `packaging/e2e_all_subtitle_effects.py:185` |
+| `NativeFontCollectorError` | Class | `songcut/windows_font_native.py:31` |
+| `NativeFontCollectorError.__init__` | Method | `songcut/windows_font_native.py:34` |
+| `_CreateRequest` | Class | `songcut/windows_font_native.py:48` |
+| `_EnumRequest` | Class | `songcut/windows_font_native.py:57` |
+| `_CandidateRecord` | Class | `songcut/windows_font_native.py:61` |
+| `_NameRecord` | Class | `songcut/windows_font_native.py:78` |
+| `_FaceRequest` | Class | `songcut/windows_font_native.py:91` |
+| `_FaceRecord` | Class | `songcut/windows_font_native.py:104` |
+| `_FileRecord` | Class | `songcut/windows_font_native.py:125` |
+| `_GlyphRecord` | Class | `songcut/windows_font_native.py:139` |
+| `_ErrorRecord` | Class | `songcut/windows_font_native.py:150` |
+| `NativeFontName` | Class | `songcut/windows_font_native.py:162` |
+| `NativeFontCandidate` | Class | `songcut/windows_font_native.py:169` |
+| `NativeFontFile` | Class | `songcut/windows_font_native.py:182` |
+| `NativeFontGlyph` | Class | `songcut/windows_font_native.py:191` |
+| `NativeFontFace` | Class | `songcut/windows_font_native.py:199` |
+| `_versioned` | Function | `songcut/windows_font_native.py:214` |
+| `_decode_utf16` | Function | `songcut/windows_font_native.py:221` |
+| `_dll_paths` | Function | `songcut/windows_font_native.py:232` |
+| `resolve_native_dll_path` | Function | `songcut/windows_font_native.py:247` |
+| `NativeFontCollector` | Class | `songcut/windows_font_native.py:266` |
+| `NativeFontCollector.__init__` | Method | `songcut/windows_font_native.py:269` |
+| `NativeFontCollector.dll_path` | Method | `songcut/windows_font_native.py:289` |
+| `NativeFontCollector._configure_abi` | Method | `songcut/windows_font_native.py:292` |
+| `NativeFontCollector.close` | Method | `songcut/windows_font_native.py:339` |
+| `NativeFontCollector.__del__` | Method | `songcut/windows_font_native.py:345` |
+| `NativeFontCollector._raise_status` | Method | `songcut/windows_font_native.py:351` |
+| `NativeFontCollector.refresh` | Method | `songcut/windows_font_native.py:387` |
+| `NativeFontCollector.enumerate` | Method | `songcut/windows_font_native.py:395` |
+| `NativeFontCollector.inspect_face` | Method | `songcut/windows_font_native.py:473` |
+| `get_native_font_collector` | Function | `songcut/windows_font_native.py:572` |
+| `reset_native_font_collector` | Function | `songcut/windows_font_native.py:580` |
 | `test_all_v3_effects_generate_single_and_multiline_ass_at_every_alignment` | Test | `tests/test_ass_lyric_effects_v3_integration.py:18` |
 | `read_source` | Test | `tests/test_commonization_contract.py:11` |
 | `call_count` | Test | `tests/test_commonization_contract.py:15` |
@@ -60,56 +92,25 @@ Python バックエンド、Electron/React の状態・操作・永続化、お�
 | `GuideTests.test_gui_segments_are_replaced_by_guided_segments_when_guide_is_present` | Test | `tests/test_guide.py:207` |
 | `GuideTests.test_gui_segments_use_multiline_guide_titles_for_exports` | Test | `tests/test_guide.py:230` |
 | `GuideTests.test_gui_segments_and_exports_share_next_guide_timestamp_cap` | Test | `tests/test_guide.py:257` |
-| `_write_fixture_song` | Test | `tests/test_kiritan_display_benchmark.py:29` |
-| `test_musicxml_and_table_are_read_in_document_order` | Test | `tests/test_kiritan_display_benchmark.py:45` |
-| `test_expand_joins_small_kana_sokuon_and_long_mark_without_extra_token` | Test | `tests/test_kiritan_display_benchmark.py:63` |
-| `test_short_pause_becomes_blank_and_hard_pause_splits` | Test | `tests/test_kiritan_display_benchmark.py:72` |
-| `test_soft_pause_waits_five_seconds_and_twelve_second_cap_uses_boundary` | Test | `tests/test_kiritan_display_benchmark.py:90` |
-| `test_discovery_excludes_08_and_29_and_builds_ground_truth` | Test | `tests/test_kiritan_display_benchmark.py:115` |
-| `test_missing_label_is_reported_as_skip` | Test | `tests/test_kiritan_display_benchmark.py:130` |
-| `test_metrics_report_exact_partition_and_violation` | Test | `tests/test_kiritan_display_benchmark.py:145` |
-| `test_metrics_match_boundaries_by_time_and_report_count_differences` | Test | `tests/test_kiritan_display_benchmark.py:169` |
-| `test_cli_writes_attribution_and_summary` | Test | `tests/test_kiritan_display_benchmark.py:205` |
-| `test_read_mono_label_rejects_invalid_interval` | Test | `tests/test_kiritan_display_benchmark.py:226` |
-| `test_generate_prediction_reuses_runner_once_and_uses_local_window` | Test | `tests/test_kiritan_display_benchmark.py:233` |
-| `test_generate_prediction_reuses_runner_once_and_uses_local_window.FakeRunner` | Test | `tests/test_kiritan_display_benchmark.py:264` |
-| `test_generate_prediction_reuses_runner_once_and_uses_local_window.FakeRunner.emissions` | Test | `tests/test_kiritan_display_benchmark.py:265` |
-| `test_generate_prediction_reuses_runner_once_and_uses_local_window.fake_runtime` | Test | `tests/test_kiritan_display_benchmark.py:272` |
-| `test_generate_prediction_reuses_runner_once_and_uses_local_window.fake_decode` | Test | `tests/test_kiritan_display_benchmark.py:276` |
-| `_load_launcher_module` | Test | `tests/test_launcher.py:12` |
-| `LauncherTests` | Test | `tests/test_launcher.py:22` |
-| `LauncherTests.test_spawn_external_process_temporarily_clears_frozen_dll_directory` | Test | `tests/test_launcher.py:23` |
-| `LauncherTests.test_spawn_external_process_temporarily_clears_frozen_dll_directory.set_dll_directory` | Test | `tests/test_launcher.py:28` |
-| `LauncherTests.test_spawn_external_process_temporarily_clears_frozen_dll_directory.popen` | Test | `tests/test_launcher.py:31` |
-| `LauncherTests.test_spawn_external_process_restores_dll_directory_when_spawn_fails` | Test | `tests/test_launcher.py:54` |
-| `LauncherTests.test_spawn_external_process_leaves_dll_directory_alone_when_not_frozen` | Test | `tests/test_launcher.py:71` |
-| `LauncherTests.test_configure_standard_streams_replaces_none_with_log_stream` | Test | `tests/test_launcher.py:86` |
-| `LauncherTests.test_consumes_and_removes_a_valid_software_decoder_restart_request` | Test | `tests/test_launcher.py:100` |
-| `LauncherTests.test_rejects_and_removes_an_invalid_software_decoder_restart_request` | Test | `tests/test_launcher.py:110` |
-| `LauncherTests.test_redacts_one_shot_resume_paths_from_launcher_logs` | Test | `tests/test_launcher.py:119` |
-| `_key` | Test | `tests/test_lyrics_artifact_cache.py:20` |
-| `_electron_fingerprint` | Test | `tests/test_lyrics_artifact_cache.py:30` |
-| `test_fingerprint_matches_electron_head_tail_contract` | Test | `tests/test_lyrics_artifact_cache.py:42` |
-| `test_default_root_honours_override_and_localappdata` | Test | `tests/test_lyrics_artifact_cache.py:51` |
-| `test_cache_hit_miss_and_manifest_validation` | Test | `tests/test_lyrics_artifact_cache.py:60` |
-| `test_put_rejects_fingerprint_mismatch_and_logits_metadata` | Test | `tests/test_lyrics_artifact_cache.py:89` |
-| `test_ttl_expiry_is_a_miss_and_removes_only_entry` | Test | `tests/test_lyrics_artifact_cache.py:105` |
-| `test_get_touches_last_used_and_lru_prune` | Test | `tests/test_lyrics_artifact_cache.py:121` |
-| `test_cache_key_changes_for_all_identity_components_and_has_no_path_traversal` | Test | `tests/test_lyrics_artifact_cache.py:154` |
-| `test_concurrent_same_key_put_is_safe` | Test | `tests/test_lyrics_artifact_cache.py:170` |
-| `SmartExportTests` | Test | `tests/test_smart_export.py:25` |
-| `SmartExportTests.setUp` | Test | `tests/test_smart_export.py:26` |
-| `SmartExportTests.test_estimate_smart_render_uses_only_container_and_video_codec` | Test | `tests/test_smart_export.py:48` |
-| `SmartExportTests.test_estimate_reencode_bitrate_prefers_video_stream_rate` | Test | `tests/test_smart_export.py:58` |
-| `SmartExportTests.test_estimate_reencode_bitrate_uses_format_minus_audio_when_stream_rate_missing` | Test | `tests/test_smart_export.py:73` |
-| `SmartExportTests.test_plan_h264_splits_partial_gops` | Test | `tests/test_smart_export.py:88` |
-| `SmartExportTests.test_probe_keyframes_filters_non_key_frames` | Test | `tests/test_smart_export.py:118` |
-| `SmartExportTests.test_snap_video_range_uses_nearest_frame_pts_boundaries` | Test | `tests/test_smart_export.py:133` |
+| `_write_fixture_song` | Test | `tests/test_kiritan_display_benchmark.py:31` |
+| `test_musicxml_and_table_are_read_in_document_order` | Test | `tests/test_kiritan_display_benchmark.py:47` |
+| `test_expand_joins_small_kana_sokuon_and_long_mark_without_extra_token` | Test | `tests/test_kiritan_display_benchmark.py:65` |
+| `test_short_pause_becomes_blank_and_hard_pause_splits` | Test | `tests/test_kiritan_display_benchmark.py:74` |
+| `test_soft_pause_waits_five_seconds_and_twelve_second_cap_uses_boundary` | Test | `tests/test_kiritan_display_benchmark.py:92` |
+| `test_discovery_excludes_08_and_29_and_builds_ground_truth` | Test | `tests/test_kiritan_display_benchmark.py:117` |
+| `test_missing_label_is_reported_as_skip` | Test | `tests/test_kiritan_display_benchmark.py:132` |
+| `test_no7_profile_normalizes_100ns_katakana_and_uses_wav_pt` | Test | `tests/test_kiritan_display_benchmark.py:147` |
+| `test_ofuton_profile_discovers_nested_musicxml_and_audio` | Test | `tests/test_kiritan_display_benchmark.py:178` |
+| `test_itako_profile_ignores_control_and_metadata_lyrics` | Test | `tests/test_kiritan_display_benchmark.py:203` |
+| `test_metrics_report_exact_partition_and_violation` | Test | `tests/test_kiritan_display_benchmark.py:236` |
+| `test_metrics_match_boundaries_by_time_and_report_count_differences` | Test | `tests/test_kiritan_display_benchmark.py:260` |
+| `test_cli_writes_attribution_and_summary` | Test | `tests/test_kiritan_display_benchmark.py:296` |
 
 ## ファイル一覧
 
 - `gui/src/lib/waveformSessionCache.test.ts`
 - `packaging/e2e_all_subtitle_effects.py`
+- `songcut/windows_font_native.py`
 - `tests/__init__.py`
 - `tests/test_ass_lyric_effects_v3_integration.py`
 - `tests/test_commonization_contract.py`
@@ -117,9 +118,13 @@ Python バックエンド、Electron/React の状態・操作・永続化、お�
 - `tests/test_kiritan_display_benchmark.py`
 - `tests/test_launcher.py`
 - `tests/test_lyrics_artifact_cache.py`
+- `tests/test_lyrics_elements.py`
+- `tests/test_mms_alignment.py`
+- `tests/test_omniasr_alignment.py`
 - `tests/test_smart_export.py`
+- `tests/test_source_separation.py`
 - `tests/test_subtitle_effect_catalog.py`
 - `tests/test_subtitle_export.py`
+- `tests/test_windows_font_resolver.py`
 - `tests/test_youtube_metadata.py`
-- `tools/benchmark_kiritan_display_elements.py`
 <!-- code-map:generated:end -->
