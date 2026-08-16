@@ -423,6 +423,8 @@ export default function App(props: {
   const [switchSaveFailure, setSwitchSaveFailure] = useState<SwitchSaveFailure | null>(null);
   const [filenameTemplate, setFilenameTemplate] = useState(DEFAULT_FILENAME_TEMPLATE);
   const [createSourceFolder, setCreateSourceFolder] = useState(readCreateSourceFolder);
+  const [normalizeAudio, setNormalizeAudio] = useState(true);
+  const [targetTruePeakDbtp, setTargetTruePeakDbtp] = useState(-1.0);
   const [lineReanalysisStatuses, setLineReanalysisStatuses] = useState<Record<string, LineReanalysisStatusView>>({});
 
   const {
@@ -1925,6 +1927,8 @@ export default function App(props: {
       createSourceFolder: createVideoFolder,
       items: outputItems,
       timestampCommentText: buildTimestampExportText(items, "timestamp-comment"),
+      normalizeAudio,
+      targetTruePeakDbtp,
       validationError: outputPlan.error
         ? localizeFilenameTemplateError(outputPlan.error) ?? outputPlan.error
         : null,
@@ -4050,10 +4054,14 @@ export default function App(props: {
         filenameTemplate={filenameTemplate}
         createSourceFolder={createSourceFolder}
         sourceFolderName={videoInfo ? filenameWithoutExtension(videoInfo.name) : "video"}
+        normalizeAudio={normalizeAudio}
+        targetTruePeakDbtp={targetTruePeakDbtp}
         onClose={() => setOutputOpen(false)}
         onPreview={(item) => previewRange(videoRef.current, item.start, item.end)}
         onFilenameTemplate={updateFilenameTemplate}
         onCreateSourceFolder={setCreateSourceFolder}
+        onNormalizeAudio={setNormalizeAudio}
+        onTargetTruePeakDbtp={setTargetTruePeakDbtp}
         onCheckRenderDetails={checkExportRenderDetails}
         onExport={async () => {
           const dir = await window.songcut.selectOutputDirectory();

@@ -123,4 +123,4 @@
 | SCUT-070 | Sub・GUI | Subセグメント追加Dialogの実装 | 実環境検証待ち | 高 | SCUT-065 | SCUT-065で確定した追加先Timeline・4位置・空き／grid／重複規則を、Sub画面で確認・確定できるDialogとして実装する | [詳細・証拠](../tasks/SCUT-070.md) |
 | SCUT-071 | AI・解析 | omniASR-CTCプローブの表示境界評価修正とEveryric2準拠アブレーション | ローカル検証済み | 高 | SCUT-041, SCUT-043, SCUT-067 | 評価修正・4系列比較・実音声7対象・focused／回帰／全pytestを完了。変換一致は`not_comparable`のためSCUT-067本体統合は保留 | [詳細・証拠](../tasks/SCUT-071.md) |
 | SCUT-072 | Sub・GUI／解析 | Sub表示素再解析の即時待機表示・編集ロック・3秒debounce | 実環境検証待ち | 高 | SCUT-043, SCUT-054 | eligibleな変更直後にwaitingを表示し、waiting／running／cancelling中の表示素編集を無効化、3秒後に対象行再解析を開始する | [詳細・証拠](../tasks/SCUT-072.md) |
-| SCUT-073 | Cut・音声／品質保証 | Cut出力のAAC/Opus True Peak音量補正 | 未着手 | 高 | なし | AAC global_gain／OpusHead Output Gainを使い、追加再エンコードなしで出力True Peakを既定-1.0 dBTP程度へ補正し、mp3rgain配布パッケージ全体をthird_partyへ置いてfull／standard Releaseへ同梱し、YouTube実環境確認を別ゲートで記録する | [詳細・証拠](../tasks/SCUT-073.md) |
+| SCUT-073 | Cut・音声／品質保証 | Cut出力のAAC/Opus True Peak音量補正 | 実環境検証待ち | 高 | なし | AAC global_gain／OpusHead Output Gainを使い、追加再エンコードなしで出力True Peakを既定-1.0 dBTP程度へ補正し、mp3rgain／aacgain配布パッケージ全体をthird_partyへ置いてfull／standard Releaseへ同梱。ローカル検証済み、YouTube実環境確認が残る | [詳細・証拠](../tasks/SCUT-073.md) |

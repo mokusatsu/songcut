@@ -1,5 +1,9 @@
 # SCUT-073 Cut出力のAAC/Opus True Peak音量補正
 
+## ユーザーからの指示
+
+Cutの出力ダイアログに「音量を自動補正する」のチェックボックスを置き、チェックボックスがONになっているときのターゲット音量（デフォルトは-1dB）の設定項目を設けてください。
+
 ## 目的
 
 Cutで書き出す動画の音声を、出力後のデコード音声で測定したTrue Peakが既定値
@@ -54,11 +58,13 @@ Cutで書き出す動画の音声を、出力後のデコード音声で測定�
 
 - GUI/APIの現行Cut smart export（`/export/jobs`）とCLIの`--mode smart`に、出力音声の
   測定、補正、再検証を追加する。
+- Cutの出力ダイアログに「音量を自動補正する」チェックボックスと、ON時のターゲット音量
+  （デフォルト`-1.0 dBTP`）設定を追加する。チェックボックスがOFFのときは補正しない。
 - `songcut/smart_export.py`を中心に、`lossless_audio_gain`の公開APIを呼び出す薄い
   統合処理を追加する。AAC／Opusのビットストリーム解析やゲイン計算をSongcut側へ
   複製しない。
-- 既定ターゲットは固定値`-1.0 dBTP`とし、設定画面やproject schemaへ新しい設定を
-  追加しない。可変ターゲットは別タスクとする。
+- 既定ターゲットは`-1.0 dBTP`とし、GUIからチェックボックスON時に変更できる。設定画面や
+  project schemaへは永続設定を追加しない（セッション内のダイアログ入力のみ）。
 - CLIの`accurate`／`copy`は現行のlegacy経路であり、smart exportと共通化できることを
   検証した場合だけ同じ補正器へ接続する。接続しない場合は対象外であることをCLI文書と
   briefへ明記し、無音の挙動差を作らない。
@@ -226,11 +232,61 @@ Cutで書き出す動画の音声を、出力後のデコード音声で測定�
 
 ## 実施証跡
 
-- 計画段階。実装、テスト、build、YouTube uploadは未実施。
+- 2026-08-16: 実装着手。`mp3rgain` v3.2.0 を GitHub Release（`M-Igashi/mp3rgain`）から取得し、
+  `third_party/mp3rgain/`（`mp3rgain.exe` 2568704 bytes + `LOCAL_SOURCE.json`）へ固定した。
+  distribution zip SHA-256 `aa1688afb0e33db146af53dc1903c33ef24d22231c3beffb05a6d158fe3fa146`、
+  exe SHA-256 `6b8a5fdf5d0df8caa630f3f79b87a5da07bc567c87463eddcae912ed101dfce6`。
+  `--version` で `mp3rgain version 3.2.0`、`-o json`/`-s s`/`-g`/`-k` 契約を確認した。
+- 2026-08-16: ユーザー指示により `aacgain` 1.9.0 も単独プログラムとして同梱対象へ追加した。
+  `third_party/aacgain/`（`aacgain.exe` + `COPYING` + `README` + `LOCAL_SOURCE.json`）へ固定。
+  archive SHA-256 `653eedc6397ae1feda9b287a943da432a2b92df6676b91dff53f212ae9b29ab1`。
+- 2026-08-16: `lossless_audio_gain-0.1.0` source snapshot を `third_party/lossless_audio_gain/lossless_audio_gain-0.1.0` へ固定した。
+  source ZIP SHA-256 が指定値 `43998C4C3FE7CB081E25C1FCA7FCD3BB4B7044089618839B9BBC4F1C6D5BBE20` と一致。
+  `pyproject.toml` にローカル依存を追加し、pytest の `pythonpath` に source dir を追加した。
+- 2026-08-16: ユーザー指示により、同パッケージの subprocess 起動部（`measure.py`/`aac.py`/`probe.py`）を
+  `win_safesubprocess` + `CREATE_NO_WINDOW` へ書き換えた（標準 subprocess への import フォールバック付き）。
+- 2026-08-16: `songcut/ffmpeg_tools.py` に `find_mp3rgain()` を追加し、portable root の
+  `third_party/mp3rgain/mp3rgain.exe` 固定パスを解決する（PATH 探索・実行時 download なし）。
+- 2026-08-16: `songcut/smart_export.py` を書き換え、smart span 経路と full re-encode 経路の両方で
+  音声を共通 artifact 段階（AAC は一時 M4A、Opus は一時 Ogg Opus）へ分離し、
+  `lossless_audio_gain.normalize_true_peak`（`target_true_peak_dbtp=-1.0`, `verify=True`,
+  `aac_write_undo=False`, `aac_check_reversible=True`, `r128_policy="neutralize"`）を適用。
+  最終 mux は `-c:v copy`/`-c:a copy` とし、mux 後に `measure_true_peak` で再測定して突き合わせる。
+  `GainResult` と最終 True Peak を export 結果の `true_peak` キーへ記録する。
+  補正失敗時は「補正済み」と報告せず、未補正の音声を維持して結果を省略する。
+- 2026-08-16: `packaging/build_dist.ps1` を更新し、`third_party/mp3rgain` と `third_party/aacgain` を
+  配布先 `third_party` へコピー（full/standard 双方）、`lossless_audio_gain` を PyInstaller の
+  `--paths`/`--collect-all lossless_audio_gain` で取り込んだ（`--copy-metadata` は pip 未 install のため不使用）。
+  standard ZIP の除外は既存 `third_party/ffmpeg` のみのままで、mp3rgain/aacgain は除外しない。
+- 2026-08-16: 検証。focused pytest（`tests/test_smart_export.py`）27 passed、`tests/test_api.py`/`test_cli_integration.py`
+  42 passed / 3 skipped、lossless_audio_gain の package 回帰 18 passed / 1 skipped（`test_aac_backend.py` の
+  3 件は Windows で shebang スクリプトを spawn できない既存のテスト設計問題で、実 mp3rgain.exe を使う
+  統合試験は成功）。`git diff --check` 成功。
+- 2026-08-16: 実統合試験。同梱相当 FFmpeg 8.1.2 と同梱 mp3rgain 3.2.0 で、AAC（mp3rgain backend）は
+  `-1.130 dBTP`、Opus（python-opushead backend）は `-1.010 dBTP` に補正（いずれも再エンコードなし）。
+  AAC は補正前後で profile=LC / sample_rate / channels / duration / frame 数が維持され、global_gain 以外は不変。
+  Opus は Ogg→WebM remux 後も `-1.010 dBTP` で gain が引き継がれることを確認した。
+- 2026-08-16: 通常 portable build 成功（Version 1.1.88）。配布先 `third_party/mp3rgain` に
+  mp3rgain.exe + LOCAL_SOURCE.json がコピーされ、`find_mp3rgain(portable_root)` が解決することを確認。
+  `-Release` で full/standard ZIP 双方に mp3rgain（3 エントリ）と aacgain（5 エントリ）が含まれ、
+  standard でも除外されないことを確認した。PyInstaller の Analysis TOC に `lossless_audio_gain` と
+  全サブモジュールが取り込まれ、warn に未解決 import がないことを確認した。
+- 2026-08-16: 元briefの「ユーザーからの指示」に従い、Cut出力ダイアログへ「音量を自動補正する」
+  チェックボックスとターゲット音量（デフォルト -1.0 dBTP）設定を追加した。backend `ExportRequest` に
+  `normalize_audio`／`target_true_peak_dbtp` を追加し、`export_smart_clip` は `normalize_audio=False`
+  のとき補正しない（既存 CLI/テスト互換）。GUI は `api.ts`/`useCutOperations.ts`/`App.tsx`/
+  `AppDialogs.tsx`/`i18n.ts` にチェックボックスと数値入力を配線した。GUI typecheck 成功、
+  GUI vitest 473 passed、全 Python pytest 342 passed / 9 skipped、`git diff --check` 成功。
+- 2026-08-16: ユーザー指示により、調整幅のGUI進捗メッセージ表示は採用せず、音声調整結果を
+  テキストファイル `gain_report.txt` としてExport先フォルダへ出力する方式に変更した。
+  各行に ファイル名・target_true_peak_dbtp・applied_gain_db・verified_true_peak_dbtp を
+  タブ区切りで記録し、補正に成功したクリップだけを列挙する（補正なしならファイル自体を生成しない）。
+  backend `_export_job` に `_write_gain_report`/`_export_gain_info` を追加し、`result.gain_report_path` へ
+  記録する。GUI 側の進捗メッセージ追加（exportingItemGain/Done）は撤去した。
 
 ## 状態判断
 
-未着手。SCUT-072の状態判断後に着手する。まず指定source snapshotと`third_party/mp3rgain`
-配布用パッケージ全体をrepoへ固定し、通常portable packageおよびfull／standard Releaseの
-双方で同じmp3rgain全体が配布されることを確認する。AACと、OggからWebM/MKAへremuxした
-Opusの最終検証が通るまで、本機能を完了扱いにしない。
+実装済み・ローカル検証済み。YouTube への private/unlisted fixture アップロードによる実環境確認は
+未実施のため、本タスクは `実環境検証待ち` とする。AAC は最終 True Peak が `-1.0 dBTP` を超えず
+（量子化誤差込みで `±0.75 dB` 内）、Opus は `-1.0 dBTP ±0.05 dB` 内で上限を超えないことをローカルで確認した。
+mp3rgain/aacgain は full/standard Release の両方へ同梱され、standard で除外されない。

@@ -166,6 +166,8 @@ describe("Cut operation coordinator", () => {
         checked: true,
       }],
       timestampCommentText: "00:01 One",
+      normalizeAudio: true,
+      targetTruePeakDbtp: -1.5,
       validationError: "invalid filename",
     });
     expect(startExport).not.toHaveBeenCalled();
@@ -179,6 +181,8 @@ describe("Cut operation coordinator", () => {
         { id: "two", segmentId: "segment-2", title: "Two", filename_stem: "two", start: 2, end: 3, checked: false },
       ],
       timestampCommentText: "00:01 One",
+      normalizeAudio: true,
+      targetTruePeakDbtp: -1.5,
     });
     expect(state.onExportStart).toHaveBeenCalledOnce();
     expect(startExport).toHaveBeenCalledWith(
@@ -188,6 +192,8 @@ describe("Cut operation coordinator", () => {
       [expect.objectContaining({ id: "one" })],
       "00:01 One",
       true,
+      true,
+      -1.5,
     );
   });
 

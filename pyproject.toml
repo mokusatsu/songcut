@@ -5,6 +5,7 @@ description = "Local VSinger singing-stream segment extractor for Intel CPU/NPU-
 requires-python = ">=3.11"
 dependencies = [
   "ass-lyric-effects @ file:./third_party/ass_lyric_effects/ass_lyric_effects-3.0.0-py3-none-any.whl#sha256=c9ec21d353543215aaaed7424b775732714c344d05356b5ec9eeef20fc212fed",
+  "lossless-audio-gain @ file:./third_party/lossless_audio_gain/lossless_audio_gain-0.1.0",
   "numpy>=2.0",
   "win-safesubprocess>=0.1,<0.2",
 ]
@@ -52,6 +53,6 @@ py-modules = ["songcut_cli"]
 package-dir = { uta_align = "third_party/uta_align/src/uta_align" }
 
 [tool.pytest.ini_options]
-pythonpath = [".", "third_party/uta_align/src"]
+pythonpath = [".", "third_party/uta_align/src", "third_party/lossless_audio_gain/lossless_audio_gain-0.1.0/src"]
 testpaths = ["tests"]
 addopts = ["-ra", "--durations=25"]

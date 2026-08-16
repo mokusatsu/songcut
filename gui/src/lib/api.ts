@@ -247,14 +247,18 @@ export function startExport(
   outputDir: string,
   items: unknown[],
   timestampCommentText = "",
-  createSourceFolder = false
+  createSourceFolder = false,
+  normalizeAudio = false,
+  targetTruePeakDbtp = -1.0
 ) {
   return postJson<JobRecord>(baseUrl, "/export/jobs", {
     source_path: sourcePath,
     output_dir: outputDir,
     items,
     timestamp_comment_text: timestampCommentText,
-    create_source_folder: createSourceFolder
+    create_source_folder: createSourceFolder,
+    normalize_audio: normalizeAudio,
+    target_true_peak_dbtp: targetTruePeakDbtp
   });
 }
 

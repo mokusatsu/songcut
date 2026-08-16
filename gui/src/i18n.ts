@@ -205,6 +205,8 @@ const en = {
     smartDetail: "{{codec}} / copies {{copied}}; re-encodes {{encoded}} at the boundaries",
     progress: "Export Progress", preparing: "Preparing export.", failed: "Export failed.", complete: "Export complete.",
     progressNote: "Smart-render clips copy eligible GOPs and re-encode their boundaries; other clips are fully re-encoded.",
+    normalizeAudio: "Automatically normalize audio volume",
+    targetTruePeak: "Target true peak (dBTP)",
   },
   dialogs: {
     whisperNotReady: "Whisper model is not ready", whisperMissing: "The selected {{model}} model is not installed. Downloading is always an explicit action.",
@@ -527,6 +529,8 @@ const ja: TranslationShape<typeof en> = {
     smartDetail: "{{codec}} / {{copied}} をコピー、境界の {{encoded}} を再エンコード",
     progress: "書き出し進捗", preparing: "書き出しを準備しています。", failed: "書き出しに失敗しました。", complete: "書き出しが完了しました。",
     progressNote: "スマートレンダー対象クリップは利用可能な GOP をコピーして境界のみ再エンコードし、その他は全体を再エンコードします。",
+    normalizeAudio: "音量を自動補正する",
+    targetTruePeak: "ターゲット音量 (dBTP)",
   },
   dialogs: {
     whisperNotReady: "Whisper モデルの準備ができていません", whisperMissing: "選択した {{model}} モデルは未インストールです。ダウンロードは明示的な操作でのみ行います。",

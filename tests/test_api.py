@@ -31,6 +31,8 @@ from songcut.api import (
     _download_mms_job,
     _download_whisper_job,
     _export_job,
+    _export_gain_info,
+    _write_gain_report,
     _lyrics_analysis_job,
     _job_cancel_events,
     _jobs,
@@ -991,6 +993,8 @@ class ApiJobTests(unittest.TestCase):
             mock.ANY,
             start=10.0,
             end=20.0,
+            normalize_audio=False,
+            target_true_peak_dbtp=-1.0,
         )
         with _jobs_lock:
             completed = _jobs["export-001"]
@@ -1046,13 +1050,74 @@ class ApiJobTests(unittest.TestCase):
                 {
                     "status": "running",
                     "progress": 0.5,
+                    "message": "Exported Opening Theme (1/2)",
+                },
+                {
+                    "status": "running",
+                    "progress": 0.5,
                     "message": "Exporting 03_Encore (2/2)",
                     "message_code": "exportingItemProgress",
                     "message_args": {"title": "03_Encore", "current": 2, "total": 2},
                 },
+                {
+                    "status": "running",
+                    "progress": 1.0,
+                    "message": "Exported 03_Encore (2/2)",
+                },
             ],
         )
         self.assertTrue(all("export-" not in update["message"] for update in running_updates))
+
+    def test_write_gain_report_writes_only_normalized_clips(self) -> None:
+        from pathlib import Path
+        import tempfile
+
+        exported = [
+            {
+                "id": "a",
+                "target": "out/01.mp4",
+                "true_peak": {
+                    "final_true_peak_dbtp": -1.13,
+                    "gain": {"applied_gain_db": -3.0, "target_true_peak_dbtp": -1.0},
+                },
+            },
+            {
+                "id": "b",
+                "target": "out/02.mp4",
+                # No true_peak -> skipped (not normalized)
+            },
+            {
+                "id": "c",
+                "target": "out/03.mp4",
+                "true_peak": {
+                    "final_true_peak_dbtp": -1.01,
+                    "gain": {"applied_gain_db": 16.97, "target_true_peak_dbtp": -1.0},
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = _write_gain_report(Path(tmp), exported)
+            self.assertIsNotNone(report_path)
+            content = Path(report_path).read_text(encoding="utf-8")
+        lines = content.strip().splitlines()
+        self.assertEqual(lines[0], "file\ttarget_true_peak_dbtp\tapplied_gain_db\tverified_true_peak_dbtp")
+        self.assertEqual(len(lines), 3)
+        self.assertIn("01.mp4\t-1.00\t-3.00\t-1.13", content)
+        self.assertIn("03.mp4\t-1.00\t+16.97\t-1.01", content)
+        self.assertNotIn("02.mp4", content)
+
+    def test_write_gain_report_omits_file_when_no_normalized_clips(self) -> None:
+        from pathlib import Path
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = _write_gain_report(Path(tmp), [{"id": "a", "target": "out/01.mp4"}])
+        self.assertIsNone(report_path)
+
+    def test_export_gain_info_ignores_non_finite_applied_gain(self) -> None:
+        self.assertIsNone(_export_gain_info({"true_peak": {"gain": {"applied_gain_db": float("nan")}}}))
+        self.assertIsNone(_export_gain_info({"true_peak": {}}))
+        self.assertIsNone(_export_gain_info({}))
 
     def test_export_plan_reports_smart_and_full_reencode_items(self) -> None:
         source = Path("source.mp4")

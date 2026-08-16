@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lossless-audio-gain"
+version = "0.1.0"
+description = "Lossless gain and True-Peak adjustment for Ogg Opus and AAC-LC in MP4/M4A"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = ["audio", "opus", "aac", "true-peak", "gain", "lossless"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Sound/Audio",
+]
+dependencies = []
+
+[project.scripts]
+lossless-audio-gain = "lossless_audio_gain.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "integration: requires external multimedia tools",
+]

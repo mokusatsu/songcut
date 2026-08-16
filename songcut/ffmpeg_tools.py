@@ -82,6 +82,25 @@ def find_ffmpeg(root: Path | None = None) -> FfmpegPaths:
     )
 
 
+def find_mp3rgain(root: Path | None = None) -> Path:
+    """Resolve the bundled mp3rgain executable from the fixed third_party path.
+
+    Runtime resolution is restricted to the portable package's
+    ``third_party/mp3rgain`` directory; PATH search and runtime download are
+    intentionally not supported.
+    """
+
+    search_root = _search_root(root)
+    candidate = search_root / "third_party" / "mp3rgain" / "mp3rgain.exe"
+    if candidate.is_file():
+        return candidate
+    raise FileNotFoundError(
+        "mp3rgain.exe was not found at the bundled path: "
+        f"{candidate}. The AAC true-peak backend requires the mp3rgain "
+        "distribution package to be present under third_party/mp3rgain."
+    )
+
+
 def ffprobe_json(ffprobe: Path, source: Path, extra_args: list[str]) -> dict:
     command = [str(ffprobe), "-v", "error", *extra_args, "-of", "json", str(source)]
     result = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
