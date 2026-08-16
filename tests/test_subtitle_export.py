@@ -92,6 +92,29 @@ def test_lrc_document_keeps_display_element_tags_blank_and_line_end() -> None:
     )
 
 
+def test_lrc_document_keeps_a_whitespace_display_element_and_its_timestamp() -> None:
+    lane = SubtitleLane(
+        "lyrics",
+        "Lyrics",
+        SubtitleStyle(),
+        [
+            SubtitleFileSegment(
+                "line",
+                "A B",
+                1.0,
+                3.0,
+                display_elements=(
+                    SubtitleDisplayElement("A", 1.0, 1.5),
+                    SubtitleDisplayElement(" ", 1.5, 2.0),
+                    SubtitleDisplayElement("B", 2.0, 3.0),
+                ),
+            )
+        ],
+    )
+
+    assert render_lrc_document([lane]) == "[00:01.00]<00:01.00>A<00:01.50> <00:02.00>B<00:03.00>\n"
+
+
 def test_lrc_falls_back_to_line_text_and_rounds_centiseconds() -> None:
     lane = SubtitleLane(
         "lyrics",

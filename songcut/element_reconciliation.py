@@ -104,6 +104,37 @@ def _matching_generated_index(
     return None
 
 
+def _matching_generated_span_indexes(
+    old_text: str,
+    new_text: str,
+    manual: DisplayElement,
+    generated: Sequence[DisplayElement],
+    used: set[int],
+) -> tuple[int, ...]:
+    """手動マージ範囲を連続する複数の新しいseedへ対応付ける。"""
+
+    mapped_range = _lcs_source_range(old_text, new_text, manual)
+    if mapped_range is None:
+        return ()
+    source_start, source_end = mapped_range
+    candidates = [
+        (index, candidate)
+        for index, candidate in enumerate(generated)
+        if index not in used
+        and candidate.source_start >= source_start
+        and candidate.source_end <= source_end
+        and candidate.source_end > candidate.source_start
+    ]
+    if not candidates:
+        return ()
+    candidates.sort(key=lambda item: item[0])
+    if candidates[0][1].source_start != source_start or candidates[-1][1].source_end != source_end:
+        return ()
+    if any(left[1].source_end != right[1].source_start for left, right in zip(candidates, candidates[1:])):
+        return ()
+    return tuple(index for index, _candidate in candidates)
+
+
 def _partition_elements(
     elements: Sequence[DisplayElement],
     *,
@@ -275,6 +306,27 @@ def reconcile_display_elements(
             working,
             used,
         )
+        if matched_index is None and manual.manual_structure:
+            matched_span = _matching_generated_span_indexes(
+                old_text,
+                new_text,
+                manual,
+                working,
+                used,
+            )
+            if matched_span:
+                removed = set(matched_span)
+                for index in reversed(matched_span):
+                    dropped.append(working[index].stable_id)
+                    working.pop(index)
+                used = {
+                    index - sum(removed_index < index for removed_index in removed)
+                    for index in used
+                    if index not in removed
+                }
+                preserved.append(manual.stable_id)
+                insertions.append(manual)
+                continue
         preserved.append(manual.stable_id)
         if matched_index is not None and not manual.manual_structure:
             candidate = working[matched_index]

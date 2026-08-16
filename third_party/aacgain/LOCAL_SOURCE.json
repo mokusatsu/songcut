@@ -1,0 +1,23 @@
+{
+  "distribution": "aacgain",
+  "version": "1.9.0",
+  "archive_file": "aacgain_1_9.zip",
+  "archive_sha256": "653eedc6397ae1feda9b287a943da432a2b92df6676b91dff53f212ae9b29ab1",
+  "files": [
+    {
+      "path": "aacgain.exe",
+      "sha256": "1bcde34af292730842381789b59d61927e40d743c1a06f225dad18588f61515d",
+      "size": 1009664
+    },
+    {
+      "path": "COPYING",
+      "sha256": "5f7cede4d818f5b8445015c8fea4dcab610b5c0deb10029bb0f3fb97a59a4b0b",
+      "size": 18480
+    },
+    {
+      "path": "README",
+      "sha256": "e6db9e366116d6d8d53725dc25f4881a83483fbd8a6aad8369066ac4beff76aa",
+      "size": 16064
+    }
+  ]
+}

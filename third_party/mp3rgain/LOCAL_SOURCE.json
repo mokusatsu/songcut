@@ -1,0 +1,16 @@
+{
+  "distribution": "mp3rgain",
+  "version": "3.2.0",
+  "release_tag": "v3.2.0",
+  "platform": "windows-x86_64",
+  "repository": "https://github.com/M-Igashi/mp3rgain",
+  "archive_file": "mp3rgain-v3.2.0-windows-x86_64.zip",
+  "archive_sha256": "aa1688afb0e33db146af53dc1903c33ef24d22231c3beffb05a6d158fe3fa146",
+  "files": [
+    {
+      "path": "mp3rgain.exe",
+      "sha256": "6b8a5fdf5d0df8caa630f3f79b87a5da07bc567c87463eddcae912ed101dfce6",
+      "size": 2568704
+    }
+  ]
+}

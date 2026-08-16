@@ -9,60 +9,102 @@
     "database": ".codex/code-map/state/graph.sqlite3",
     "external_analysis_dependencies": []
   },
-  "generated_at": "2026-08-14T20:47:32+09:00",
+  "generated_at": "2026-08-16T10:06:28+09:00",
   "repository": "songcut",
-  "mode": "verify",
+  "mode": "update",
   "vcs": {
     "type": "git",
-    "analyzed_head": "d21884c22bb478ca00221d03344da900c47c6029",
-    "last_analyzed_commit": "d21884c22bb478ca00221d03344da900c47c6029",
+    "analyzed_head": "2dcea33f5b63bb29970ec9068ca99f5ced8cc606",
+    "last_analyzed_commit": "2dcea33f5b63bb29970ec9068ca99f5ced8cc606",
     "branch": "main",
-    "base": "d21884c",
+    "base": "2dcea33f5b63bb29970ec9068ca99f5ced8cc606",
     "dirty": true,
-    "tracked_diff_sha256": "9b5b13a15619f7887262b7b549267e343235be936ac30c831d85165aefaaa7b2",
+    "tracked_diff_sha256": "858f23cd2cca7c420d92726339705f1ab019a97a482b75ef04c0274b5a20abf6",
     "changed_paths": [
+      "README.md",
+      "docs/INDEX.md",
+      "docs/USAGE.ja.md",
+      "docs/USAGE.md",
       "docs/code-map/README.md",
+      "docs/code-map/architecture.md",
       "docs/code-map/change-impact.md",
-      "docs/code-map/manifest.json"
+      "docs/code-map/flows.md",
+      "docs/code-map/hotspots.md",
+      "docs/code-map/manifest.json",
+      "docs/code-map/modules/gui.md",
+      "docs/code-map/modules/songcut.md",
+      "docs/code-map/modules/tests.md",
+      "docs/code-map/modules/tools.md",
+      "docs/mms-line-proportional-test-targets.md",
+      "gui/src/App.tsx",
+      "gui/src/components/SegmentAddDialog.test.tsx",
+      "gui/src/components/SegmentAddDialog.tsx",
+      "gui/src/components/SubModePanel.test.ts",
+      "gui/src/i18n.ts",
+      "gui/src/lib/subtitles.test.ts",
+      "gui/src/lib/subtitles.ts",
+      "gui/src/styles.css",
+      "songcut/element_reconciliation.py",
+      "songcut/lyrics_elements.py",
+      "tasks/SCUT-064.md",
+      "tasks/SCUT-065.md",
+      "tasks/SCUT-066.md",
+      "tasks/SCUT-067.md",
+      "tasks/SCUT-070.md",
+      "tasks/SCUT-071.md",
+      "tasks/task-list.md",
+      "tests/test_element_reconciliation.py",
+      "tests/test_lyrics_elements.py",
+      "tests/test_omniasr_alignment.py",
+      "tests/test_subtitle_export.py",
+      "tools/probe_omniasr_ctc_targets.py"
     ],
-    "untracked_paths": []
+    "untracked_paths": [
+      "docs/code-map/modules/tools.md",
+      "gui/src/components/SegmentAddDialog.test.tsx",
+      "gui/src/components/SegmentAddDialog.tsx",
+      "tasks/SCUT-070.md",
+      "tasks/SCUT-071.md",
+      "tests/test_omniasr_alignment.py",
+      "tools/probe_omniasr_ctc_targets.py"
+    ]
   },
   "snapshot": {
-    "source_tree_sha256": "a1922fc0eb7754a14f2fa32d1741d98eb3b9cd0b125567136b18f0747d98bee9",
-    "file_count": 279,
-    "previous_source_tree_sha256": "a1922fc0eb7754a14f2fa32d1741d98eb3b9cd0b125567136b18f0747d98bee9"
+    "source_tree_sha256": "c4feae7f39b045adb7d2864307a8f3eb2e8a189fbc1dfc5d5ac5dfe0ff35e9f3",
+    "file_count": 284,
+    "previous_source_tree_sha256": "d76114e675abd0e3bef2847819068b05acbd584c9b75a8d39685ca6414250fa0"
   },
   "graph": {
     "status": "ready",
     "stats": {
-      "files": 279,
-      "nodes": 3136,
-      "edges": 10909,
-      "components": 6,
+      "files": 284,
+      "nodes": 3256,
+      "edges": 11341,
+      "components": 7,
       "flows": 18,
       "parse_errors": 0,
       "languages": {
         "c_cpp": 3,
         "javascript": 3,
         "powershell": 2,
-        "python": 100,
-        "typescript": 171
+        "python": 103,
+        "typescript": 173
       },
       "node_kinds": {
-        "Class": 194,
-        "External": 102,
-        "File": 279,
-        "Function": 1717,
+        "Class": 196,
+        "External": 103,
+        "File": 284,
+        "Function": 1783,
         "Method": 139,
-        "Test": 705
+        "Test": 751
       },
       "edge_kinds": {
-        "call": 7444,
+        "call": 7739,
         "decorator": 9,
-        "external_io": 354,
-        "import": 935,
+        "external_io": 368,
+        "import": 967,
         "inherit": 10,
-        "tests": 2157
+        "tests": 2248
       }
     }
   },
@@ -78,7 +120,8 @@
     "modules/packaging.md",
     "modules/songcut.md",
     "modules/tests.md",
-    "modules/third_party-uta_align.md"
+    "modules/third_party-uta_align.md",
+    "modules/tools.md"
   ],
   "components": [
     {
@@ -92,8 +135,8 @@
         "gui/electron/project-schema.ts"
       ],
       "page": "modules/gui.md",
-      "files": 170,
-      "cohesion": 0.9824
+      "files": 173,
+      "cohesion": 0.982
     },
     {
       "id": "songcut",
@@ -106,8 +149,8 @@
         "songcut/transcription.py"
       ],
       "page": "modules/songcut.md",
-      "files": 62,
-      "cohesion": 0.9364
+      "files": 57,
+      "cohesion": 0.876
     },
     {
       "id": "third_party-uta_align",
@@ -121,21 +164,21 @@
       ],
       "page": "modules/third_party-uta_align.md",
       "files": 25,
-      "cohesion": 0.9018
+      "cohesion": 0.8978
     },
     {
       "id": "tests",
       "name": "tests",
       "anchors": [
+        "songcut/windows_font_native.py",
         "tests/test_subtitle_export.py",
-        "tools/benchmark_kiritan_display_elements.py",
         "tests/test_smart_export.py",
-        "tests/test_kiritan_display_benchmark.py",
-        "tests/test_lyrics_artifact_cache.py"
+        "tests/test_mms_alignment.py",
+        "tests/test_kiritan_display_benchmark.py"
       ],
       "page": "modules/tests.md",
-      "files": 14,
-      "cohesion": 0.1276
+      "files": 19,
+      "cohesion": 0.0205
     },
     {
       "id": "packaging",
@@ -161,6 +204,17 @@
       "page": "modules/native-windows_font_resolver.md",
       "files": 2,
       "cohesion": 0.0
+    },
+    {
+      "id": "tools",
+      "name": "tools",
+      "anchors": [
+        "tools/benchmark_kiritan_display_elements.py",
+        "tools/probe_omniasr_ctc_targets.py"
+      ],
+      "page": "modules/tools.md",
+      "files": 2,
+      "cohesion": 0.0886
     }
   ],
   "flows": [

@@ -6,8 +6,10 @@ function source(relativePath: string): string {
 }
 
 const subPanelSource = source("./SubModePanel.tsx");
+const segmentAddDialogSource = source("./SegmentAddDialog.tsx");
 const subtitleStyleSource = source("./SubtitleStyleEditor.tsx");
 const subTimelineSource = source("./SubTimelineEditor.tsx");
+const appSource = source("../App.tsx");
 const styleSource = source("../styles.css");
 const radixSelectSource = source("./ui/radix-select.tsx");
 const subModeE2eSource = source("../../../packaging/e2e_sub_mode.js");
@@ -89,6 +91,33 @@ describe("SCUT-039 subtitle effect settings contract", () => {
     expect(subPanelSource).not.toContain("SegmentTimingDialog");
     expect(subPanelSource).not.toContain("onEditTiming");
     expect(subTimelineSource).not.toContain("onEditTiming");
+  });
+
+  it("routes the Sub segment action through the explicit add dialog", () => {
+    expect(subPanelSource).toContain("props.actions.addSegment");
+    expect(appSource).toContain('import { SegmentAddDialog }');
+    expect(appSource).toContain("add: openSubtitleSegmentAddDialog");
+    expect(appSource).toContain("<SegmentAddDialog");
+    expect(appSource).toContain("selectedSegment={selectedSubtitleItems.length === 1");
+    expect(appSource).not.toContain("add: addNewSubtitleSegment");
+    expect(appSource).not.toContain("addFourBeatSegment");
+    expect(segmentAddDialogSource).toContain("segmentAddPositionOptions");
+    expect(segmentAddDialogSource).toContain('onConfirm({');
+  });
+
+  it("uses the shared font-size tokens throughout the segment add dialog", () => {
+    expect(styleSource).toMatch(
+      /\.segment-add-dialog\s*\{[\s\S]*?font-size: var\(--font-size-control\);/,
+    );
+    expect(styleSource).toMatch(
+      /\.segment-add-field > span\s*\{[\s\S]*?font-size: inherit;/,
+    );
+    expect(styleSource).toMatch(
+      /\.segment-add-field \.select\s*\{[\s\S]*?font-size: inherit;/,
+    );
+    expect(styleSource).toMatch(
+      /\.segment-add-dialog \.dialog-message,[\s\S]*?\.segment-add-error\s*\{[\s\S]*?font-size: var\(--font-size-meta\);/,
+    );
   });
 
   it("lays out Saved Styles as two full-width operation rows", () => {

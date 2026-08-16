@@ -1,0 +1,13 @@
+{
+  "distribution": "lossless-audio-gain",
+  "version": "0.1.0",
+  "source_zip": "lossless_audio_gain-0.1.0-source.zip",
+  "source_zip_sha256": "43998c4c3fe7cb081e25c1fca7fcd3bb4b7044089618839b9bbc4f1c6d5bbe20",
+  "source_directory": "lossless_audio_gain-0.1.0",
+  "public_api": [
+    "normalize_true_peak",
+    "measure_true_peak",
+    "GainResult"
+  ],
+  "requires_python": ">=3.10"
+}

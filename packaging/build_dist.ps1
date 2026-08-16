@@ -357,6 +357,7 @@ try {
   --icon $AppIcon `
   --paths $LocalAssSitePackages `
   --paths (Join-Path $RepoRoot "third_party\uta_align\src") `
+  --paths (Join-Path $RepoRoot "third_party\lossless_audio_gain\lossless_audio_gain-0.1.0\src") `
   --distpath $PyinstallerDist `
   --workpath $PyinstallerWork `
   --specpath $PyinstallerWork `
@@ -380,6 +381,7 @@ try {
   --copy-metadata ass-lyric-effects `
   --copy-metadata regex `
   --copy-metadata uharfbuzz `
+  --collect-all lossless_audio_gain `
   --collect-submodules uta_align `
   --exclude-module tensorflow `
   --exclude-module transformers `
@@ -485,13 +487,32 @@ $PackageJson.version = $AppVersion
 $PackageJson | ConvertTo-Json -Depth 20 | Set-Content -Path $PackageJsonTarget -Encoding UTF8
 
 # Keep the portable package's third_party directory limited to the FFmpeg
-# runtime.  Other repositories under third_party are build inputs only.
+# runtime and the mp3rgain distribution package.  Other repositories under
+# third_party are build inputs only.  mp3rgain is a deliberate allowlist
+# exception to the FFmpeg-only rule (SCUT-073); the lossless_audio_gain source
+# is bundled via PyInstaller instead of being copied verbatim.
 $BundledFfmpegSource = Join-Path $RepoRoot "third_party\ffmpeg"
 if (Test-Path -LiteralPath $BundledFfmpegSource -PathType Container) {
   $ThirdPartyTarget = Join-Path $PackageRoot "third_party"
   $BundledFfmpegTarget = Join-Path $ThirdPartyTarget "ffmpeg"
   New-Item -ItemType Directory -Force -Path $ThirdPartyTarget | Out-Null
   Copy-Item -LiteralPath $BundledFfmpegSource -Destination $BundledFfmpegTarget -Recurse
+}
+
+$BundledMp3rgainSource = Join-Path $RepoRoot "third_party\mp3rgain"
+if (Test-Path -LiteralPath $BundledMp3rgainSource -PathType Container) {
+  $ThirdPartyTarget = Join-Path $PackageRoot "third_party"
+  $BundledMp3rgainTarget = Join-Path $ThirdPartyTarget "mp3rgain"
+  New-Item -ItemType Directory -Force -Path $ThirdPartyTarget | Out-Null
+  Copy-Item -LiteralPath $BundledMp3rgainSource -Destination $BundledMp3rgainTarget -Recurse
+}
+
+$BundledAacgainSource = Join-Path $RepoRoot "third_party\aacgain"
+if (Test-Path -LiteralPath $BundledAacgainSource -PathType Container) {
+  $ThirdPartyTarget = Join-Path $PackageRoot "third_party"
+  $BundledAacgainTarget = Join-Path $ThirdPartyTarget "aacgain"
+  New-Item -ItemType Directory -Force -Path $ThirdPartyTarget | Out-Null
+  Copy-Item -LiteralPath $BundledAacgainSource -Destination $BundledAacgainTarget -Recurse
 }
 
 $BundledModels = @(

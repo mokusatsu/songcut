@@ -7,13 +7,14 @@ import win_safesubprocess as subprocess
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from .ffmpeg_tools import ffprobe_json
+from .ffmpeg_tools import ffprobe_json, find_mp3rgain
 from .ffmpeg_process import CREATE_NO_WINDOW, run_ffmpeg_sync
 
 
 MIN_SPAN_SECONDS = 0.001
 DEFAULT_SOURCE_VIDEO_BITRATE = 2_000_000
 MIN_REENCODE_BITRATE = 300_000
+DEFAULT_TRUE_PEAK_DBTP = -1.0
 LOGGER = logging.getLogger(__name__)
 
 
@@ -346,35 +347,65 @@ def estimate_smart_render(format_name: str, video_codec: str, source: Path) -> S
     )
 
 
-def export_smart_clip(ffmpeg: Path, ffprobe: Path, source: Path, target: Path, *, start: float, end: float) -> dict:
+def export_smart_clip(
+    ffmpeg: Path,
+    ffprobe: Path,
+    source: Path,
+    target: Path,
+    *,
+    start: float,
+    end: float,
+    normalize_audio: bool = False,
+    target_true_peak_dbtp: float = DEFAULT_TRUE_PEAK_DBTP,
+) -> dict:
     plan = plan_smart_render(ffprobe, source, start=start, end=end)
     actual_target = target.with_suffix(plan.output_suffix)
     actual_target.parent.mkdir(parents=True, exist_ok=True)
+    mp3rgain = _resolve_mp3rgain(plan) if normalize_audio else None
 
+    true_peak: dict | None = None
     if plan.fallback_reason is not None:
-        _export_full_reencode(ffmpeg, source, actual_target, plan)
+        true_peak = _export_full_reencode(
+            ffmpeg, ffprobe, mp3rgain, source, actual_target, plan, normalize_audio, target_true_peak_dbtp
+        )
         _validate_export(ffprobe, actual_target, plan)
     else:
         try:
-            _export_smart_spans(ffmpeg, ffprobe, source, actual_target, plan)
+            true_peak = _export_smart_spans(
+                ffmpeg, ffprobe, mp3rgain, source, actual_target, plan, normalize_audio, target_true_peak_dbtp
+            )
             _validate_export(ffprobe, actual_target, plan)
         except (subprocess.CalledProcessError, RuntimeError) as exc:
             reason = f"smart render failed: {_exception_detail(exc)}"
             LOGGER.warning("%s; falling back to full re-encode", reason)
             plan = _fallback_plan(plan, reason)
-            _export_full_reencode(ffmpeg, source, actual_target, plan)
+            true_peak = _export_full_reencode(
+                ffmpeg, ffprobe, mp3rgain, source, actual_target, plan, normalize_audio, target_true_peak_dbtp
+            )
             _validate_export(ffprobe, actual_target, plan)
 
-    return {"target": str(actual_target), "smart_render_plan": asdict(plan)}
+    result: dict = {"target": str(actual_target), "smart_render_plan": asdict(plan)}
+    if true_peak:
+        result["true_peak"] = true_peak
+    return result
+
+
+def _resolve_mp3rgain(plan: SmartRenderPlan) -> Path | None:
+    if plan.has_audio and _audio_codec_family(plan) == "aac":
+        return find_mp3rgain()
+    return None
 
 
 def _export_smart_spans(
     ffmpeg: Path,
     ffprobe: Path,
+    mp3rgain: Path | None,
     source: Path,
     target: Path,
     plan: SmartRenderPlan,
-) -> None:
+    normalize_audio: bool,
+    target_true_peak_dbtp: float,
+) -> dict | None:
     with tempfile.TemporaryDirectory(prefix="songcut-smart-") as tmp_name:
         tmp = Path(tmp_name)
         span_paths: list[Path] = []
@@ -390,15 +421,37 @@ def _export_smart_spans(
         video_target = tmp / f"video{plan.output_suffix}"
         _concat_video_spans(ffmpeg, span_paths, video_target, plan)
 
-        if plan.has_audio:
-            audio_target = tmp / f"audio{_audio_suffix(plan)}"
-            _export_audio(ffmpeg, source, audio_target, plan)
-            _mux_video_audio(ffmpeg, video_target, audio_target, target, plan)
-        else:
-            shutil.move(str(video_target), str(target))
+        return _finalize_audio_and_mux(
+            ffmpeg, ffprobe, mp3rgain, source, target, plan, video_target, tmp,
+            normalize_audio, target_true_peak_dbtp,
+        )
 
 
-def _export_full_reencode(ffmpeg: Path, source: Path, target: Path, plan: SmartRenderPlan) -> None:
+def _export_full_reencode(
+    ffmpeg: Path,
+    ffprobe: Path,
+    mp3rgain: Path | None,
+    source: Path,
+    target: Path,
+    plan: SmartRenderPlan,
+    normalize_audio: bool,
+    target_true_peak_dbtp: float,
+) -> dict | None:
+    if not plan.has_audio:
+        _export_full_video_only(ffmpeg, source, target, plan)
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="songcut-full-") as tmp_name:
+        tmp = Path(tmp_name)
+        video_target = tmp / f"video{plan.output_suffix}"
+        _export_full_video_only(ffmpeg, source, video_target, plan)
+        return _finalize_audio_and_mux(
+            ffmpeg, ffprobe, mp3rgain, source, target, plan, video_target, tmp,
+            normalize_audio, target_true_peak_dbtp,
+        )
+
+
+def _export_full_video_only(ffmpeg: Path, source: Path, target: Path, plan: SmartRenderPlan) -> None:
     duration = max(0.0, plan.end - plan.start)
     command = [
         str(ffmpeg),
@@ -414,17 +467,42 @@ def _export_full_reencode(ffmpeg: Path, source: Path, target: Path, plan: SmartR
         f"{duration:.3f}",
         "-map",
         "0:v:0",
+        "-an",
     ]
-    if plan.has_audio:
-        command.extend(["-map", "0:a:0"])
     command.extend(_video_encode_args(plan))
-    if plan.has_audio:
-        command.extend(["-c:a", plan.audio_encoder, "-b:a", plan.audio_bitrate])
-    else:
-        command.append("-an")
     command.extend(_container_args(plan))
     command.append(str(target))
     _run_ffmpeg(command)
+
+
+def _finalize_audio_and_mux(
+    ffmpeg: Path,
+    ffprobe: Path,
+    mp3rgain: Path | None,
+    source: Path,
+    target: Path,
+    plan: SmartRenderPlan,
+    video_target: Path,
+    tmp: Path,
+    normalize_audio: bool,
+    target_true_peak_dbtp: float,
+) -> dict | None:
+    if not plan.has_audio:
+        shutil.move(str(video_target), str(target))
+        return None
+
+    audio_target = tmp / f"audio{_audio_artifact_suffix(plan)}"
+    _export_audio(ffmpeg, source, audio_target, plan)
+    if not normalize_audio:
+        _mux_video_audio(ffmpeg, video_target, audio_target, target, plan)
+        return None
+
+    gain_result = _normalize_audio_artifact(
+        ffmpeg, ffprobe, mp3rgain, audio_target, plan, target_true_peak_dbtp
+    )
+    _mux_video_audio(ffmpeg, video_target, audio_target, target, plan)
+    final_peak = _measure_final_true_peak(ffmpeg, target, plan)
+    return _true_peak_report(gain_result, final_peak)
 
 
 def _export_video_encode_span(
@@ -588,6 +666,97 @@ def _mux_video_audio(ffmpeg: Path, video: Path, audio: Path, target: Path, plan:
     _run_ffmpeg(command)
 
 
+def _normalize_audio_artifact(
+    ffmpeg: Path,
+    ffprobe: Path,
+    mp3rgain: Path | None,
+    artifact: Path,
+    plan: SmartRenderPlan,
+    target_true_peak_dbtp: float,
+) -> dict | None:
+    codec = _audio_codec_family(plan)
+    try:
+        from lossless_audio_gain import normalize_true_peak
+    except ImportError as exc:
+        LOGGER.warning("lossless_audio_gain unavailable; skipping %s true-peak correction: %s", codec, exc)
+        return None
+
+    try:
+        result = normalize_true_peak(
+            artifact,
+            artifact,
+            target_true_peak_dbtp=target_true_peak_dbtp,
+            verify=True,
+            ffmpeg_bin=str(ffmpeg),
+            ffprobe_bin=str(ffprobe),
+            mp3rgain_bin=str(mp3rgain) if mp3rgain is not None else None,
+            aac_write_undo=False,
+            aac_check_reversible=True,
+            r128_policy="neutralize",
+        )
+    except Exception as exc:
+        LOGGER.warning(
+            "true-peak normalization failed for %s artifact; keeping uncorrected audio: %s",
+            codec,
+            exc,
+        )
+        return None
+
+    try:
+        return result.to_dict()
+    except AttributeError:
+        return _gain_result_to_dict(result)
+
+
+def _measure_final_true_peak(ffmpeg: Path, target: Path, plan: SmartRenderPlan) -> float | None:
+    try:
+        from lossless_audio_gain import measure_true_peak
+    except ImportError:
+        return None
+    try:
+        return float(measure_true_peak(target, ffmpeg_bin=str(ffmpeg)))
+    except Exception as exc:
+        LOGGER.warning("final true-peak measurement failed for %s: %s", target, exc)
+        return None
+
+
+def _true_peak_report(gain_result: dict | None, final_peak: float | None) -> dict | None:
+    if gain_result is None and final_peak is None:
+        return None
+    return {
+        "gain": gain_result,
+        "final_true_peak_dbtp": final_peak,
+    }
+
+
+def _gain_result_to_dict(result: object) -> dict:
+    data: dict[str, object] = {}
+    for field in (
+        "codec",
+        "container",
+        "mode",
+        "requested_gain_db",
+        "applied_gain_db",
+        "measured_true_peak_dbtp",
+        "predicted_true_peak_dbtp",
+        "verified_true_peak_dbtp",
+        "target_true_peak_dbtp",
+        "backend",
+        "reencoded",
+        "quantization_error_db",
+        "warnings",
+    ):
+        if hasattr(result, field):
+            value = getattr(result, field)
+            if isinstance(value, tuple):
+                value = list(value)
+            data[field] = value
+    details = getattr(result, "details", None)
+    if details is not None:
+        data["details"] = dict(details)
+    return data
+
+
 def _run_ffmpeg(command: list[str]) -> None:
     try:
         run_ffmpeg_sync(command, process_module=subprocess)
@@ -746,11 +915,15 @@ def _matroska_audio_profile(info: SourceMediaInfo) -> tuple[str, str]:
     return "aac", "192k"
 
 
-def _audio_suffix(plan: SmartRenderPlan) -> str:
-    if plan.container_family == "webm":
-        return ".webm"
-    if plan.container_family == "mkv":
-        return ".mka"
+def _audio_codec_family(plan: SmartRenderPlan) -> str:
+    if plan.audio_encoder == "libopus":
+        return "opus"
+    return "aac"
+
+
+def _audio_artifact_suffix(plan: SmartRenderPlan) -> str:
+    if _audio_codec_family(plan) == "opus":
+        return ".opus"
     return ".m4a"
 
 

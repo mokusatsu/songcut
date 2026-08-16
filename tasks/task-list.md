@@ -10,10 +10,10 @@
 
 | 項目 | 値 |
 |---|---|
-| 進行中 | なし（SCUT-059は実環境検証待ち、SCUT-063は完了） |
-| 次のタスクID | `SCUT-064` |
+| 進行中 | SCUT-072（Sub表示素再解析の即時待機表示・編集ロック・3秒debounce）は実環境検証待ち。SCUT-071はローカル検証済み、SCUT-070・SCUT-059・SCUT-067は実環境検証待ち、SCUT-063〜SCUT-066・SCUT-068・SCUT-069は完了 |
+| 次のタスクID | `SCUT-074` |
 | ブランチ | `main` |
-| 今回開始時HEAD | `9581e4b` |
+| 今回開始時HEAD | `1214708` |
 
 ## 運用ルール
 
@@ -114,3 +114,13 @@
 | SCUT-061 | 配布・互換性 | Electron 43.4.0更新とダイアログ最終場所の維持 | 完了 | 最高 | なし | Electronを43.4.0へ更新し、ファイル／フォルダー選択が最後に確定した場所を次回も開く。通常portable buildと実バイナリ43.4.0を確認済み | [詳細・証拠](../tasks/SCUT-061.md) |
 | SCUT-062 | 配布・軽量化 | 配布物third_partyをffmpegに限定 | 完了 | 高 | SCUT-061 | `build_dist.ps1`が生成する配布物のthird_partyへffmpeg以外をコピーしない。再ビルドはユーザー指示により未実行 | [詳細・証拠](../tasks/SCUT-062.md) |
 | SCUT-063 | 配布・品質保証 | 1.1.83 Release build | 完了 | 高 | SCUT-062 | Git commit count 83を基準にportable packageとFull／通常版Release ZIPを生成し、必須構成・third_party限定・archive構成を検証する | [詳細・証拠](../tasks/SCUT-063.md) |
+| SCUT-064 | ドキュメント | ユーザー向けドキュメント更新 | 完了 | 中 | SCUT-045, SCUT-049, SCUT-063 | Cut/Subの目的別導線、Subの2種類の書き出し、現行の情報・復旧導線を日英資料へ反映し、表示素編集は対象外とする | [詳細・証拠](../tasks/SCUT-064.md) |
+| SCUT-065 | Sub・調査／GUI | Sub追加操作の不具合調査と仕様策定 | 完了 | 中 | なし | Timeline追加の選択依存を原因まで証跡化し、追加先／追加位置を選ぶSegment追加Dialogと異Timeline参照規則を実装可能な仕様・回帰計画として確定する | [詳細・証拠](../tasks/SCUT-065.md) |
+| SCUT-066 | 字幕・解析／出力 | 表示素空白文字の単独タイミング内挿 | 完了 | 高 | SCUT-041, SCUT-043, SCUT-049 | Standard Alignが空白文字ごとに単独の正時間長表示素を生成し、前後の表示素区間から内挿した時刻を保存・LRCへ渡す。既存の手動／保存済み表示素を移行しない | [詳細・証拠](../tasks/SCUT-066.md) |
+| SCUT-067 | AI・解析 | Standard AlignへのomniASR-CTC局所救済エンジン追加 | 実環境検証待ち | 高 | SCUT-041, SCUT-043 | MMSが`line-proportional`へ落ちた日本語行だけをomniASRで局所救済し、MMS合格行・行境界・手動表示素を維持する | [詳細・証拠](../tasks/SCUT-067.md) |
+| SCUT-068 | 字幕・品質保証 | 表示素タイミングbenchmarkの複数歌唱DB対応 | 完了 | 高 | SCUT-041 | `kiritan_singing`と同じ表示素GT／MMS検証runnerがOFUTON、No.7、東北イタコの各DBを固有形式・時刻単位込みで読み、既定の8曲・24行・200内部境界を満たし、MMSの`line-proportional`実音声対象を文書化する | [詳細・証拠](../tasks/SCUT-068.md) |
+| SCUT-069 | 開発運用・品質保証 | 全体pytestの進捗ログ強化と長時間無出力原因調査 | 完了 | 高 | なし | `python -m pytest` がout生成物を誤収集せず、各テストの収集順・phase・経過時間・長時間heartbeatを表示し、無出力区間の最後の対象と原因を証拠付きで特定する | [詳細・証拠](../tasks/SCUT-069.md) |
+| SCUT-070 | Sub・GUI | Subセグメント追加Dialogの実装 | 実環境検証待ち | 高 | SCUT-065 | SCUT-065で確定した追加先Timeline・4位置・空き／grid／重複規則を、Sub画面で確認・確定できるDialogとして実装する | [詳細・証拠](../tasks/SCUT-070.md) |
+| SCUT-071 | AI・解析 | omniASR-CTCプローブの表示境界評価修正とEveryric2準拠アブレーション | ローカル検証済み | 高 | SCUT-041, SCUT-043, SCUT-067 | 評価修正・4系列比較・実音声7対象・focused／回帰／全pytestを完了。変換一致は`not_comparable`のためSCUT-067本体統合は保留 | [詳細・証拠](../tasks/SCUT-071.md) |
+| SCUT-072 | Sub・GUI／解析 | Sub表示素再解析の即時待機表示・編集ロック・3秒debounce | 実環境検証待ち | 高 | SCUT-043, SCUT-054 | eligibleな変更直後にwaitingを表示し、waiting／running／cancelling中の表示素編集を無効化、3秒後に対象行再解析を開始する | [詳細・証拠](../tasks/SCUT-072.md) |
+| SCUT-073 | Cut・音声／品質保証 | Cut出力のAAC/Opus True Peak音量補正 | 実環境検証待ち | 高 | なし | AAC global_gain／OpusHead Output Gainを使い、追加再エンコードなしで出力True Peakを既定-1.0 dBTP程度へ補正し、mp3rgain／aacgain配布パッケージ全体をthird_partyへ置いてfull／standard Releaseへ同梱。ローカル検証済み、YouTube実環境確認が残る | [詳細・証拠](../tasks/SCUT-073.md) |

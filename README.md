@@ -9,6 +9,13 @@ English follows the Japanese.
 `songcut` は、歌枠アーカイブから切り抜き動画、タイムスタンプコメント、歌詞字幕付き動画を作るための Windows デスクトップアプリです。
 画面上部のタブで、歌唱区間を扱う Cut と歌詞字幕を扱う Sub を切り替えられます。
 
+### 目的から選ぶ
+
+- 曲ごとの切り抜き動画やタイムスタンプを作る: [Cutの使い方](docs/USAGE.ja.md#cut)
+- 字幕付き動画を作る: [Subの使い方](docs/USAGE.ja.md#sub)
+- 選択したTimelineを一つの字幕ファイルへまとめる: [字幕ファイルを書き出し（Export Sub）](docs/USAGE.ja.md#export-subで字幕ファイルを統合する)
+- キー操作を確認する: [キーボードショートカット](docs/KEYBOARD_SHORTCUTS.md)
+
 ### 代表画面
 
 Cut では歌唱区間をセグメントとして検出し、波形と動画を見ながらタイトルや境界を整えます。
@@ -24,7 +31,7 @@ Sub では貼り付けた歌詞を音声へ合わせ、字幕タイムライン�
 ### 特徴
 
 - **Cut モード**：歌唱区間を検出し、切り抜き動画やタイムスタンプコメントとして書き出します。
-- **Sub モード**：貼り付けた歌詞を音声に合わせ、字幕のタイミングと見た目を編集して字幕付き動画を書き出します。
+- **Sub モード**：貼り付けた歌詞を音声に合わせ、字幕付き動画または選択したTimelineを統合した字幕ファイルを書き出します。
 - 波形、プレビュー再生、キーボード操作を使って区間や字幕の境界を調整できます。
 - Cut モードでは、音量変化に合わせて歌唱区間の開始と終了を整えます。
 - Sub モードでは、拍グリッド、複数の字幕タイムライン、字幕スタイル、出力エフェクトを利用できます。
@@ -70,6 +77,13 @@ lyric-subtitled videos from singing-stream archives.
 Use the tabs at the top of the window to switch between Cut for singing
 segments and Sub for timed lyrics.
 
+### Choose a path
+
+- Make song clips or timestamp comments: [Cut usage](docs/USAGE.md#cut)
+- Make a subtitled video: [Sub usage](docs/USAGE.md#sub)
+- Combine selected timelines into one subtitle file: [Export Sub](docs/USAGE.md#export-subtitles-into-one-file)
+- Check keyboard controls: [Keyboard shortcuts](docs/KEYBOARD_SHORTCUTS.md)
+
 ### Representative Screens
 
 Cut detects singing sections as segments and lets you refine their titles and
@@ -89,8 +103,8 @@ files.
 
 - **Cut mode** detects likely singing segments and exports clips or timestamp
   comments.
-- **Sub mode** aligns pasted lyrics to the audio and lets you edit subtitle
-  timing, appearance, and export effects.
+- **Sub mode** aligns pasted lyrics to the audio and lets you export either a
+  subtitled video or one subtitle file made from selected timelines.
 - Waveform, preview, and keyboard controls help adjust clip and subtitle
   boundaries.
 - Cut mode can refine singing-segment boundaries around local level changes.

@@ -2,20 +2,20 @@
 ## 現在のスナップショット
 
 - Repository: `songcut`
-- Generated: `2026-08-14T20:47:32+09:00`
-- Mode: `verify`
+- Generated: `2026-08-16T10:06:28+09:00`
+- Mode: `update`
 - Engine: embedded Python `2.0.0`
-- VCS head: `d21884c22bb478ca00221d03344da900c47c6029`
+- VCS head: `2dcea33f5b63bb29970ec9068ca99f5ced8cc606`
 - Dirty: `yes`
-- Files／Nodes／Edges: 279／3136／10909
-- Components／Flows: 6／18
+- Files／Nodes／Edges: 284／3256／11341
+- Components／Flows: 7／18
 
 ## 最初に読む場所
 
 - [`gui`](modules/gui.md): `gui`を中心とする依存クラスタ。代表シンボル: initializeRendererI18n, tr, currentUiLanguage, if
 - [`songcut`](modules/songcut.md): `songcut`を中心とする依存クラスタ。代表シンボル: ProbeRequest, BoundaryRefinementRequest, validate_hysteresis, to_config
 - [`third_party-uta_align`](modules/third_party-uta_align.md): `third_party/uta_align`を中心とする依存クラスタ。代表シンボル: parse_lyrics_text, load_lyrics, _context_token_count, _truncate_context
-- [`tests`](modules/tests.md): `tests`を中心とする依存クラスタ。代表シンボル: BenchmarkDataError, MonoLabel, duration, LyricMora
+- [`tests`](modules/tests.md): `tests`を中心とする依存クラスタ。代表シンボル: NativeFontCollectorError, __init__, _CreateRequest, _EnumRequest
 - [`packaging`](modules/packaging.md): `packaging`を中心とする依存クラスタ。代表シンボル: _set_windows_dll_directory, spawn_external_process, distribution_root, configure_logging
 
 主要入口:

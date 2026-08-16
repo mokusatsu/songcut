@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SUBTITLE_STYLE,
   addFourBeatSegment,
+  addSubtitleSegmentAtPosition,
   analysisLinesToSegments,
   createLyricsLane,
   labelStackLevels,
@@ -372,6 +373,41 @@ describe("display element schema", () => {
       ...value,
       analysis_artifact: { ...artifact, source_fingerprint: { ...artifact.source_fingerprint, value: "bad" } },
     })).toBeNull();
+  });
+});
+
+describe("subtitle segment add dialog placement", () => {
+  it("places a new segment at the timeline start, before, after, or playback grid point", () => {
+    const lane = createLyricsLane();
+    const selected = segment("selected", 4, 5);
+    lane.segments = [selected, segment("next", 8, 9)];
+
+    expect(addSubtitleSegmentAtPosition(lane, "start", grid)).toMatchObject({ start: 0, end: 4 });
+    expect(addSubtitleSegmentAtPosition(lane, "before", grid, { anchor: selected })).toMatchObject({ start: 0, end: 4 });
+    expect(addSubtitleSegmentAtPosition(lane, "after", grid, { anchor: selected })).toMatchObject({ start: 5, end: 8 });
+
+    const emptyLane = createLyricsLane();
+    expect(addSubtitleSegmentAtPosition(emptyLane, "playback", grid, { playbackTime: 6.1 })).toMatchObject({
+      start: 6,
+      end: 10,
+    });
+  });
+
+  it("uses a selected segment from another timeline only as a time anchor", () => {
+    const target = createLyricsLane();
+    const selected = segment("other-lane", 2, 3);
+
+    expect(addSubtitleSegmentAtPosition(target, "before", grid, { anchor: selected })).toMatchObject({ start: 0, end: 2 });
+    expect(addSubtitleSegmentAtPosition(target, "after", grid, { anchor: selected })).toMatchObject({ start: 3, end: 7 });
+  });
+
+  it("rejects before/after without an anchor and rejects occupied playback space", () => {
+    const lane = createLyricsLane();
+    lane.segments = [segment("occupied", 0, 10)];
+
+    expect(addSubtitleSegmentAtPosition(lane, "before", grid)).toBeNull();
+    expect(addSubtitleSegmentAtPosition(lane, "after", grid)).toBeNull();
+    expect(addSubtitleSegmentAtPosition(lane, "playback", grid, { playbackTime: 5 })).toBeNull();
   });
 });
 

@@ -31,6 +31,8 @@ export type CutExportRequest = {
   createSourceFolder: boolean;
   items: CutOutputItem[];
   timestampCommentText: string;
+  normalizeAudio: boolean;
+  targetTruePeakDbtp: number;
   validationError?: string | null;
 };
 
@@ -243,6 +245,8 @@ export function createCutOperationCoordinator(
             items,
             request.timestampCommentText,
             request.createSourceFolder,
+            request.normalizeAudio,
+            request.targetTruePeakDbtp,
           ),
           poll: (jobId, onProgress) => services.waitForJob(options.apiBaseUrl, jobId, onProgress),
           onSuccess: () => options.onMessage("Export complete."),

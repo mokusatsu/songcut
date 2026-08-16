@@ -567,6 +567,11 @@ textarea,
   touch-action: none;
 }
 
+.display-element-boundary.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .display-element-boundary::after {
   position: absolute;
   inset: 0 auto 0 3px;
@@ -599,6 +604,10 @@ textarea,
   height: 210px;
   min-width: 0;
   min-height: 0;
+}
+
+.display-element-list-scroll .scroll-area-viewport {
+  padding-right: 12px;
 }
 
 .display-element-list-scroll-viewport {
@@ -1953,6 +1962,46 @@ tr.selected:hover {
 
 .subtitle-file-export-dialog {
   width: min(560px, calc(100vw - 48px));
+}
+
+.segment-add-dialog-window {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.segment-add-dialog {
+  display: grid;
+  gap: 14px;
+  font-size: var(--font-size-control);
+}
+
+.segment-add-field {
+  display: grid;
+  gap: 6px;
+  color: #aebbc2;
+}
+
+.segment-add-field > span {
+  color: #b7c8cf;
+  font-size: inherit;
+}
+
+.segment-add-field .select-wrap {
+  width: 100%;
+}
+
+.segment-add-field .select {
+  font-size: inherit;
+}
+
+.segment-add-error {
+  margin: 0;
+  color: #f1bd80;
+}
+
+.segment-add-dialog .dialog-message,
+.segment-add-error {
+  font-size: var(--font-size-meta);
+  line-height: 1.4;
 }
 
 .subtitle-file-export-form {

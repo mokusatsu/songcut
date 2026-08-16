@@ -111,6 +111,9 @@ export function displayElementDeleteNeedsConfirmation(element: Pick<DisplayEleme
 /** 選択行の表示素一覧、100%幅timeline、隣接編集操作を描画する。 */
 export function DisplayElementInspector(props: DisplayElementInspectorProps) {
   const elements = props.segment.display_elements ?? [];
+  const reanalysisBusy = props.status === "waiting"
+    || props.status === "running"
+    || props.status === "cancelling";
   const timelineRange = props.timelineRange ?? props.segment;
   const [selectedId, setSelectedId] = useState<string | null>(elements[0]?.stable_id ?? null);
   const [textEdit, setTextEdit] = useState<{ id: string; draft: string } | null>(null);
@@ -136,6 +139,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
   }, [props.segment.id, props.segment.display_element_revision]);
 
   const beginTextEdit = (element: DisplayElement) => {
+    if (reanalysisBusy) return;
     textEditFinishingRef.current = false;
     setSelectedId(element.stable_id);
     setTextEdit({ id: element.stable_id, draft: element.text });
@@ -147,6 +151,10 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
     textEditFinishingRef.current = true;
     const current = textEdit;
     setTextEdit(null);
+    if (reanalysisBusy) {
+      props.onEditingExitWithoutChange?.();
+      return;
+    }
     if (!commit) {
       props.onEditingExitWithoutChange?.();
       return;
@@ -206,6 +214,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
   const beginPointerDrag = (event: React.PointerEvent, boundaryIndex: number) => {
     event.preventDefault();
     event.stopPropagation();
+    if (reanalysisBusy) return;
     if (drag.isActive()) return;
     props.onEditingEnter?.();
     boundaryIndexRef.current = boundaryIndex;
@@ -220,6 +229,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
   const beginMouseDrag = (event: React.MouseEvent, boundaryIndex: number) => {
     event.preventDefault();
     event.stopPropagation();
+    if (reanalysisBusy) return;
     if (drag.isActive()) return;
     props.onEditingEnter?.();
     boundaryIndexRef.current = boundaryIndex;
@@ -248,7 +258,11 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
     : 0;
 
   return (
-    <div className="display-element-inspector">
+    <div
+      className={`display-element-inspector${reanalysisBusy ? " reanalysis-busy" : ""}`}
+      aria-busy={reanalysisBusy}
+      data-reanalysis-busy={reanalysisBusy || undefined}
+    >
       {props.status && props.statusText ? (
         <p className={`display-element-reanalysis-status ${props.status}`} role="status" data-status={props.status}>
           {props.statusText}{props.statusError ? `: ${props.statusError}` : ""}
@@ -265,7 +279,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
             aria-label={boundaryLockTitle}
             aria-pressed={boundaryLocked}
             title={boundaryLockTitle}
-            disabled={elements.length === 0}
+            disabled={elements.length === 0 || reanalysisBusy}
             onClick={() => props.onBoundaryLockChange?.(!boundaryLocked)}
           >
             {boundaryLocked
@@ -280,7 +294,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
             size="icon"
             aria-label={props.labels.zoomEdit}
             title={zoomTitle}
-            disabled={zoomDisabled}
+            disabled={zoomDisabled || reanalysisBusy}
             onClick={props.onOpenZoom}
           >
             <Maximize2 size={17} aria-hidden="true" />
@@ -292,7 +306,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
           size="icon"
           aria-label={props.labels.mergeRight}
           title={mergeTitle}
-          disabled={Boolean(mergeReason)}
+          disabled={Boolean(mergeReason) || reanalysisBusy}
           onClick={() => {
             if (!selectedId) return;
             props.onEditingEnter?.();
@@ -311,7 +325,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
           size="icon"
           aria-label={props.labels.addBlankLeft}
           title={blankLeftTitle}
-          disabled={Boolean(blankReason)}
+          disabled={Boolean(blankReason) || reanalysisBusy}
           onClick={() => {
             if (!selectedId) return;
             props.onEditingEnter?.();
@@ -330,7 +344,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
           size="icon"
           aria-label={props.labels.addBlankRight}
           title={blankRightTitle}
-          disabled={Boolean(blankReason)}
+          disabled={Boolean(blankReason) || reanalysisBusy}
           onClick={() => {
             if (!selectedId) return;
             props.onEditingEnter?.();
@@ -349,7 +363,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
           size="icon"
           aria-label={props.labels.deleteElement}
           title={deleteTitle}
-          disabled={Boolean(deleteReason)}
+          disabled={Boolean(deleteReason) || reanalysisBusy}
           onClick={() => {
             if (!selectedId) return;
             const selected = elements.find((element) => element.stable_id === selectedId);
@@ -406,9 +420,10 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
               </ElementActionButton>
               {index < elements.length - 1 ? (
                 <span
-                  className="display-element-boundary"
+                  className={`display-element-boundary${reanalysisBusy ? " disabled" : ""}`}
                   role="separator"
                   aria-orientation="vertical"
+                  aria-disabled={reanalysisBusy || undefined}
                   aria-label={props.labels.boundary}
                   title={props.labels.boundary}
                   onPointerDown={(event) => beginPointerDrag(event, index)}
@@ -454,6 +469,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
                       value={textEdit.draft}
                       aria-label={props.labels.editText}
                       autoFocus
+                      disabled={reanalysisBusy}
                       onFocus={(event) => event.currentTarget.select()}
                       onChange={(event) => setTextEdit({ id: element.stable_id, draft: event.currentTarget.value })}
                       onBlur={() => finishTextEdit(true)}
@@ -482,6 +498,7 @@ export function DisplayElementInspector(props: DisplayElementInspectorProps) {
                     onDoubleClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
+                      if (reanalysisBusy) return;
                       beginTextEdit(element);
                     }}
                   >

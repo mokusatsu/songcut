@@ -163,10 +163,14 @@ export function OutputDialog(props: {
   filenameTemplate: string;
   createSourceFolder: boolean;
   sourceFolderName: string;
+  normalizeAudio: boolean;
+  targetTruePeakDbtp: number;
   onClose: () => void;
   onPreview: (item: OutputItem) => void;
   onFilenameTemplate: (value: string) => void;
   onCreateSourceFolder: (value: boolean) => void;
+  onNormalizeAudio: (value: boolean) => void;
+  onTargetTruePeakDbtp: (value: number) => void;
   onCheckRenderDetails: () => Promise<void>;
   onExport: () => Promise<void>;
 }) {
@@ -195,6 +199,24 @@ export function OutputDialog(props: {
           />
           <span>{tr("output.createFolder", { name: props.sourceFolderName })}</span>
         </label>
+        <label className="output-folder-option">
+          <Checkbox
+            checked={props.normalizeAudio}
+            onChange={(event) => props.onNormalizeAudio(event.currentTarget.checked)}
+          />
+          <span>{tr("output.normalizeAudio")}</span>
+        </label>
+        {props.normalizeAudio ? (
+          <label className="output-template-field">
+            <span>{tr("output.targetTruePeak")}</span>
+            <Input
+              type="number"
+              step="0.1"
+              value={props.targetTruePeakDbtp}
+              onChange={(event) => props.onTargetTruePeakDbtp(Number(event.currentTarget.value))}
+            />
+          </label>
+        ) : null}
       </div>
       <ScrollArea className="output-list" scrollbars={["vertical"]}>
         <SegmentReviewRows

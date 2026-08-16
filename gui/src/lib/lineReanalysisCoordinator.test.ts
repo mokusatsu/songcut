@@ -55,8 +55,9 @@ describe("LineReanalysisCoordinator", () => {
     vi.useRealTimers();
   });
 
-  it("fires once at exactly 10,000ms, never at 9,999ms", async () => {
+  it("reports waiting immediately and fires once at exactly 3,000ms, never at 2,999ms", async () => {
     const states = new Map([["line", state("line")]]);
+    const statuses: string[] = [];
     const start = vi.fn(async (snapshot: ScheduledLineReanalysis<Payload>) => (
       guarded(snapshot, { text: "done" })
     ));
@@ -66,8 +67,11 @@ describe("LineReanalysisCoordinator", () => {
       start,
       cancelJob: vi.fn(async () => undefined),
       apply,
+      onStatus: (_rowId, status) => statuses.push(status),
     });
     coordinator.commit("line");
+    expect(LINE_REANALYSIS_DELAY_MILLISECONDS).toBe(3_000);
+    expect(statuses.at(-1)).toBe("waiting");
     await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS - 1);
     expect(start).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -92,7 +96,7 @@ describe("LineReanalysisCoordinator", () => {
     expect(start).not.toHaveBeenCalled();
     expect(coordinator.getStatus("line")).toBe("idle");
     coordinator.exitWithoutChange("line");
-    await vi.advanceTimersByTimeAsync(9_999);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS - 1);
     expect(start).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(start).toHaveBeenCalledTimes(1);
@@ -119,7 +123,7 @@ describe("LineReanalysisCoordinator", () => {
       apply,
     });
     coordinator.commit("line");
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS);
     expect(start).toHaveBeenCalledTimes(1);
     coordinator.enter("line");
     expect(signals[0]?.aborted).toBe(true);
@@ -129,7 +133,7 @@ describe("LineReanalysisCoordinator", () => {
     runs[0]!.resolve(guarded(snapshots[0]!, { text: "stale" }));
     await Promise.resolve();
     expect(apply).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS);
     expect(start).toHaveBeenCalledTimes(2);
     runs[1]!.resolve(guarded(snapshots[1]!, { text: "latest" }));
     await Promise.resolve();
@@ -154,9 +158,9 @@ describe("LineReanalysisCoordinator", () => {
     });
     coordinator.commit("a");
     coordinator.commit("b");
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS / 2);
     coordinator.enter("a");
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS / 2);
     expect(start).toHaveBeenCalledTimes(1);
     expect(start.mock.calls[0]?.[0].rowId).toBe("b");
   });
@@ -176,12 +180,12 @@ describe("LineReanalysisCoordinator", () => {
       apply: () => "idle",
     });
     coordinator.commit("dirty");
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS / 2);
     coordinator.enter("dirty");
     coordinator.manualConstraintChanged("dirty");
     coordinator.enter("clean");
     coordinator.manualConstraintChanged("clean");
-    await vi.advanceTimersByTimeAsync(9_999);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS - 1);
     expect(start).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(start).toHaveBeenCalledOnce();
@@ -206,7 +210,7 @@ describe("LineReanalysisCoordinator", () => {
     });
     coordinator.commit("removed");
     coordinator.commit("kept");
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS);
     coordinator.retainRows(new Set(["kept"]));
     expect(cancelJob).toHaveBeenCalledWith("job-removed");
     expect(cancelJob).not.toHaveBeenCalledWith("job-kept");
@@ -240,7 +244,7 @@ describe("LineReanalysisCoordinator", () => {
     });
     coordinator.commit("line");
     states.set("line", state("line", 2));
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS);
     expect(start).not.toHaveBeenCalled();
     expect(statuses.at(-1)).toBe("stale");
   });
@@ -260,7 +264,7 @@ describe("LineReanalysisCoordinator", () => {
       onStatus: (_rowId, status) => statuses.push(status),
     });
     coordinator.commit("line");
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(LINE_REANALYSIS_DELAY_MILLISECONDS);
     expect(apply).not.toHaveBeenCalled();
     expect(statuses.at(-1)).toBe("stale");
   });

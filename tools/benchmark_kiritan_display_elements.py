@@ -1,8 +1,9 @@
-"""きりたん歌唱 DB の表示素 timing をローカルで検証する benchmark。
+"""歌唱 DB の表示素 timing をローカルで検証する benchmark。
 
-このスクリプトは ``third_party/kiritan_singing`` の MusicXML と mono_label だけを
-読み取る。音声を再生したりネットワークへ接続したりせず、MusicXML の歌詞を
-``japanese.table`` で展開して、手修正済みの音素境界を表示素の正解値に変換する。
+このスクリプトはローカルの歌唱 DB から MusicXML と mono_label だけを読み取り、
+音声を再生したりネットワークへ接続したりせず、手修正済みの音素境界を表示素の
+正解値に変換する。DBごとの差分はprofileで吸収し、歌唱データ本体は配布物へ
+コピーしない。
 生成物の既定出力は ``out/benchmarks``（Git ignore 対象）であり、DB の WAV・歌詞・
 ラベル・派生 timing をリポジトリへコピーしない。
 
@@ -29,6 +30,66 @@ DEFAULT_OUTPUT = Path("out/benchmarks/kiritan_display_elements.json")
 DEFAULT_EXCLUDED_SONGS = frozenset({"08", "29"})
 COPYRIGHT_NOTICE = "©SSS"
 CITATION = "Ogawa & Morise (2021)"
+PAUSE_LABELS = frozenset({"pau", "br", "sil"})
+HARD_PAUSE_LABELS = frozenset({"pau", "sil"})
+
+
+@dataclass(frozen=True)
+class BenchmarkDatasetProfile:
+    """各歌唱DBのファイル配置と帰属情報を表すprofile。"""
+
+    name: str
+    display_name: str
+    copyright_notice: str
+    citation: str
+    time_scale: float
+    musicxml_suffix: str
+    audio_directory: str | None
+    nested_audio: bool = False
+    excluded_songs: frozenset[str] = frozenset()
+
+
+DATASET_PROFILES = {
+    "kiritan_singing": BenchmarkDatasetProfile(
+        name="kiritan_singing",
+        display_name="きりたん",
+        copyright_notice=COPYRIGHT_NOTICE,
+        citation=CITATION,
+        time_scale=1.0,
+        musicxml_suffix=".xml",
+        audio_directory="wav",
+        excluded_songs=DEFAULT_EXCLUDED_SONGS,
+    ),
+    "OFUTON_P_UTAGOE_DB": BenchmarkDatasetProfile(
+        name="OFUTON_P_UTAGOE_DB",
+        display_name="OFUTON_P_UTAGOE_DB",
+        copyright_notice="OFUTON_P_UTAGOE_DB（各楽曲の利用条件に従う）",
+        citation="OFUTON_P_UTAGOE_DB Note.txt / ReleaseNote.txt",
+        time_scale=1e-7,
+        musicxml_suffix=".musicxml",
+        audio_directory=None,
+        nested_audio=True,
+    ),
+    "no7singing": BenchmarkDatasetProfile(
+        name="no7singing",
+        display_name="No.7歌唱DB",
+        copyright_notice="No.7製作委員会（利用条件に従う）",
+        citation="Morise, Fujimoto & Koiwai (2022)",
+        time_scale=1e-7,
+        musicxml_suffix=".xml",
+        audio_directory="wav_PT",
+    ),
+    "itako_singing": BenchmarkDatasetProfile(
+        name="itako_singing",
+        display_name="東北イタコ歌唱DB",
+        copyright_notice="東北イタコ歌唱DB（利用条件に従う）",
+        citation="https://zunko.jp/itadev/login.php",
+        time_scale=1e-7,
+        musicxml_suffix=".musicxml",
+        audio_directory="wav",
+    ),
+}
+DATASET_NAMES = tuple(DATASET_PROFILES)
 
 
 class BenchmarkDataError(RuntimeError):
@@ -110,6 +171,8 @@ class KiritanSongGroundTruth:
     lyrics: tuple[str, ...]
     labels: tuple[MonoLabel, ...]
     lines: tuple[GroundTruthLine, ...]
+    audio_path: Path | None = None
+    dataset_name: str = "kiritan_singing"
 
     @property
     def lyrics_text(self) -> str:
@@ -126,10 +189,46 @@ class BenchmarkDataset:
     skipped: tuple[dict[str, str], ...]
     candidates: tuple[str, ...]
     excluded: tuple[str, ...]
+    dataset_name: str = "kiritan_singing"
+    copyright_notice: str = COPYRIGHT_NOTICE
+    citation: str = CITATION
 
 
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
+
+
+def _katakana_to_hiragana(text: str) -> str:
+    """カタカナを辞書照合用のひらがなへ変換する。"""
+
+    return "".join(
+        chr(ord(character) - 0x60) if 0x30A1 <= ord(character) <= 0x30F6 else character
+        for character in text
+    )
+
+
+def _is_lyric_token(token: str) -> bool:
+    """MusicXMLの歌詞列から休止・メタデータを除外する。"""
+
+    stripped = unicodedata.normalize("NFKC", str(token)).strip()
+    if not stripped or stripped.casefold() in PAUSE_LABELS or stripped.casefold() in {"br", "pau", "sil"}:
+        return False
+    if "<" in stripped or ">" in stripped:
+        return False
+    # ItakoのMusicXMLには ``<Melody track ...>`` のようなASCIIメタデータが
+    # lyric要素として入るため、日本語文字を含まない単独tokenは採用しない。
+    return any(
+        0x3000 <= ord(character) <= 0x30FF
+        or 0x3400 <= ord(character) <= 0x9FFF
+        for character in stripped
+    )
+
+
+def _normalized_lyric_text(lyrics: str | Sequence[str]) -> str:
+    """DB固有の休止・メタデータtokenを除いた歌詞本文を返す。"""
+
+    tokens = (lyrics,) if isinstance(lyrics, str) else tuple(lyrics)
+    return "".join(str(token).strip() for token in tokens if _is_lyric_token(str(token)))
 
 
 def read_musicxml_lyrics(path: str | Path) -> tuple[str, ...]:
@@ -169,7 +268,11 @@ def read_musicxml_lyrics(path: str | Path) -> tuple[str, ...]:
 
 
 def read_japanese_table(path: str | Path) -> dict[str, tuple[str, ...]]:
-    """``japanese.table`` を kana から音素列への辞書として読み取る。"""
+    """``japanese.table`` を kana から音素列への辞書として読み取る。
+
+    きりたんDBの辞書を基礎に、他DBのMusicXMLで実際に使われる表記ゆれを
+    同じSinsy系の音素列へ正規化する。DB本体へ辞書をコピーすることはない。
+    """
 
     source = Path(path)
     if not source.is_file():
@@ -189,11 +292,33 @@ def read_japanese_table(path: str | Path) -> dict[str, tuple[str, ...]]:
         table[fields[0]] = tuple(fields[1:])
     if not table:
         raise BenchmarkDataError(f"japanese.tableが空です: {source}")
+    table.update(
+        {
+            "ぢ": ("j", "i"),
+            "づ": ("z", "u"),
+            "ゔ": ("v", "u"),
+            "ゔぁ": ("v", "a"),
+            "ゔぃ": ("v", "i"),
+            "ゔぇ": ("v", "e"),
+            "ゔぉ": ("v", "o"),
+            "ゔゅ": ("v", "u"),
+            "うぉ": ("w", "o"),
+        }
+    )
     return table
 
 
-def read_mono_label(path: str | Path) -> tuple[MonoLabel, ...]:
-    """mono_label を読み、pause/br を含む時刻順の音素列として返す。"""
+def read_mono_label(path: str | Path, *, time_scale: float = 1.0) -> tuple[MonoLabel, ...]:
+    """mono_label を読み、時刻を秒へ変換した音素列として返す。
+
+    きりたんは秒、その他の対応DBは100ns単位で保存されているため、呼び出し側
+    が ``time_scale`` を指定する。逆転・ゼロ長区間はデータ誤りとして拒否し、
+    呼び出し側のskip理由に残す。
+    """
+
+    time_scale = float(time_scale)
+    if not math.isfinite(time_scale) or time_scale <= 0:
+        raise BenchmarkDataError(f"mono_labelの時刻スケールが不正です: {time_scale}")
 
     source = Path(path)
     if not source.is_file():
@@ -215,7 +340,7 @@ def read_mono_label(path: str | Path) -> tuple[MonoLabel, ...]:
             raise BenchmarkDataError(f"mono_labelの時刻不正: {source}:{line_number}") from exc
         if not math.isfinite(start) or not math.isfinite(end) or end <= start:
             raise BenchmarkDataError(f"mono_labelの区間不正: {source}:{line_number}")
-        labels.append(MonoLabel(start, end, fields[2]))
+        labels.append(MonoLabel(start * time_scale, end * time_scale, fields[2]))
     if not labels:
         raise BenchmarkDataError(f"mono_labelが空です: {source}")
     if any(right.start < left.start for left, right in zip(labels, labels[1:])):
@@ -304,12 +429,13 @@ def expand_japanese_lyrics(text: str, table: Mapping[str, Sequence[str]]) -> tup
     result: list[LyricMora] = []
     for index, (unit_text, source_start, source_end) in enumerate(grouped):
         phonemes: list[str] = []
+        lookup_text = _katakana_to_hiragana(unit_text)
         offset = 0
-        while offset < len(unit_text):
-            if unit_text[offset] == "ー":
+        while offset < len(lookup_text):
+            if lookup_text[offset] == "ー":
                 offset += 1
                 continue
-            key = next((candidate for candidate in keys if unit_text.startswith(candidate, offset)), None)
+            key = next((candidate for candidate in keys if lookup_text.startswith(candidate, offset)), None)
             if key is None:
                 # 区切りを壊さず、照合時には音素無しとして明確に扱う。
                 offset += 1
@@ -323,14 +449,14 @@ def expand_japanese_lyrics(text: str, table: Mapping[str, Sequence[str]]) -> tup
 
 
 def _spoken_labels(labels: Sequence[MonoLabel]) -> tuple[MonoLabel, ...]:
-    return tuple(label for label in labels if label.label not in {"pau", "br"})
+    return tuple(label for label in labels if label.label.casefold() not in PAUSE_LABELS)
 
 
 def _pause_by_spoken_cursor(labels: Sequence[MonoLabel]) -> dict[int, tuple[MonoLabel, ...]]:
     cursor = 0
     pauses: dict[int, list[MonoLabel]] = {}
     for label in labels:
-        if label.label in {"pau", "br"}:
+        if label.label.casefold() in PAUSE_LABELS:
             pauses.setdefault(cursor, []).append(label)
         else:
             cursor += 1
@@ -395,7 +521,7 @@ def split_ground_truth_lines(
     周辺行の境界を動かす処理や beat snap は行わない。
     """
 
-    lyric_text = "".join(lyrics) if not isinstance(lyrics, str) else lyrics
+    lyric_text = _normalized_lyric_text(lyrics)
     morae = expand_japanese_lyrics(lyric_text, table)
     spoken = _spoken_labels(labels)
     expected = sum(len(mora.phonemes) for mora in morae)
@@ -428,9 +554,13 @@ def split_ground_truth_lines(
         previous_end = spans[boundary - 1][1]
         line_elapsed = previous_end - spans[line_start][0]
         events = pauses.get(sum(len(mora.phonemes) for mora in morae[:boundary]), ())
-        has_hard = any(event.label == "pau" and event.duration >= hard_pause_seconds for event in events)
+        has_hard = any(
+            event.label.casefold() in HARD_PAUSE_LABELS and event.duration >= hard_pause_seconds
+            for event in events
+        )
         has_soft = any(
-            event.label in {"pau", "br"} and event.duration >= min_pause_seconds for event in events
+            event.label.casefold() in PAUSE_LABELS and event.duration >= min_pause_seconds
+            for event in events
         )
         include_current_elapsed = spans[boundary][1] - spans[line_start][0]
         max_reached = include_current_elapsed >= max_line_seconds and boundary > line_start
@@ -467,27 +597,223 @@ def split_ground_truth_lines(
     return tuple(output)
 
 
+def _dataset_name(dataset: str | None, root: str | Path) -> str:
+    """指定値またはroot名からdataset profile名を解決する。"""
+
+    aliases = {
+        "kiritan": "kiritan_singing",
+        "ofuton": "OFUTON_P_UTAGOE_DB",
+        "no7": "no7singing",
+        "itako": "itako_singing",
+    }
+    if dataset:
+        candidate = aliases.get(str(dataset).casefold(), str(dataset))
+        if candidate in DATASET_PROFILES:
+            return candidate
+        raise BenchmarkDataError(f"未対応のbenchmark datasetです: {dataset}")
+    root_name = Path(root).name.casefold()
+    for profile_name in DATASET_NAMES:
+        if profile_name.casefold() == root_name:
+            return profile_name
+    # 既存のきりたんCLIは任意名の一時fixtureをrootに渡していたため、
+    # dataset省略時だけ従来の既定profileへ戻す。
+    return "kiritan_singing"
+
+
+def _profile(dataset: str | None, root: str | Path) -> BenchmarkDatasetProfile:
+    return DATASET_PROFILES[_dataset_name(dataset, root)]
+
+
+def _normalize_song_id(profile: BenchmarkDatasetProfile, song_id: str) -> str:
+    value = str(song_id)
+    if profile.name in {"kiritan_singing", "no7singing"} and value.isdigit():
+        return value.zfill(2)
+    if profile.name == "itako_singing" and value.isdigit():
+        return f"itako{value.zfill(2)}"
+    return value
+
+
+def _song_sort_key(song_id: str) -> tuple[float, str]:
+    return (float(int(song_id)) if song_id.isdigit() else math.inf, song_id.casefold())
+
+
+def _dataset_inputs(
+    root: str | Path,
+    profile: BenchmarkDatasetProfile,
+) -> dict[str, tuple[Path, Path]]:
+    """profileに従い、MusicXMLとmono labelの共通入力を列挙する。"""
+
+    dataset_root = Path(root)
+    if profile.nested_audio:
+        xml_paths = sorted(dataset_root.rglob(f"*{profile.musicxml_suffix}"))
+    else:
+        xml_root = dataset_root / "musicxml"
+        label_root = dataset_root / "mono_label"
+        if not xml_root.is_dir() or not label_root.is_dir():
+            raise BenchmarkDataError(
+                f"{profile.display_name}DBのmusicxml/mono_labelがありません: {dataset_root}"
+            )
+        xml_paths = sorted(xml_root.glob(f"*{profile.musicxml_suffix}"))
+    inputs: dict[str, tuple[Path, Path]] = {}
+    for xml_path in xml_paths:
+        label_path = xml_path.with_suffix(".lab") if profile.nested_audio else dataset_root / "mono_label" / f"{xml_path.stem}.lab"
+        if not label_path.is_file():
+            continue
+        song_id = xml_path.stem
+        if song_id in inputs:
+            raise BenchmarkDataError(f"曲IDが重複しています: {profile.name}/{song_id}")
+        inputs[song_id] = (xml_path, label_path)
+    if not inputs and profile.nested_audio:
+        raise BenchmarkDataError(f"{profile.display_name}DBのMusicXML/mono_label入力がありません: {dataset_root}")
+    return inputs
+
+
+def _audio_path(root: str | Path, profile: BenchmarkDatasetProfile, song_id: str) -> Path:
+    dataset_root = Path(root)
+    if profile.nested_audio:
+        return dataset_root / song_id / f"{song_id}.wav"
+    if profile.audio_directory is None:
+        raise BenchmarkDataError(f"音声ディレクトリが未定義です: {profile.name}")
+    return dataset_root / profile.audio_directory / f"{song_id}.wav"
+
+
+def _pronunciation_table_path(root: str | Path, explicit: str | Path | None = None) -> Path:
+    if explicit is not None:
+        return Path(explicit)
+    local = Path(root) / "japanese.table"
+    if local.is_file():
+        return local
+    fallback = Path(__file__).resolve().parents[1] / "third_party" / "kiritan_singing" / "japanese.table"
+    if fallback.is_file():
+        return fallback
+    raise BenchmarkDataError(f"japanese.tableがありません: {local}")
+
+
+def discover_dataset_song_ids(
+    root: str | Path,
+    *,
+    dataset: str | None = None,
+    excluded: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    """profileに従い、MusicXMLとmono labelが揃う曲IDを返す。"""
+
+    profile = _profile(dataset, root)
+    inputs = _dataset_inputs(root, profile)
+    excluded_values = profile.excluded_songs if excluded is None else frozenset(str(item) for item in excluded)
+    excluded_ids = {_normalize_song_id(profile, item) for item in excluded_values}
+    return tuple(
+        song_id
+        for song_id in sorted(inputs, key=_song_sort_key)
+        if song_id not in excluded_ids
+    )
+
+
+def load_dataset_song(
+    root: str | Path,
+    song_id: str,
+    *,
+    dataset: str | None = None,
+    excluded: Iterable[str] | None = None,
+    pronunciation_table: str | Path | None = None,
+) -> KiritanSongGroundTruth:
+    """指定DBの一曲を読み、MusicXMLとmono labelから正解行を構築する。"""
+
+    profile = _profile(dataset, root)
+    normalized_id = _normalize_song_id(profile, song_id)
+    excluded_values = profile.excluded_songs if excluded is None else frozenset(str(item) for item in excluded)
+    excluded_ids = {_normalize_song_id(profile, item) for item in excluded_values}
+    if normalized_id in excluded_ids:
+        raise BenchmarkDataError(f"{normalized_id}: 計画上除外された曲です")
+    inputs = _dataset_inputs(root, profile)
+    if normalized_id not in inputs:
+        raise BenchmarkDataError(f"{normalized_id}: MusicXMLとmono_labelの組がありません")
+    xml_path, label_path = inputs[normalized_id]
+    table = read_japanese_table(_pronunciation_table_path(root, pronunciation_table))
+    lyrics = read_musicxml_lyrics(xml_path)
+    labels = read_mono_label(label_path, time_scale=profile.time_scale)
+    lines = split_ground_truth_lines(lyrics, labels, table, song_id=normalized_id)
+    return KiritanSongGroundTruth(
+        normalized_id,
+        lyrics,
+        labels,
+        lines,
+        audio_path=_audio_path(root, profile, normalized_id),
+        dataset_name=profile.name,
+    )
+
+
+def build_dataset(
+    root: str | Path,
+    *,
+    dataset: str | None = None,
+    song_ids: Sequence[str] | None = None,
+    limit: int | None = None,
+    excluded: Iterable[str] | None = None,
+    pronunciation_table: str | Path | None = None,
+) -> BenchmarkDataset:
+    """利用可能曲を読み、欠落・不一致曲を理由付きでskipしたデータセットを返す。"""
+
+    profile = _profile(dataset, root)
+    inputs = _dataset_inputs(root, profile)
+    candidates = tuple(sorted(inputs, key=_song_sort_key))
+    excluded_values = profile.excluded_songs if excluded is None else frozenset(str(item) for item in excluded)
+    excluded_ids = {_normalize_song_id(profile, item) for item in excluded_values}
+    available_candidates = tuple(song_id for song_id in candidates if song_id not in excluded_ids)
+    requested = (
+        tuple(_normalize_song_id(profile, item) for item in song_ids)
+        if song_ids
+        else available_candidates
+    )
+    if limit is not None:
+        requested = requested[: max(0, limit)]
+    table = read_japanese_table(_pronunciation_table_path(root, pronunciation_table))
+    songs: list[KiritanSongGroundTruth] = []
+    skipped: list[dict[str, str]] = []
+    for song_id in requested:
+        try:
+            if song_id in excluded_ids:
+                raise BenchmarkDataError(f"{song_id}: 計画上除外された曲です")
+            xml_path, label_path = inputs[song_id]
+            lyrics = read_musicxml_lyrics(xml_path)
+            labels = read_mono_label(label_path, time_scale=profile.time_scale)
+            lines = split_ground_truth_lines(lyrics, labels, table, song_id=song_id)
+            songs.append(
+                KiritanSongGroundTruth(
+                    song_id,
+                    lyrics,
+                    labels,
+                    lines,
+                    audio_path=_audio_path(root, profile, song_id),
+                    dataset_name=profile.name,
+                )
+            )
+        except (BenchmarkDataError, KeyError) as exc:
+            skipped.append({"song_id": song_id, "reason": str(exc)})
+    if not songs:
+        details = "; ".join(f"{item['song_id']}: {item['reason']}" for item in skipped)
+        raise BenchmarkDataError(
+            f"有効な{profile.display_name}曲がありません{(': ' + details) if details else ''}"
+        )
+    excluded_ids_tuple = tuple(sorted(excluded_ids, key=_song_sort_key))
+    return BenchmarkDataset(
+        tuple(songs),
+        tuple(skipped),
+        candidates,
+        excluded_ids_tuple,
+        dataset_name=profile.name,
+        copyright_notice=profile.copyright_notice,
+        citation=profile.citation,
+    )
+
+
 def discover_kiritan_song_ids(
     root: str | Path = DEFAULT_DATASET_ROOT,
     *,
     excluded: Iterable[str] = DEFAULT_EXCLUDED_SONGS,
 ) -> tuple[str, ...]:
-    """MusicXML と mono_label が揃う、除外後の曲 ID を返す。
+    """既存きりたんbenchmark向けのdiscover入口。"""
 
-    正常なきりたん DB では 50 曲から 08 と 29 を除いた 48 曲になる。WAV は
-    benchmark の入力に不要なので存在確認せず、音声を配布物へ含めない。
-    """
-
-    dataset_root = Path(root)
-    xml_root = dataset_root / "musicxml"
-    label_root = dataset_root / "mono_label"
-    if not xml_root.is_dir() or not label_root.is_dir():
-        raise BenchmarkDataError(f"きりたんDBのmusicxml/mono_labelがありません: {dataset_root}")
-    excluded_ids = {str(item).zfill(2) for item in excluded}
-    xml_ids = {path.stem for path in xml_root.glob("*.xml")}
-    label_ids = {path.stem for path in label_root.glob("*.lab")}
-    complete = sorted(xml_ids & label_ids, key=lambda item: (int(item) if item.isdigit() else math.inf, item))
-    return tuple(song_id for song_id in complete if song_id not in excluded_ids)
+    return discover_dataset_song_ids(root, dataset="kiritan_singing", excluded=excluded)
 
 
 def load_kiritan_song(
@@ -496,18 +822,9 @@ def load_kiritan_song(
     *,
     excluded: Iterable[str] = DEFAULT_EXCLUDED_SONGS,
 ) -> KiritanSongGroundTruth:
-    """指定曲を読み、MusicXML と mono_label から正解行を構築する。"""
+    """既存きりたんbenchmark向けの一曲load入口。"""
 
-    normalized_id = str(song_id).zfill(2)
-    excluded_ids = {str(item).zfill(2) for item in excluded}
-    if normalized_id in excluded_ids:
-        raise BenchmarkDataError(f"{normalized_id}: 計画上除外された曲です")
-    dataset_root = Path(root)
-    table = read_japanese_table(dataset_root / "japanese.table")
-    lyrics = read_musicxml_lyrics(dataset_root / "musicxml" / f"{normalized_id}.xml")
-    labels = read_mono_label(dataset_root / "mono_label" / f"{normalized_id}.lab")
-    lines = split_ground_truth_lines(lyrics, labels, table, song_id=normalized_id)
-    return KiritanSongGroundTruth(normalized_id, lyrics, labels, lines)
+    return load_dataset_song(root, song_id, dataset="kiritan_singing", excluded=excluded)
 
 
 def build_kiritan_dataset(
@@ -517,24 +834,15 @@ def build_kiritan_dataset(
     limit: int | None = None,
     excluded: Iterable[str] = DEFAULT_EXCLUDED_SONGS,
 ) -> BenchmarkDataset:
-    """利用可能曲を読み、欠落・不一致曲を理由付きで skip したデータセットを返す。"""
+    """既存きりたんbenchmark向けのdataset build入口。"""
 
-    candidates = discover_kiritan_song_ids(root, excluded=excluded)
-    requested = tuple(str(item).zfill(2) for item in song_ids) if song_ids else candidates
-    if limit is not None:
-        requested = requested[: max(0, limit)]
-    songs: list[KiritanSongGroundTruth] = []
-    skipped: list[dict[str, str]] = []
-    for song_id in requested:
-        try:
-            songs.append(load_kiritan_song(root, song_id, excluded=excluded))
-        except BenchmarkDataError as exc:
-            skipped.append({"song_id": song_id, "reason": str(exc)})
-    if not songs:
-        details = "; ".join(f"{item['song_id']}: {item['reason']}" for item in skipped)
-        raise BenchmarkDataError(f"有効なきりたん曲がありません{(': ' + details) if details else ''}")
-    excluded_ids = tuple(sorted({str(item).zfill(2) for item in excluded}))
-    return BenchmarkDataset(tuple(songs), tuple(skipped), candidates, excluded_ids)
+    return build_dataset(
+        root,
+        dataset="kiritan_singing",
+        song_ids=song_ids,
+        limit=limit,
+        excluded=excluded,
+    )
 
 
 def _percentile(values: Sequence[float], percentile: float) -> float | None:
@@ -764,10 +1072,11 @@ def evaluate_prediction_report(
 def ground_truth_payload(dataset: BenchmarkDataset) -> dict[str, Any]:
     """検証可能な最小 GT JSON を作る（WAV・原資料本文は含めない）。"""
 
+    dataset_name = getattr(dataset, "dataset_name", "kiritan_singing")
     return {
-        "copyright": COPYRIGHT_NOTICE,
-        "citation": CITATION,
-        "dataset": "third_party/kiritan_singing (local-only)",
+        "copyright": getattr(dataset, "copyright_notice", COPYRIGHT_NOTICE),
+        "citation": getattr(dataset, "citation", CITATION),
+        "dataset": f"{dataset_name} (local-only)",
         "candidate_song_count": len(dataset.candidates),
         "excluded_song_ids": list(dataset.excluded),
         "skipped": list(dataset.skipped),
@@ -802,9 +1111,11 @@ def make_benchmark_summary(
 
     line_count = sum(len(song.lines) for song in dataset.songs)
     boundary_count = sum(sum(len(line.internal_boundaries) for line in song.lines) for song in dataset.songs)
+    dataset_name = getattr(dataset, "dataset_name", "kiritan_singing")
     summary: dict[str, Any] = {
-        "copyright": COPYRIGHT_NOTICE,
-        "citation": CITATION,
+        "copyright": getattr(dataset, "copyright_notice", COPYRIGHT_NOTICE),
+        "citation": getattr(dataset, "citation", CITATION),
+        "dataset": f"{dataset_name} (local-only)",
         "songs": len(dataset.songs),
         "lines": line_count,
         "internal_boundaries": boundary_count,
@@ -896,10 +1207,12 @@ def generate_mms_prediction_report(
     selected_songs = tuple(dataset.songs[: max(0, song_limit)])
     if not selected_songs:
         raise BenchmarkDataError("prediction対象曲がありません")
-    with tempfile.TemporaryDirectory(prefix="songcut-kiritan-benchmark-") as temporary_directory:
+    dataset_name = getattr(dataset, "dataset_name", "kiritan_singing")
+    profile = DATASET_PROFILES.get(dataset_name, DATASET_PROFILES["kiritan_singing"])
+    with tempfile.TemporaryDirectory(prefix="songcut-display-timing-") as temporary_directory:
         temporary_root = Path(temporary_directory)
         for song in selected_songs:
-            source = dataset_root / "wav" / f"{song.song_id}.wav"
+            source = song.audio_path or _audio_path(dataset_root, profile, song.song_id)
             if decode_window is None and not source.is_file():
                 raise BenchmarkDataError(f"{song.song_id}: WAVがありません: {source}")
             selected_lines = tuple(song.lines[: max(0, lines_per_song)])
@@ -990,8 +1303,9 @@ def generate_mms_prediction_report(
                 )
             predictions.append({"song_id": song.song_id, "lines": predicted_lines})
     return {
-        "copyright": COPYRIGHT_NOTICE,
-        "citation": CITATION,
+        "copyright": getattr(dataset, "copyright_notice", profile.copyright_notice),
+        "citation": getattr(dataset, "citation", profile.citation),
+        "dataset": f"{dataset_name} (local-only)",
         "algorithm": "Standard Align MMS local CTC",
         "device_requested": normalized_device,
         "device_used": getattr(runner, "device_used", None),
@@ -1002,8 +1316,10 @@ def generate_mms_prediction_report(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="きりたん歌唱DBの表示素 timing benchmark（ローカル専用）")
-    parser.add_argument("--root", type=Path, default=DEFAULT_DATASET_ROOT, help="きりたんDBのルート")
+    parser = argparse.ArgumentParser(description="歌唱DBの表示素 timing benchmark（ローカル専用）")
+    parser.add_argument("--dataset", choices=DATASET_NAMES, help="使用する歌唱DB profile")
+    parser.add_argument("--root", type=Path, default=DEFAULT_DATASET_ROOT, help="歌唱DBのルート")
+    parser.add_argument("--pronunciation-table", type=Path, help="japanese.table（省略時はDB直下またはきりたんDB）")
     parser.add_argument("--prediction", type=Path, help="Songcut alignment result JSON")
     parser.add_argument(
         "--generate-prediction",
@@ -1011,7 +1327,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="既存MMSで先頭8曲・各先頭3行の局所予測を生成する",
     )
     parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="out/benchmarks配下の出力JSON")
+    parser.add_argument("--output", type=Path, help="出力JSON（省略時はDB別の既定パス）")
     parser.add_argument("--songs", nargs="*", help="対象曲ID（省略時は除外後の全曲）")
     parser.add_argument("--limit", type=int, help="対象曲数の上限")
     parser.add_argument("--summary-only", action="store_true", help="GT詳細を省略してsummaryだけ出力")
@@ -1026,10 +1342,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = _build_parser().parse_args(argv)
     try:
+        dataset_name = _dataset_name(args.dataset, args.root)
+        output = args.output
+        if output is None:
+            output = DEFAULT_OUTPUT if dataset_name == "kiritan_singing" else Path(
+                Path("out/benchmarks") / f"{dataset_name}_display_elements.json"
+            )
         dataset_limit = args.limit
         if args.generate_prediction and not args.songs and dataset_limit is None:
             dataset_limit = 8
-        dataset = build_kiritan_dataset(args.root, song_ids=args.songs, limit=dataset_limit)
+        dataset = build_dataset(
+            args.root,
+            dataset=dataset_name,
+            song_ids=args.songs,
+            limit=dataset_limit,
+            pronunciation_table=args.pronunciation_table,
+        )
         generated_prediction = None
         if args.generate_prediction:
             generated_prediction = generate_mms_prediction_report(
@@ -1063,8 +1391,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             if prediction is not None:
                 payload["metrics"] = summary["metrics"]
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except BenchmarkDataError as exc:
         print(f"benchmark入力エラー: {exc}", file=sys.stderr)
         return 2

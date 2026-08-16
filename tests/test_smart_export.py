@@ -18,6 +18,13 @@ from songcut.smart_export import (
     plan_smart_render,
     probe_keyframes,
     snap_video_range_to_frames,
+    _audio_artifact_suffix,
+    _audio_codec_family,
+    _gain_result_to_dict,
+    _measure_final_true_peak,
+    _normalize_audio_artifact,
+    _resolve_mp3rgain,
+    _true_peak_report,
     _validate_export,
 )
 
@@ -518,6 +525,99 @@ class SmartExportTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "no video stream"):
                 _validate_export(Path("ffprobe"), Path("clip.mp4"), plan)
+
+
+class TruePeakCorrectionTests(unittest.TestCase):
+    def _plan(self, **overrides) -> SmartRenderPlan:
+        defaults = dict(
+            start=1.0,
+            end=5.0,
+            output_suffix=".mp4",
+            container_family="mp4",
+            video_codec="h264",
+            video_encoder="libx264",
+            audio_encoder="aac",
+            audio_bitrate="192k",
+            source_video_bitrate=1_000_000,
+            reencode_bitrate=1_500_000,
+            has_audio=True,
+            copy_start=None,
+            copy_end=None,
+            keyframes=[],
+            spans=[SmartRenderSpan("encode", 1.0, 5.0)],
+            fallback_reason=None,
+        )
+        defaults.update(overrides)
+        return SmartRenderPlan(**defaults)
+
+    def test_audio_codec_family_and_suffix(self) -> None:
+        self.assertEqual(_audio_codec_family(self._plan(audio_encoder="libopus")), "opus")
+        self.assertEqual(_audio_codec_family(self._plan(audio_encoder="aac")), "aac")
+        self.assertEqual(_audio_artifact_suffix(self._plan(audio_encoder="libopus")), ".opus")
+        self.assertEqual(_audio_artifact_suffix(self._plan(audio_encoder="aac")), ".m4a")
+
+    def test_resolve_mp3rgain_only_for_aac(self) -> None:
+        with mock.patch("songcut.smart_export.find_mp3rgain", return_value=Path("third_party/mp3rgain/mp3rgain.exe")) as find:
+            self.assertEqual(_resolve_mp3rgain(self._plan(audio_encoder="aac")), Path("third_party/mp3rgain/mp3rgain.exe"))
+            self.assertIsNone(_resolve_mp3rgain(self._plan(audio_encoder="libopus")))
+            self.assertIsNone(_resolve_mp3rgain(self._plan(has_audio=False)))
+        find.assert_called_once()
+
+    def test_normalize_audio_artifact_returns_to_dict_on_success(self) -> None:
+        plan = self._plan()
+        fake_result = mock.Mock()
+        fake_result.to_dict.return_value = {"applied_gain_db": -3.0}
+        with mock.patch("lossless_audio_gain.normalize_true_peak", return_value=fake_result) as normalize:
+            report = _normalize_audio_artifact(Path("ffmpeg"), Path("ffprobe"), Path("mp3rgain"), Path("a.m4a"), plan, -1.5)
+
+        self.assertEqual(report, {"applied_gain_db": -3.0})
+        normalize.assert_called_once()
+        call_kwargs = normalize.call_args.kwargs
+        self.assertEqual(call_kwargs["target_true_peak_dbtp"], -1.5)
+        self.assertTrue(call_kwargs["verify"])
+        self.assertEqual(call_kwargs["mp3rgain_bin"], str(Path("mp3rgain")))
+        self.assertFalse(call_kwargs["aac_write_undo"])
+        self.assertTrue(call_kwargs["aac_check_reversible"])
+        self.assertEqual(call_kwargs["r128_policy"], "neutralize")
+
+    def test_normalize_audio_artifact_falls_back_on_import_error(self) -> None:
+        plan = self._plan()
+        with mock.patch.dict("sys.modules", {"lossless_audio_gain": None}):
+            report = _normalize_audio_artifact(Path("ffmpeg"), Path("ffprobe"), Path("mp3rgain"), Path("a.m4a"), plan, -1.0)
+        self.assertIsNone(report)
+
+    def test_normalize_audio_artifact_falls_back_on_backend_error(self) -> None:
+        plan = self._plan()
+        with mock.patch(
+            "lossless_audio_gain.normalize_true_peak",
+            side_effect=RuntimeError("mp3rgain missing"),
+        ):
+            report = _normalize_audio_artifact(Path("ffmpeg"), Path("ffprobe"), Path("mp3rgain"), Path("a.m4a"), plan, -1.0)
+        self.assertIsNone(report)
+
+    def test_measure_final_true_peak_returns_float(self) -> None:
+        plan = self._plan()
+        with mock.patch("lossless_audio_gain.measure_true_peak", return_value="-1.03"):
+            peak = _measure_final_true_peak(Path("ffmpeg"), Path("clip.mp4"), plan)
+        self.assertEqual(peak, -1.03)
+
+    def test_true_peak_report_empty_when_both_none(self) -> None:
+        self.assertIsNone(_true_peak_report(None, None))
+
+    def test_true_peak_report_preserves_both_values(self) -> None:
+        report = _true_peak_report({"applied_gain_db": -3.0}, -1.03)
+        self.assertEqual(report["gain"], {"applied_gain_db": -3.0})
+        self.assertEqual(report["final_true_peak_dbtp"], -1.03)
+
+    def test_gain_result_to_dict_normalizes_tuple(self) -> None:
+        result = mock.Mock()
+        result.codec = "aac"
+        result.warnings = ("warn1", "warn2")
+        result.details = {"modified_gain_fields": 3}
+        data = _gain_result_to_dict(result)
+        self.assertEqual(data["codec"], "aac")
+        self.assertEqual(data["warnings"], ["warn1", "warn2"])
+        self.assertEqual(data["details"], {"modified_gain_fields": 3})
 
 
 class SmartExportFfmpegIntegrationTests(unittest.TestCase):

@@ -12,7 +12,9 @@ from tools.benchmark_kiritan_display_elements import (
     GroundTruthLine,
     KiritanSongGroundTruth,
     MonoLabel,
+    build_dataset,
     build_kiritan_dataset,
+    discover_dataset_song_ids,
     discover_kiritan_song_ids,
     evaluate_prediction_report,
     expand_japanese_lyrics,
@@ -140,6 +142,95 @@ def test_missing_label_is_reported_as_skip(tmp_path: Path) -> None:
     # discovery は完全一致曲を返さないため、明確な入力エラーになる。
     with pytest.raises(BenchmarkDataError, match="有効なきりたん曲がありません"):
         build_kiritan_dataset(root, song_ids=["01"])
+
+
+def test_no7_profile_normalizes_100ns_katakana_and_uses_wav_pt(tmp_path: Path) -> None:
+    root = tmp_path / "no7singing"
+    (root / "musicxml").mkdir(parents=True)
+    (root / "mono_label").mkdir()
+    (root / "wav_PT").mkdir()
+    (root / "japanese.table").write_text("あ a\n", encoding="utf-8")
+    (root / "musicxml" / "01.xml").write_text(
+        "<score-partwise><part><note><lyric><text>ヴァづ</text></lyric></note>"
+        "</part></score-partwise>",
+        encoding="utf-8",
+    )
+    (root / "mono_label" / "01.lab").write_text(
+        "0 1000000 sil\n"
+        "1000000 2000000 v\n"
+        "2000000 3000000 a\n"
+        "3000000 4000000 z\n"
+        "4000000 5000000 u\n",
+        encoding="utf-8",
+    )
+
+    assert discover_dataset_song_ids(root, dataset="no7singing") == ("01",)
+    dataset = build_dataset(root, dataset="no7singing")
+    song = dataset.songs[0]
+
+    assert dataset.dataset_name == "no7singing"
+    assert song.lines[0].text == "ヴァづ"
+    assert song.labels[-1].end == pytest.approx(0.5)
+    assert song.audio_path == root / "wav_PT" / "01.wav"
+    assert ground_truth_payload(dataset)["dataset"] == "no7singing (local-only)"
+
+
+def test_ofuton_profile_discovers_nested_musicxml_and_audio(tmp_path: Path) -> None:
+    root = tmp_path / "OFUTON_P_UTAGOE_DB"
+    song_root = root / "song01"
+    song_root.mkdir(parents=True)
+    (root / "japanese.table").write_text("あ a\n", encoding="utf-8")
+    (song_root / "song01.musicxml").write_text(
+        "<score-partwise><part><note><lyric><text>づ</text></lyric></note>"
+        "</part></score-partwise>",
+        encoding="utf-8",
+    )
+    (song_root / "song01.lab").write_text(
+        "0 1000000 sil\n1000000 2000000 z\n2000000 3000000 u\n",
+        encoding="utf-8",
+    )
+
+    dataset = build_dataset(root, dataset="OFUTON_P_UTAGOE_DB")
+    song = dataset.songs[0]
+
+    assert discover_dataset_song_ids(root, dataset="OFUTON_P_UTAGOE_DB") == ("song01",)
+    assert dataset.dataset_name == "OFUTON_P_UTAGOE_DB"
+    assert song.lines[0].text == "づ"
+    assert song.labels[-1].end == pytest.approx(0.3)
+    assert song.audio_path == song_root / "song01.wav"
+
+
+def test_itako_profile_ignores_control_and_metadata_lyrics(tmp_path: Path) -> None:
+    root = tmp_path / "itako_singing"
+    (root / "musicxml").mkdir(parents=True)
+    (root / "mono_label").mkdir()
+    (root / "wav").mkdir()
+    (root / "japanese.table").write_text("あ a\nい i\nう u\n", encoding="utf-8")
+    (root / "musicxml" / "itako01.musicxml").write_text(
+        "<score-partwise><part>"
+        "<note><lyric><text>あ</text></lyric></note>"
+        "<note><lyric><text>br</text></lyric></note>"
+        "<note><lyric><text>&lt;Melody track 1&gt;</text></lyric></note>"
+        "<note><lyric><text>い</text></lyric></note>"
+        "<note><lyric><text>う</text></lyric></note>"
+        "</part></score-partwise>",
+        encoding="utf-8",
+    )
+    (root / "mono_label" / "itako01.lab").write_text(
+        "0 1000000 sil\n"
+        "1000000 2000000 a\n"
+        "2000000 3000000 i\n"
+        "3000000 4000000 u\n",
+        encoding="utf-8",
+    )
+
+    dataset = build_dataset(root, dataset="itako_singing")
+    song = dataset.songs[0]
+
+    assert song.song_id == "itako01"
+    assert song.lines[0].text == "あいう"
+    assert song.labels[-1].end == pytest.approx(0.4)
+    assert song.audio_path == root / "wav" / "itako01.wav"
 
 
 def test_metrics_report_exact_partition_and_violation() -> None:

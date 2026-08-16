@@ -9,6 +9,13 @@ Songcut has two modes: `Cut` and `Sub`.
 
 After loading a video, choose `Cut` or `Sub` in the tabs at the top of the window to select the task.
 
+## Choose a path
+
+- To make song clips or timestamp comments, use [Cut](#cut).
+- To make a subtitled video, use [`Export`](#export-a-subtitled-video) in [Sub](#sub).
+- To combine selected timelines into one subtitle file, use [Export Sub](#export-subtitles-into-one-file).
+- See [Keyboard shortcuts](KEYBOARD_SHORTCUTS.md) for keyboard controls.
+
 ### Cut Mode
 
 In Cut, review detected singing sections as segments and edit their titles, boundaries, and export selection.
@@ -143,12 +150,17 @@ In `Saved styles`, choose a preset and click `Apply`, or enter a style name and 
 
 `Output effects` provides 97 effects grouped by category. Choose an effect to edit its available values, colors, palette, and timing; the controls and limits come from the installed effect package. The sample player shows the selected effect from the online catalog. Effects are applied only during export and are not shown in the editing preview.
 
-### Export Subtitles
+### Export a subtitled video
 
 Click `Export` and choose an output folder to create a subtitled video and one subtitle file set per timeline.
 The subtitled video is named `<video>-subtitled.mp4`, and timelines are written as `<video>-sub-1.srt`, `<video>-sub-2.srt`, and so on.
 Each SRT has a matching style file such as `<video>-sub-1.srt.style`.
 The complete styled subtitles are also written as `<video>-subtitles.ass`; use this file when per-section styles or effects must be preserved.
+
+### Export subtitles into one file
+
+Click `Export Sub` to open a dialog where you can choose the subtitle format (`SRT`, `LRC`, or `ASS`) and one or more timelines that contain subtitles. The selected timelines are combined into one subtitle file.
+This is separate from `Export`, which creates the subtitled video and one file set per timeline. Choose `LRC` when word- or character-level timing should be retained.
 
 ## Settings
 
@@ -175,7 +187,13 @@ Choose the Whisper language and device, then press `Prepare Whisper Model` when 
 Sub analysis uses `Demucs` to separate vocals, so press `Prepare Demucs Model` when needed.
 `MMS` is used only for lyric-onset refinement in `Songcut Standard` and is not used by `Uta-Align`.
 
-## Saving and Recovery
+## Information, Saving, and Recovery
+
+### View Information
+
+Click `Information` in the top toolbar to see the current mode, media-preparation status, running tasks, and failed tasks. If waveform preparation failed, use `Retry` in the dialog. Closing a failed-task row only hides it; it does not delete the project or media.
+
+### Saving and Recovery
 
 Songcut autosaves edits beside the video, using a separate sidecar for each mode.
 Cut projects use a `video.mp4.songcut` sidecar, while Sub projects use a separate `video.mp4.sub.songcut` sidecar.

@@ -46,6 +46,22 @@ Python テストは次で実行します。
 python -m pytest
 ```
 
+Pythonのpytestは`pyproject.toml`で`tests/`だけを収集し、収集件数、各テストの
+phase、経過時間、30秒以上継続するphaseのheartbeatを`[pytest-progress]`行として
+表示します。長時間実行でheartbeatを60秒間隔にする場合は
+`--songcut-progress-interval 60`、専用行を非表示にする場合は
+`--no-songcut-progress`を指定してください。
+
+Codex同梱Pythonで`librosa.stft`を初めて呼ぶ場合、Numbaがlibrosaのインストール先に
+キャッシュ用一時ファイルを作成しようとして長時間停止することがあります。その場合は
+書き込み可能な一時領域をキャッシュ先に指定して実行します。既存の`.pytest_cache`が
+読み取り専用の環境では`-p no:cacheprovider`も付けます。
+
+```powershell
+$env:NUMBA_CACHE_DIR=(Join-Path (Get-Location) '.codex-temp\numba-cache')
+python -m pytest -p no:cacheprovider
+```
+
 字幕Effectの実フォント解決には、DirectWriteを呼ぶMSVC製native DLLが必要です。
 `build_native_font_resolver.ps1`はVisual Studio Installerの`vswhere.exe`からMSBuildを
 検出し、x64 Release DLLとnative testを構築・実行します。実行時にPowerShellや別の

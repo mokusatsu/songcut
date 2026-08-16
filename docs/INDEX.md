@@ -1,7 +1,11 @@
 # ユーザーガイド / User Guides
 
-- Cut・Sub モードの使い方 / Cut and Sub Mode Usage: [日本語 / Japanese](USAGE.ja.md) / [英語 / English](USAGE.md)
-- キーボードショートカット / Keyboard Shortcuts: [日本語・英語 / Japanese and English](KEYBOARD_SHORTCUTS.md)
+- 初めて使う / Getting started: [READMEの日本語案内](../README.md#使用方法) / [README English guide](../README.md#usage)
+- Cutで切り抜く / Make clips with Cut: [日本語](USAGE.ja.md#cut) / [English](USAGE.md#cut)
+- Subで字幕付き動画を作る / Make a subtitled video with Sub: [日本語](USAGE.ja.md#sub) / [English](USAGE.md#sub)
+- Export Subで字幕ファイルをまとめる / Combine subtitle timelines with Export Sub: [日本語](USAGE.ja.md#export-subで字幕ファイルを統合する) / [English](USAGE.md#export-subtitles-into-one-file)
+- 情報・保存・復旧 / Information, saving, and recovery: [日本語](USAGE.ja.md#情報と復旧) / [English](USAGE.md#information-saving-and-recovery)
+- キーボードショートカット / Keyboard shortcuts: [日本語・英語 / Japanese and English](KEYBOARD_SHORTCUTS.md)
 
 # 開発・技術文書 / Development and Technical Documents
 

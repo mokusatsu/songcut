@@ -189,6 +189,8 @@ class ExportRequest(BaseModel):
     items: list[ExportItem] = Field(default_factory=list)
     timestamp_comment_text: str = ""
     create_source_folder: bool = False
+    normalize_audio: bool = False
+    target_true_peak_dbtp: float = -1.0
 
 
 class ExportPlanRequest(BaseModel):
@@ -1481,6 +1483,56 @@ def _transcription_job(
         fail_job(job_id, exc)
 
 
+def _export_gain_info(export_result: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the audio-gain summary from an export result, or None."""
+    true_peak = export_result.get("true_peak")
+    if not isinstance(true_peak, dict):
+        return None
+    gain = true_peak.get("gain")
+    if not isinstance(gain, dict):
+        return None
+    applied = gain.get("applied_gain_db")
+    if not isinstance(applied, (int, float)) or applied != applied:
+        return None
+    target = gain.get("target_true_peak_dbtp")
+    return {
+        "target_true_peak_dbtp": float(target) if isinstance(target, (int, float)) else None,
+        "applied_gain_db": float(applied),
+        "verified_true_peak_dbtp": true_peak.get("final_true_peak_dbtp"),
+    }
+
+
+def _write_gain_report(output_dir: Path, exported: list[dict[str, Any]]) -> str | None:
+    """Write an audio-gain summary text next to the exported clips.
+
+    Only rows with a successful true-peak normalization are recorded. The file
+    is omitted entirely when no clip was normalized.
+    """
+    rows: list[str] = []
+    for item in exported:
+        gain = _export_gain_info(item)
+        if gain is None:
+            continue
+        target = item.get("target")
+        filename = Path(target).name if isinstance(target, str) else (item.get("id") or "")
+        target_db = gain["target_true_peak_dbtp"]
+        applied_db = gain["applied_gain_db"]
+        verified_db = gain["verified_true_peak_dbtp"]
+        target_text = f"{target_db:.2f}" if target_db is not None else "-"
+        verified_text = f"{verified_db:.2f}" if isinstance(verified_db, (int, float)) else "-"
+        rows.append(
+            f"{filename}\t{target_text}\t{applied_db:+.2f}\t{verified_text}"
+        )
+
+    if not rows:
+        return None
+
+    report_path = output_dir / "gain_report.txt"
+    header = "file\ttarget_true_peak_dbtp\tapplied_gain_db\tverified_true_peak_dbtp\n"
+    report_path.write_text(header + "\n".join(rows) + "\n", encoding="utf-8")
+    return str(report_path)
+
+
 def _export_job(job_id: str, request: ExportRequest) -> None:
     try:
         source = require_file(request.source_path)
@@ -1521,12 +1573,23 @@ def _export_job(job_id: str, request: ExportRequest) -> None:
                 target,
                 start=item.start,
                 end=item.end,
+                normalize_audio=request.normalize_audio,
+                target_true_peak_dbtp=request.target_true_peak_dbtp,
             )
             export_result["id"] = item.id
             exported.append(export_result)
+            update_job(
+                job_id,
+                status="running",
+                progress=index / max(1, total),
+                message=f"Exported {display_title} ({index}/{total})",
+            )
+        gain_report_path = _write_gain_report(output_dir, exported)
         result: dict[str, Any] = {"exported": exported, "output_dir": str(output_dir)}
         if timestamp_comment_path:
             result["timestamp_comment_path"] = timestamp_comment_path
+        if gain_report_path:
+            result["gain_report_path"] = gain_report_path
         update_job(job_id, status="completed", progress=1.0, message="Export complete.", result=result)
     except Exception as exc:
         fail_job(job_id, exc)
