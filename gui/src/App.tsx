@@ -32,6 +32,7 @@ import { SettingsDialog, type SettingsTab } from "@/components/SettingsDialog";
 import { CutModePanel } from "@/components/CutModePanel";
 import { BoundaryRefinementDialog } from "@/components/BoundaryRefinementDialog";
 import { SubModePanel, SubtitleOverlay } from "@/components/SubModePanel";
+import { SegmentAddDialog } from "@/components/SegmentAddDialog";
 import { SubVideoPreview } from "@/components/SubVideoPreview";
 import { DisplayElementZoomDialog, displayElementZoomRange } from "@/components/DisplayElementZoomDialog";
 import { SegmentInspector } from "@/components/SegmentInspector";
@@ -223,7 +224,7 @@ import type { ScratchProxyState } from "@/lib/scratchProxy";
 import type { AppMode } from "@/lib/modes";
 import { createModeSession } from "@/lib/modeSession";
 import {
-  addFourBeatSegment,
+  addSubtitleSegmentAtPosition,
   createDefaultSubtitleState,
   normalizeSubtitleState,
   nudgeSegmentBoundary,
@@ -234,6 +235,7 @@ import {
   type DisplayElement,
   type LyricsSegment,
   type SubtitleProjectState,
+  type SubtitleSegmentAddRequest,
 } from "@/lib/subtitles";
 import { formatTimeInput } from "@/lib/segmentTiming";
 import {
@@ -361,6 +363,7 @@ export default function App(props: {
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [selectedCutSegmentIds, setSelectedCutSegmentIds] = useState<Set<string>>(() => new Set());
   const [selectedSubtitleSegmentIds, setSelectedSubtitleSegmentIds] = useState<Set<string>>(() => new Set());
+  const [subtitleSegmentAddOpen, setSubtitleSegmentAddOpen] = useState(false);
   const [displayElementZoomSession, setDisplayElementZoomSession] = useState<DisplayElementZoomSession | null>(null);
   const [displayElementZoomLoop, setDisplayElementZoomLoop] = useState(false);
   const [segmentInspectorCollapsed, setSegmentInspectorCollapsed] = useState(false);
@@ -1643,6 +1646,7 @@ export default function App(props: {
       setMessage("動画を読み込んでからモードを切り替えてください。");
       return;
     }
+    setSubtitleSegmentAddOpen(false);
     setMessage(`${nextMode === "sub" ? "Sub" : "Cut"}モードへ切り替えています。`);
     try {
       const flushed = await persistence.flush();
@@ -2294,13 +2298,28 @@ export default function App(props: {
     markProjectChanged();
   }
 
-  /** `addNewSubtitleSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
-  function addNewSubtitleSegment() {
-    const lane = subtitleState.lanes.find((item) => item.id === subtitleState.active_lane_id) ?? subtitleState.lanes[0];
-    if (!lane) return;
-    const segment = addFourBeatSegment(lane, subtitleState.selected_segment_id, subtitleState.rhythm_grid);
-    if (!segment) return;
-    setSubtitleState((current) => ({
+  /** `openSubtitleSegmentAddDialog`の操作をSubの追加Dialog表示へ反映する。 */
+  function openSubtitleSegmentAddDialog() {
+    setSubtitleSegmentAddOpen(true);
+  }
+
+  /** `addNewSubtitleSegment`の入力を検証し、追加先と選択を更新する。 */
+  function addNewSubtitleSegment(request: SubtitleSegmentAddRequest): boolean {
+    const current = subtitleStateRef.current;
+    const lane = current.lanes.find((item) => item.id === request.targetLaneId);
+    if (!lane) return false;
+    const anchor = request.anchorSegmentId
+      ? current.lanes.flatMap((item) => item.segments).find((segment) => segment.id === request.anchorSegmentId)
+      : null;
+    const segment = addSubtitleSegmentAtPosition(lane, request.position, current.rhythm_grid, {
+      anchor,
+      playbackTime: request.playbackTime,
+    });
+    if (!segment) {
+      setMessage(tr("sub.segmentAddNoSpace"));
+      return false;
+    }
+    const next = {
       ...current,
       active_lane_id: lane.id,
       selected_segment_id: segment.id,
@@ -2309,10 +2328,13 @@ export default function App(props: {
           ? { ...item, segments: [...item.segments, segment].sort((left, right) => left.start - right.start) }
           : item
       ),
-    }));
+    };
+    subtitleStateRef.current = next;
+    setSubtitleState(next);
     setSelectedSubtitleSegmentIds(new Set([segment.id]));
     focusSubtitleSegment(segment);
     markProjectChanged();
+    return true;
   }
 
   /** `removeSelectedSubtitleSegment`の対象を取り除き、関連する一時状態やresourceを後始末する。 */
@@ -2866,9 +2888,7 @@ export default function App(props: {
     hasSegments: subtitleSegmentCount > 0,
     hasSelectedSegment: selectedSubtitleItems.length > 0,
     hasMultipleSegments: subtitleSegmentCount > 1,
-    canAddSegment: Boolean(
-      activeSubtitleLane && addFourBeatSegment(activeSubtitleLane, subtitleState.selected_segment_id, subtitleState.rhythm_grid)
-    ),
+    canAddSegment: subtitleState.lanes.length > 0 && subtitleState.rhythm_grid.length >= 2,
     canDeleteSelectedSegment: selectedSubtitleItems.length > 0,
     canSelectPreviousSegment: selectedSubtitleIndex > 0,
     canSelectNextSegment:
@@ -2963,7 +2983,7 @@ export default function App(props: {
         const targetLaneId = laneId ?? activeSubtitleLane?.id;
         if (targetLaneId) selectSubtitleSegment(targetLaneId, segment);
       },
-      add: addNewSubtitleSegment,
+      add: openSubtitleSegmentAddDialog,
       remove: removeSelectedSubtitleSegment,
       selectAdjacent: selectAdjacentSubtitleSegment,
       jumpBoundary: jumpSubtitleBoundary,
@@ -3971,6 +3991,19 @@ export default function App(props: {
           ? tr(`segmentInspector.reanalysis.${displayElementZoomStatus.status}`)
           : undefined}
         statusError={displayElementZoomStatus?.error}
+      />
+      <SegmentAddDialog
+        open={mode === "sub" && subtitleSegmentAddOpen}
+        lanes={subtitleState.lanes}
+        activeLaneId={subtitleState.active_lane_id}
+        selectedSegment={selectedSubtitleItems.length === 1 ? selectedSubtitleItems[0] : null}
+        currentTime={currentTime}
+        rhythmGrid={subtitleState.rhythm_grid}
+        busy={Boolean(subModeSession.operations.busy)}
+        onClose={() => setSubtitleSegmentAddOpen(false)}
+        onConfirm={(request) => {
+          if (addNewSubtitleSegment(request)) setSubtitleSegmentAddOpen(false);
+        }}
       />
       <Dialog
         open={Boolean(visibleTranscriptSegment)}

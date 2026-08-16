@@ -6,6 +6,7 @@ import {
   type BoundaryPolicyContext,
 } from "@/lib/boundaries";
 import {
+  nearestRhythmTime,
   nearestRhythmTimeInRange,
   nudgedRhythmTime,
 } from "@/lib/segmentTiming";
@@ -170,6 +171,15 @@ export type RhythmGridPoint = {
   grid: "beat" | "half-beat" | "quarter-beat";
   attraction_radius: number;
   grid_penalty: number;
+};
+
+export type SubtitleSegmentAddPosition = "start" | "before" | "after" | "playback";
+
+export type SubtitleSegmentAddRequest = {
+  targetLaneId: string;
+  position: SubtitleSegmentAddPosition;
+  anchorSegmentId: string | null;
+  playbackTime: number;
 };
 
 export type ConfidenceStatistics = {
@@ -430,7 +440,90 @@ export function analysisLinesToSegments(result: LyricsAnalysisResult): LyricsSeg
   }));
 }
 
-/** `addFourBeatSegment`の入力を検証し、呼び出し元が利用できる新しい値を組み立てる。 */
+/** グリッド上の空き区間から、既存の4拍追加規則に沿った新規segmentを作る。 */
+function addSegmentInGap(
+  lane: LyricsLane,
+  grid: readonly RhythmGridPoint[],
+  leftBoundary: number,
+  rightBoundary: number,
+  preferEnd: boolean,
+): LyricsSegment | null {
+  const times = normalizedGridTimes(grid);
+  if (times.length < 2 || !Number.isFinite(leftBoundary) || !Number.isFinite(rightBoundary)) return null;
+  const startIndex = times.findIndex((time) => time >= leftBoundary - 1e-6);
+  const maximumEndIndex = findLastIndex(times, (time) => time <= rightBoundary + 1e-6);
+  if (startIndex < 0 || maximumEndIndex <= startIndex) return null;
+
+  const endIndex = maximumEndIndex;
+  const candidateStartIndex = preferEnd
+    ? Math.max(startIndex, endIndex - 16)
+    : startIndex;
+  const candidateEndIndex = Math.min(candidateStartIndex + 16, endIndex);
+  if (candidateEndIndex <= candidateStartIndex) return null;
+
+  const start = times[candidateStartIndex];
+  const end = times[candidateEndIndex];
+  if (lane.segments.some((segment) => rangesOverlap({ start, end }, segment))) return null;
+  return {
+    id: `manual-${crypto.randomUUID()}`,
+    text: "New subtitle",
+    start,
+    end,
+    confidence: 1,
+    source: "manual",
+    low_confidence_outlier: false,
+    user_edited: true,
+  };
+}
+
+/** `addSubtitleSegmentAtPosition`の指定位置へ、追加先laneの境界を割り当てる。 */
+export function addSubtitleSegmentAtPosition(
+  lane: LyricsLane,
+  position: SubtitleSegmentAddPosition,
+  grid: readonly RhythmGridPoint[],
+  options: {
+    anchor?: Pick<LyricsSegment, "id" | "start" | "end"> | null;
+    playbackTime?: number;
+  } = {},
+): LyricsSegment | null {
+  const times = normalizedGridTimes(grid);
+  if (times.length < 2) return null;
+  const ordered = chronologicalSegments(lane.segments);
+  const lastTime = times.at(-1)!;
+
+  if (position === "start") {
+    const right = ordered[0]?.start ?? lastTime;
+    return addSegmentInGap(lane, grid, times[0], right, false);
+  }
+
+  if (position === "before") {
+    const anchor = options.anchor;
+    if (!anchor) return null;
+    const rightIndex = findLastIndex(times, (time) => time <= anchor.start + 1e-6);
+    if (rightIndex < 1) return null;
+    const right = times[rightIndex];
+    const left = [...ordered]
+      .reverse()
+      .find((segment) => segment.end <= right + 1e-6)?.end ?? times[0];
+    return addSegmentInGap(lane, grid, left, right, true);
+  }
+
+  if (position === "after") {
+    const anchor = options.anchor;
+    if (!anchor) return null;
+    const left = anchor.end;
+    const right = ordered.find((segment) => segment.start >= left - 1e-6)?.start ?? lastTime;
+    return addSegmentInGap(lane, grid, left, right, false);
+  }
+
+  const playbackTime = options.playbackTime;
+  const start = playbackTime === undefined ? null : nearestRhythmTime(grid, playbackTime);
+  if (start === null) return null;
+  const right = ordered.find((segment) => segment.start >= start - 1e-6)?.start ?? lastTime;
+  return addSegmentInGap(lane, grid, start, right, false);
+}
+
+/** `addFourBeatSegment`の既存呼出し向けに、active lane末尾または選択直後へ追加する。 */
 export function addFourBeatSegment(
   lane: LyricsLane,
   selectedSegmentId: string | null,
@@ -444,24 +537,7 @@ export function addFourBeatSegment(
     : -1;
   const left = selectedIndex >= 0 ? ordered[selectedIndex].end : ordered.at(-1)?.end ?? times[0];
   const right = selectedIndex >= 0 ? ordered[selectedIndex + 1]?.start ?? times.at(-1)! : times.at(-1)!;
-  const startIndex = times.findIndex((time) => time >= left - 1e-6);
-  if (startIndex < 0 || times[startIndex] >= right - 1e-6) return null;
-  const maximumEndIndex = findLastIndex(times, (time) => time <= right + 1e-6);
-  const endIndex = Math.min(startIndex + 16, maximumEndIndex);
-  if (endIndex <= startIndex) return null;
-  const start = times[startIndex];
-  const end = times[endIndex];
-  if (ordered.some((segment) => rangesOverlap({ start, end }, segment))) return null;
-  return {
-    id: `manual-${crypto.randomUUID()}`,
-    text: "New subtitle",
-    start,
-    end,
-    confidence: 1,
-    source: "manual",
-    low_confidence_outlier: false,
-    user_edited: true,
-  };
+  return addSegmentInGap(lane, grid, left, right, false);
 }
 
 /** `updateSegmentBoundary`で指定された変更を不変更新として状態へ反映する。 */

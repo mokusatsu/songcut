@@ -1964,6 +1964,46 @@ tr.selected:hover {
   width: min(560px, calc(100vw - 48px));
 }
 
+.segment-add-dialog-window {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.segment-add-dialog {
+  display: grid;
+  gap: 14px;
+  font-size: var(--font-size-control);
+}
+
+.segment-add-field {
+  display: grid;
+  gap: 6px;
+  color: #aebbc2;
+}
+
+.segment-add-field > span {
+  color: #b7c8cf;
+  font-size: inherit;
+}
+
+.segment-add-field .select-wrap {
+  width: 100%;
+}
+
+.segment-add-field .select {
+  font-size: inherit;
+}
+
+.segment-add-error {
+  margin: 0;
+  color: #f1bd80;
+}
+
+.segment-add-dialog .dialog-message,
+.segment-add-error {
+  font-size: var(--font-size-meta);
+  line-height: 1.4;
+}
+
 .subtitle-file-export-form {
   display: grid;
   gap: 16px;

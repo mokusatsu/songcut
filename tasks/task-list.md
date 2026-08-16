@@ -120,3 +120,4 @@
 | SCUT-067 | AI・解析 | Standard AlignへのomniASR-CTC局所救済エンジン追加 | 未着手 | 高 | SCUT-041, SCUT-043 | MMSが`line-proportional`へ落ちた日本語行だけをomniASRで局所救済し、MMS合格行・行境界・手動表示素を維持する | [詳細・証拠](../tasks/SCUT-067.md) |
 | SCUT-068 | 字幕・品質保証 | 表示素タイミングbenchmarkの複数歌唱DB対応 | 完了 | 高 | SCUT-041 | `kiritan_singing`と同じ表示素GT／MMS検証runnerがOFUTON、No.7、東北イタコの各DBを固有形式・時刻単位込みで読み、既定の8曲・24行・200内部境界を満たし、MMSの`line-proportional`実音声対象を文書化する | [詳細・証拠](../tasks/SCUT-068.md) |
 | SCUT-069 | 開発運用・品質保証 | 全体pytestの進捗ログ強化と長時間無出力原因調査 | 完了 | 高 | なし | `python -m pytest` がout生成物を誤収集せず、各テストの収集順・phase・経過時間・長時間heartbeatを表示し、無出力区間の最後の対象と原因を証拠付きで特定する | [詳細・証拠](../tasks/SCUT-069.md) |
+| SCUT-070 | Sub・GUI | Subセグメント追加Dialogの実装 | 実環境検証待ち | 高 | SCUT-065 | SCUT-065で確定した追加先Timeline・4位置・空き／grid／重複規則を、Sub画面で確認・確定できるDialogとして実装する | [詳細・証拠](../tasks/SCUT-070.md) |
