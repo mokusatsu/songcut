@@ -13,7 +13,6 @@ After loading a video, choose `Cut` or `Sub` in the tabs at the top of the windo
 
 - To make song clips or timestamp comments, use [Cut](#cut).
 - To make a subtitled video, use [`Export`](#export-a-subtitled-video) in [Sub](#sub).
-- To combine selected timelines into one subtitle file, use [Export Sub](#export-subtitles-into-one-file).
 - See [Keyboard shortcuts](KEYBOARD_SHORTCUTS.md) for keyboard controls.
 
 ### Cut Mode
@@ -65,7 +64,7 @@ Normal playback and export continue to use the source video, and scratch audio c
 ### Adjusting Segments
 
 Drag the left or right handle of a timeline section to change its start or end.
-Double-click a section to show **Segment timing**, where you can enter a start time and either a duration or an end time.
+Select a section to enter a start time and either a duration or an end time in the **Segment inspector** on the right.
 
 Playback, boundary preview, boundary navigation, and zoom work the same way in Cut and Sub.
 See [KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md) for the complete keyboard reference.
@@ -75,8 +74,8 @@ See [KEYBOARD_SHORTCUTS.md](KEYBOARD_SHORTCUTS.md) for the complete keyboard ref
 ## Cut
 
 Cut is for making one clip per song from a stream or other long video.
-Load a video, optionally paste a timestamp comment into the guide field, and click `Analyze` to show detected singing sections as segments.
-If a matching `.info.json` file exists beside the video, review timestamps found in the video description or downloaded comments and apply only the guide you want to use.
+Load a video and click `Analyze` to open a dialog where you can optionally paste a timestamp comment; confirm it to show detected singing sections as segments.
+If a matching `.info.json` file exists beside the video, timestamp comment candidates from the video description or downloaded comments are offered when the video is loaded.
 
 Select an analyzed segment to edit its title, start and end times, and export checkbox.
 The `Segment` menu can add or remove segments, sort them by start time, and change the export selection in one operation.
@@ -101,6 +100,8 @@ Click `Export` to write a video clip for each checked segment.
 The export review shows the actual filenames and the planned smart-rendering mode for each clip, and unsupported sources or ranges automatically fall back to a full re-encode.
 You can group the clips and an optional timestamp file in a child folder named after the source video.
 
+The **Automatically normalize audio volume** option in the export dialog is on by default and adjusts the output audio to the target value (default −1.0 dBTP). The per-clip results are written to a `gain_report.txt` in the output folder.
+
 Click `Export TS` to copy the checked sections as timestamp text.
 The `Export` menu can also copy Timestamp Comment, YouTube Chapters, TSV/Excel, CSV, or Audacity Labels directly.
 
@@ -114,7 +115,7 @@ Start analysis or export from the top toolbar, then refine subtitles on the subt
 ### Analyze Lyrics
 
 When you load a video in Sub and click `Analyze`, Songcut prepares any required models and then shows the `Paste lyrics` dialog.
-On the first run, the dialog appears after the models required by the selected alignment algorithm have been prepared, and `Songcut Standard` also prepares MMS.
+On the first run, downloading the AI models required by the selected alignment algorithm can take some time.
 
 ![Paste lyrics](image/sub-lyrics.png)
 
@@ -128,14 +129,14 @@ Review the beat grid drawn on the timeline, and adjust boundaries manually if a 
 ### Edit Text, Timing, and Timelines
 
 Double-click a lyric label to edit its text, and drag a section handle to edit its timing.
-Double-click a section to show **Segment settings**. Use the `Timing` tab to edit its start time and duration or end time, and the `Style` tab to choose whether the section inherits its timeline style or uses custom settings.
-Custom settings provide the same typography, position, saved-style, and output-effect controls as the timeline `Style` dialog. Changes are committed together with `Apply`; `Cancel` discards both timing and style changes.
+Selecting a section shows the **Segment inspector** on the right, with `Timing`, `Style`, and `Display elements` sections. Use `Timing` to edit its start time and duration or end time, and `Style` to choose whether the section inherits its timeline style or uses custom settings. Changes apply immediately.
+Custom settings provide the same typography, position, saved-style, and output-effect controls as the timeline `Style` dialog.
 A zigzag line to the left of the lyric label identifies a section that uses custom settings.
 
 Click `Timeline` and choose one of the nine subtitle positions to add a subtitle timeline.
 Click a timeline to make it active; you can create up to three. `W` and `S` move through sections inside the active timeline.
 
-Click `Segment` to add a new four-beat subtitle section at the selected position in the active timeline.
+Click `Segment` to open a dialog where you choose the destination timeline and a position (timeline start, before or after the selected segment, or the playback position) to add a four-beat subtitle section. If no grid-aligned space is available, it cannot be added.
 The toolbar trash button removes the selected subtitle section, while the trash button beside a timeline name removes that timeline.
 In Sub, `Q` and `E` move the selected boundary to the previous or next quarter beat.
 
@@ -168,8 +169,9 @@ The settings dialog has four tabs: `Common`, `Cut`, `Sub`, and `AI Models`.
 
 ### Common
 
-The Common tab sets the scratch preview duration, scratch audio proxy, display language, and FFmpeg check.
+The Common tab sets the scratch preview duration, scratch audio proxy, display language, FFmpeg check, and decoder recovery.
 Under `Language`, choose `System default`, `English`, or `Japanese` to apply the new display language the next time Songcut starts.
+If video decoding stops, use **Decoder recovery** to reload this app session with the software decoder.
 
 ### Cut
 

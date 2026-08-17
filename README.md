@@ -13,7 +13,7 @@ English follows the Japanese.
 
 - 曲ごとの切り抜き動画やタイムスタンプを作る: [Cutの使い方](docs/USAGE.ja.md#cut)
 - 字幕付き動画を作る: [Subの使い方](docs/USAGE.ja.md#sub)
-- 選択したTimelineを一つの字幕ファイルへまとめる: [字幕ファイルを書き出し（Export Sub）](docs/USAGE.ja.md#export-subで字幕ファイルを統合する)
+- 選択したTimelineを一つの字幕ファイルへまとめる: [字幕ファイルを書き出し](docs/USAGE.ja.md#字幕ファイルを書き出して1つのファイルにまとめる)
 - キー操作を確認する: [キーボードショートカット](docs/KEYBOARD_SHORTCUTS.md)
 
 ### 代表画面
