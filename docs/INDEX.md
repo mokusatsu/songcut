@@ -3,7 +3,7 @@
 - 初めて使う / Getting started: [READMEの日本語案内](../README.md#使用方法) / [README English guide](../README.md#usage)
 - Cutで切り抜く / Make clips with Cut: [日本語](USAGE.ja.md#cut) / [English](USAGE.md#cut)
 - Subで字幕付き動画を作る / Make a subtitled video with Sub: [日本語](USAGE.ja.md#sub) / [English](USAGE.md#sub)
-- Export Subで字幕ファイルをまとめる / Combine subtitle timelines with Export Sub: [日本語](USAGE.ja.md#export-subで字幕ファイルを統合する) / [English](USAGE.md#export-subtitles-into-one-file)
+- Export Subで字幕ファイルをまとめる / Combine subtitle timelines with Export Sub: [日本語](USAGE.ja.md#字幕ファイルを書き出して1つのファイルにまとめる) / [English](USAGE.md#export-subtitles-into-one-file)
 - 情報・保存・復旧 / Information, saving, and recovery: [日本語](USAGE.ja.md#情報と復旧) / [English](USAGE.md#information-saving-and-recovery)
 - キーボードショートカット / Keyboard shortcuts: [日本語・英語 / Japanese and English](KEYBOARD_SHORTCUTS.md)
 
